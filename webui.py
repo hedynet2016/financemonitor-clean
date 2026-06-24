@@ -254,6 +254,7 @@ BASE_LAYOUT = r"""<!DOCTYPE html>
     <div class="col-md-2 mb-3">
       <ul class="nav nav-pills flex-column gap-1">
         <li class="nav-item"><a class="nav-link {{'active' if page=='dashboard'}}" href="/"><i class="bi bi-speedometer2 me-2"></i>儀表板</a></li>
+        <li class="nav-item"><a class="nav-link {{'active' if page=='report'}}" href="/report"><i class="bi bi-file-earmark-bar-graph me-2"></i>每日報告</a></li>
         <li class="nav-item"><a class="nav-link {{'active' if page=='settings'}}" href="/settings"><i class="bi bi-gear me-2"></i>設定</a></li>
         <li class="nav-item"><a class="nav-link {{'active' if page=='tasks'}}" href="/tasks"><i class="bi bi-list-check me-2"></i>任務</a></li>
         <li class="nav-item"><a class="nav-link {{'active' if page=='logs'}}" href="/logs"><i class="bi bi-journal-text me-2"></i>日誌</a></li>
@@ -878,8 +879,142 @@ def tasks_view():
     return page("tasks", body)
 
 
+# ── Report route ────────────────────────────────────────────────────
+@app.route("/report")
+def report_view():
+    """Display the latest daily report."""
+    import glob
+    
+    # Find the latest report file
+    report_pattern = str(SCRIPT_DIR / "scripts" / "report_*.html")
+    report_files = glob.glob(report_pattern)
+    
+    if not report_files:
+        body = """\
+<h4 class="mb-3"><i class="bi bi-file-earmark-bar-graph me-2"></i>每日報告</h4>
+<div class="alert alert-warning">
+  <i class="bi bi-exclamation-triangle me-2"></i>
+  尚未生成任何報告。請先執行每日報告生成任務。
+</div>
+<button class="btn btn-primary" onclick="generateReport()">
+  <i class="bi bi-play-fill me-1"></i>立即生成報告
+</button>
+<script>
+function generateReport() {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>生成中...';
+  fetch('/api/generate-report', {method:'POST'})
+    .then(r=>r.json()).then(d=>{
+      if(d.ok){ 
+        showToast('報告生成中,請稍候...', 'success');
+        setTimeout(()=>location.reload(), 5000);
+      } else {
+        showToast(d.error||'生成失敗', 'error');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>立即生成報告';
+      }
+    }).catch(e=>{
+      showToast('Error: '+e, 'error');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>立即生成報告';
+    });
+}
+</script>
+"""
+        return page("report", body)
+    
+    # Sort by modification time (newest first)
+    report_files.sort(key=os.path.getmtime, reverse=True)
+    latest_report = report_files[0]
+    
+    # Read the report HTML
+    try:
+        with open(latest_report, "r", encoding="utf-8") as f:
+            report_html = f.read()
+        
+        # Extract the report date from filename
+        report_date = os.path.basename(latest_report).replace("report_", "").replace(".html", "")
+        
+        # Process report_html to escape backticks for JavaScript
+        report_html_js = report_html.replace('`', '\\`').replace('${', '\\${')
+        
+        # Display the report in an iframe
+        body = f"""\
+<h4 class="mb-3 d-flex justify-content-between align-items-center">
+  <span><i class="bi bi-file-earmark-bar-graph me-2"></i>每日報告</span>
+  <div>
+    <span class="badge bg-info me-2">報告日期: {report_date}</span>
+    <button class="btn btn-sm btn-outline-light me-2" onclick="location.reload()">
+      <i class="bi bi-arrow-clockwise me-1"></i>重新整理
+    </button>
+    <button class="btn btn-sm btn-primary" onclick="generateReport()">
+      <i class="bi bi-play-fill me-1"></i>重新生成
+    </button>
+  </div>
+</h4>
+<div class="card">
+  <div class="card-body p-3">
+    <iframe id="reportFrame" style="width:100%; height:800px; border:1px solid var(--border); border-radius:8px;"></iframe>
+  </div>
+</div>
+<script>
+document.getElementById('reportFrame').srcdoc = `{report_html_js}`;
+
+function generateReport() {{
+  const btn = event.target;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>生成中...';
+  fetch('/api/generate-report', {{method:'POST'}})
+    .then(r=>r.json()).then(d=>{{
+      if(d.ok){{ 
+        showToast('報告生成中,請稍候...', 'success');
+        setTimeout(()=>location.reload(), 5000);
+      }} else {{
+        showToast(d.error||'生成失敗', 'error');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>重新生成';
+      }}
+    }}).catch(e=>{{
+      showToast('Error: '+e, 'error');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>重新生成';
+    }});
+}}
+</script>
+"""
+        return page("report", body)
+    except Exception as e:
+        body = f"""\
+<h4 class="mb-3"><i class="bi bi-file-earmark-bar-graph me-2"></i>每日報告</h4>
+<div class="alert alert-danger">
+  <i class="bi bi-exclamation-triangle me-2"></i>
+  讀取報告失敗: {str(e)}
+</div>
+"""
+        return page("report", body)
+
+
 # ── API ────────────────────────────────────────────────────────────
-@app.route("/api/run", methods=["POST"])
+@app.route("/api/generate-report", methods=["POST"])
+def api_generate_report():
+    """Trigger daily report generation."""
+    def run_report():
+        try:
+            python = shutil.which("python3") or shutil.which("python") or sys.executable
+            cmd = [python, str(SCRIPT_DIR / "scripts" / "daily_report.py")]
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR), timeout=300)
+            return result.returncode == 0
+        except Exception as e:
+            print(f"Report generation failed: {e}")
+            return False
+    
+    t = threading.Thread(target=run_report, daemon=True)
+    t.start()
+    return jsonify({"ok": True, "message": "Report generation started"})
+
+
+
 def api_run():
     data = request.get_json() or {}
     mode = data.get("mode", "once")
