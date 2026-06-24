@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: workbuddy
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash scripts/render_start.sh
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13"
+      - key: TELEGRAM_BOT_TOKEN
+        value: ""
+      - key: TELEGRAM_CHAT_ID
+        value: ""
+      - key: DISCORD_WEBHOOK_URL
+        value: ""
+      - key: GMAIL_SENDER
+        value: ""
+      - key: GMAIL_APP_PASSWORD
+        value: ""
+      - key: REPORT_RECIPIENT
+        value: ""
+      - key: GITHUB_PAT
+        value: ""
+      - key: GITHUB_USER
+        value: "hedynet2016"
+      - key: GITHUB_REPO_BACKUP
+        value: "workbuddy-backup"
