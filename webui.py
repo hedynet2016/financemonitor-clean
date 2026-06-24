@@ -315,7 +315,14 @@ if(document.getElementById('taskStatus')) pollTaskStatus();
 """
 
 
+
 # ── Routes ─────────────────────────────────────────────────────────
+@app.route("/favicon.ico")
+def favicon():
+    """Return empty favicon to prevent 404 errors."""
+    return "", 204
+
+
 @app.route("/health")
 def health_check():
     """Render health check endpoint — does not require config.json"""
