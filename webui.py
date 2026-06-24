@@ -21,6 +21,7 @@ import time
 import logging
 import shutil
 import webbrowser
+import atexit
 from datetime import datetime, timedelta
 from pathlib import Path
 from flask import Flask, render_template_string, request, jsonify, redirect, url_for
