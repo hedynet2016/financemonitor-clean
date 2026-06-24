@@ -79,8 +79,11 @@ RECIPIENT      = os.environ.get("REPORT_RECIPIENT", "admin@hedynet.com")
 # 日期
 # ──────────────────────────────────────────────
 TODAY = datetime.date.today()
+YESTERDAY = TODAY - datetime.timedelta(days=1)
 TODAY_STR = TODAY.strftime("%Y-%m-%d")
 TODAY_DISPLAY = TODAY.strftime("%Y/%m/%d")
+YESTERDAY_STR = YESTERDAY.strftime("%Y-%m-%d")
+YESTERDAY_DISPLAY = YESTERDAY.strftime("%Y/%m/%d")
 
 # ──────────────────────────────────────────────
 # 1. 讀取當日日誌（取今天的行）
@@ -97,6 +100,28 @@ def read_today_logs():
                         all_lines.append(line.rstrip())
         except Exception:
             pass
+    return all_lines
+
+def read_recent_logs():
+    """
+    讀取從昨天到今天的所有日誌（用於圓餅圖和曲線圖）
+    有幾天就算幾天（目前是 6/24 ~ 6/25，共 2 天）
+    """
+    all_lines = []
+    # 從昨天到今天
+    for i in range((TODAY - YESTERDAY).days + 1):
+        d = YESTERDAY + datetime.timedelta(days=i)
+        ds = d.strftime("%Y-%m-%d")
+        for log_path in LOG_FILES:
+            if not log_path.exists():
+                continue
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        if ds in line:
+                            all_lines.append(line.rstrip())
+            except Exception:
+                pass
     return all_lines
 
 # ──────────────────────────────────────────────
@@ -337,17 +362,42 @@ def read_automations():
     return automations
 
 # ──────────────────────────────────────────────
-# 6. 解析近 7 天問題解決數量（用於曲線圖）
+# 6. 解析從昨天到報告當天的問題發生與解決數量（用於曲線圖）
 # ──────────────────────────────────────────────
-def get_weekly_solved_counts():
+def get_daily_problem_counts():
     """
-    讀取 MEMORY_DIR 近 7 天 .md，估算每天「問題解決數量」（以"修復"、"解決"、"fix"等關鍵字出現次數）
+    讀取從昨天到報告當天的日誌，統計每天「問題發生數量」
+    回傳 [(日期label, 數量)]
+    """
+    counts = []
+    for i in range((TODAY - YESTERDAY).days + 1):
+        d = YESTERDAY + datetime.timedelta(days=i)
+        ds = d.strftime("%Y-%m-%d")
+        label = d.strftime("%m/%d")
+        cnt = 0
+        for log_path in LOG_FILES:
+            if not log_path.exists():
+                continue
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        if ds in line and (" - ERROR - " in line or " - WARNING - " in line):
+                            cnt += 1
+            except Exception:
+                pass
+        counts.append((label, cnt))
+    return counts
+
+def get_daily_solved_counts():
+    """
+    讀取 MEMORY_DIR 從昨天開始到報告當天（今天）的 .md，
+    估算每天「問題解決數量」（以"修復"、"解決"、"fix"等關鍵字出現次數）
     回傳 [(日期label, 數量)]
     """
     counts = []
     fix_pattern = re.compile(r"修復|解決|fix|resolved|fixed|repaired|corrected", re.I)
-    for i in range(6, -1, -1):
-        d = TODAY - datetime.timedelta(days=i)
+    for i in range((TODAY - YESTERDAY).days + 1):
+        d = YESTERDAY + datetime.timedelta(days=i)
         ds = d.strftime("%Y-%m-%d")
         label = d.strftime("%m/%d")
         md_path = MEMORY_DIR / f"{ds}.md"
@@ -434,7 +484,7 @@ def generate_pie_chart(error_count):
             labelcolor="white",
             prop={"family": font_name, "size": 7},
         )
-        ax.set_title(f"{TODAY_DISPLAY} 問題分類統計",
+        ax.set_title(f"{YESTERDAY_DISPLAY} 問題分類統計（每日下午 6 點報告）",
                      color="white", fontsize=11, fontfamily=font_name, pad=8)
 
         import io
@@ -450,8 +500,11 @@ def generate_pie_chart(error_count):
         return None
 
 
-def generate_line_chart(weekly_counts):
-    """生成近 7 天問題解決數量曲線圖，回傳 base64 PNG 字串"""
+def generate_line_chart(problem_counts, solved_counts):
+    """
+    生成從昨天到報告當天的問題發生與解決數量曲線圖（雙曲線）
+    回傳 base64 PNG 字串
+    """
     try:
         import io
         import matplotlib
@@ -472,29 +525,47 @@ def generate_line_chart(weekly_counts):
                 font_name = fc
                 break
 
-        labels = [x[0] for x in weekly_counts]
-        values = [x[1] for x in weekly_counts]
+        labels = [x[0] for x in problem_counts]
+        problem_values = [x[1] for x in problem_counts]
+        solved_values = [x[1] for x in solved_counts]
 
-        fig, ax = plt.subplots(figsize=(7, 3.8), facecolor="#1a1a2e")
+        fig, ax = plt.subplots(figsize=(7, 4.2), facecolor="#1a1a2e")
         ax.set_facecolor("#16213e")
-        ax.plot(labels, values, color="#4fc3f7", linewidth=2.5,
-                marker="o", markersize=7, markerfacecolor="#81d4fa")
-        ax.fill_between(labels, values, alpha=0.18, color="#4fc3f7")
 
-        for lbl, val in zip(labels, values):
+        # 曲線 1：問題發生數量（紅色）
+        ax.plot(labels, problem_values, color="#ef5350", linewidth=2.5,
+                marker="o", markersize=7, markerfacecolor="#ef9a9a",
+                label="問題發生")
+        ax.fill_between(labels, problem_values, alpha=0.15, color="#ef5350")
+
+        # 曲線 2：問題解決數量（綠色）
+        ax.plot(labels, solved_values, color="#66bb6a", linewidth=2.5,
+                marker="s", markersize=7, markerfacecolor="#a5d6a7",
+                label="問題解決")
+        ax.fill_between(labels, solved_values, alpha=0.15, color="#66bb6a")
+
+        # 標註數值
+        for lbl, val in zip(labels, problem_values):
             ax.annotate(str(val), (lbl, val),
                         textcoords="offset points", xytext=(0, 8),
-                        ha="center", color="#e0f7fa", fontsize=9)
+                        ha="center", color="#ffcdd2", fontsize=9)
+        for lbl, val in zip(labels, solved_values):
+            ax.annotate(str(val), (lbl, val),
+                        textcoords="offset points", xytext=(0, -15),
+                        ha="center", color="#c8e6c9", fontsize=9)
 
-        ax.set_xlabel("日期", color="#90caf9", fontsize=9, fontfamily=font_name)
-        ax.set_ylabel("修復筆數", color="#90caf9", fontsize=9, fontfamily=font_name)
-        ax.set_title("近 7 天問題解決數量", color="white",
-                     fontsize=11, fontfamily=font_name, pad=8)
+        ax.set_xlabel(f"日期（{YESTERDAY_DISPLAY} ~ {TODAY_DISPLAY}）",
+                      color="#90caf9", fontsize=9, fontfamily=font_name)
+        ax.set_ylabel("筆數", color="#90caf9", fontsize=9, fontfamily=font_name)
+        ax.set_title(f"從 {YESTERDAY_DISPLAY} 至 {TODAY_DISPLAY} 問題趨勢",
+                     color="white", fontsize=11, fontfamily=font_name, pad=8)
         ax.tick_params(colors="white", labelsize=8)
         for spine in ax.spines.values():
             spine.set_edgecolor("#444")
         ax.set_ylim(bottom=0)
         ax.grid(axis="y", color="#334", linestyle="--", linewidth=0.6)
+        ax.legend(loc="upper left", fontsize=8, facecolor="#2d2d44",
+                  edgecolor="#555", labelcolor="white")
 
         buf = io.BytesIO()
         plt.savefig(buf, format="png", bbox_inches="tight", dpi=130,
@@ -511,7 +582,8 @@ def generate_line_chart(weekly_counts):
 # 9. 組合 HTML 郵件
 # ──────────────────────────────────────────────
 def build_html(issues, error_count, resolved, added, removed, todos,
-               automations, pie_b64, line_b64, weekly_counts, memory_content):
+               automations, pie_b64, line_b64, problem_counts, solved_counts, memory_content,
+               yesterday_display=YESTERDAY_DISPLAY):
 
     def section(title, content_html, icon=""):
         return f"""
@@ -692,11 +764,11 @@ def build_html(issues, error_count, resolved, added, removed, todos,
 <body>
 <div class="wrapper">
   <div class="header">
-    <h1>📊 WorkBuddy Daily Report</h1>
-    <p>報告日期：{TODAY_DISPLAY} &nbsp;|&nbsp; 系統：FinanceMonitor &nbsp;|&nbsp; 自動生成</p>
+    <h1>📊 WorkBuddy Daily Report（昨日報告）</h1>
+    <p>報告日期：{TODAY_DISPLAY} &nbsp;|&nbsp; 數據日期：{yesterday_display} &nbsp;|&nbsp; 系統：FinanceMonitor &nbsp;|&nbsp; 自動生成</p>
   </div>
 
-  {section("🚨 當日推播問題彙整", issues_html, "")}
+  {section("🚨 昨日推播問題彙整", issues_html, "")}
   {charts_section}
   {section("📋 問題 5W1H1N 詳細分析", detail_html, "")}
   {section("🔧 功能與排程變更", feat_html, "")}
@@ -718,7 +790,7 @@ def build_html(issues, error_count, resolved, added, removed, todos,
 # ──────────────────────────────────────────────
 def send_email(html_body):
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Workbuddy Daily Report {TODAY_DISPLAY}"
+    msg["Subject"] = f"Workbuddy Daily Report（昨日報告）{YESTERDAY_DISPLAY}"
     msg["From"]    = GMAIL_SENDER
     msg["To"]      = RECIPIENT
 
@@ -741,10 +813,11 @@ def send_email(html_body):
 def main():
     print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 開始生成 Daily Report ({TODAY_DISPLAY})...")
 
-    # 讀資料
-    log_lines      = read_today_logs()
+    # 讀資料（修改：使用從昨天到今天的所有日誌）
+    log_lines      = read_recent_logs()
     memory_content = read_memory_logs()
-    weekly_counts  = get_weekly_solved_counts()
+    problem_counts = get_daily_problem_counts()
+    solved_counts  = get_daily_solved_counts()
     automations    = read_automations()
 
     # 分析
@@ -758,20 +831,21 @@ def main():
 
     # 圖表
     pie_b64  = generate_pie_chart(error_count)
-    line_b64 = generate_line_chart(weekly_counts)
+    line_b64 = generate_line_chart(problem_counts, solved_counts)
 
     # 組 HTML
     html = build_html(
         issues, error_count, resolved,
         added, removed, todos,
         automations, pie_b64, line_b64,
-        weekly_counts, memory_content
+        problem_counts, solved_counts, memory_content,
+        yesterday_display=YESTERDAY_DISPLAY
     )
 
     # 發送
     ok = send_email(html)
 
-    # 儲存副本
+    # 儲存副本（使用今天的日期作為檔名）
     output_path = BASE_DIR / "scripts" / f"report_{TODAY_STR}.html"
     output_path.write_text(html, encoding="utf-8")
     print(f"  報告副本已儲存: {output_path}")
