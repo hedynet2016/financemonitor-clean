@@ -11,6 +11,8 @@ import sys
 import json
 import logging
 import traceback
+import subprocess
+import atexit
 from datetime import datetime
 from typing import Dict, List, Optional, Callable
 
@@ -214,6 +216,46 @@ def task_integrated_monitor() -> bool:
     except Exception as e:
         raise e
 
+# ==================== Web UI 啟動器 ====================
+def start_webui():
+    """啟動 Web UI 作為背景程序"""
+    try:
+        # 檢查 webui.py 是否存在
+        webui_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webui.py")
+        if not os.path.exists(webui_path):
+            logger.warning(f"webui.py 不存在: {webui_path}")
+            return None
+        
+        # 啟動 Web UI（使用 --no-browser 避免自動開啟瀏覽器）
+        python_exe = sys.executable
+        process = subprocess.Popen(
+            [python_exe, webui_path, "--no-browser", "--no-scheduler"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=os.path.dirname(os.path.abspath(__file__))
+        )
+        
+        # 註冊結束時關閉 Web UI
+        def cleanup_webui():
+            if process and process.poll() is None:
+                logger.info("正在關閉 Web UI...")
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                logger.info("Web UI 已關閉")
+        
+        atexit.register(cleanup_webui)
+        
+        logger.info(f"Web UI 已啟動 (PID: {process.pid})")
+        logger.info("Web UI 網址: http://localhost:8080")
+        return process
+        
+    except Exception as e:
+        logger.error(f"啟動 Web UI 失敗: {e}")
+        return None
+
 # ==================== 主程式 ====================
 def main():
     """主程式"""
@@ -244,6 +286,12 @@ def main():
     parser.add_argument("--check-config", action="store_true", help="檢查配置")
     
     args = parser.parse_args()
+    
+    # 啟動 Web UI（在所有任務執行前啟動）
+    webui_process = start_webui()
+    if webui_process:
+        import time
+        time.sleep(2)  # 等待 Web UI 啟動
     
     # 檢查配置
     if args.check_config:
