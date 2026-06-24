@@ -1,0 +1,37 @@
+# WorkBuddy 依賴包
+# Python 3.11+
+
+# Web framework
+flask==3.0.0
+
+# Telegram
+python-telegram-bot==20.7
+
+# Discord
+requests==2.31.0
+
+# Gmail/Email
+secure-smtplib==0.1.1
+
+# GitHub
+PyGithub==1.59.1
+
+# Data processing
+pandas==2.1.4
+numpy==1.26.2
+
+# Visualization
+matplotlib==3.8.2
+
+# Web scraping
+beautifulsoup4==4.12.2
+requests==2.31.0
+
+# Environment
+python-dotenv==1.0.0
+
+# Scheduling
+schedule==1.2.0
+
+# Logging
+colorlog==6.8.0
