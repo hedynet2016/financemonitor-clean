@@ -29,6 +29,7 @@ from flask import Flask, render_template_string, request, jsonify, redirect, url
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = SCRIPT_DIR / "config.json"
 LOG_FILE = SCRIPT_DIR / "monitor.log"
+SCHEDULER_PROCS = []   # child processes started by start_scheduler()
 STATUS_FILE = SCRIPT_DIR / ".webui_status.json"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [WEBUI] %(message)s")
@@ -934,6 +935,20 @@ def main():
     if not args.no_browser:
         threading.Timer(1.5, lambda: webbrowser.open(f"http://localhost:{args.port}")).start()
 
+
+    # Register atexit handler to clean up child processes
+    def cleanup_child_processes():
+        "Terminate child processes started by start_scheduler()."
+        for p in SCHEDULER_PROCS:
+            try:
+                p.terminate()
+                p.wait(timeout=5)
+                logger.info(f"Terminated child process (PID={p.pid})")
+            except Exception as e:
+                logger.warning(f"Failed to terminate child process: {e}")
+    atexit.register(cleanup_child_processes)
+
+
     _ensure_port_free(args.port)
 
     logger.info(f"Web UI starting on http://localhost:{args.port}")
@@ -944,15 +959,48 @@ def main():
 
 
 def start_scheduler():
-    """Start the monitor scheduler (same as telegram_bot.py --no-bot)."""
+    """Start scheduler processes in background (non-blocking).
+
+    Launches two background processes:
+      1. telegram_bot.py --no-bot  (monitor scheduling)
+      2. scripts/render_scheduler.py (daily report + backup)
+    """
+    global SCHEDULER_PROCS
+    python = shutil.which("python3") or shutil.which("python") or sys.executable
+
+    procs = []
+    # 1. Monitor scheduler (telegram_bot.py --no-bot)
     try:
-        python = shutil.which("python3") or shutil.which("python") or sys.executable
-        subprocess.run(
+        p1 = subprocess.Popen(
             [python, str(SCRIPT_DIR / "telegram_bot.py"), "--no-bot"],
-            cwd=str(SCRIPT_DIR), capture_output=True,
-            encoding="utf-8", errors="replace")
+            cwd=str(SCRIPT_DIR),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        procs.append(p1)
+        logger.info(f"Monitor scheduler started (PID={p1.pid})")
     except Exception as e:
-        logger.error(f"Scheduler failed to start: {e}")
+        logger.error(f"Failed to start monitor scheduler: {e}")
+
+    # 2. Daily report + backup scheduler (render_scheduler.py)
+    render_sched = SCRIPT_DIR / "scripts" / "render_scheduler.py"
+    if render_sched.exists():
+        try:
+            p2 = subprocess.Popen(
+                [python, str(render_sched)],
+                cwd=str(SCRIPT_DIR),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            procs.append(p2)
+            logger.info(f"Render scheduler started (PID={p2.pid})")
+        except Exception as e:
+            logger.error(f"Failed to start render scheduler: {e}")
+    else:
+        logger.warning(f"render_scheduler.py not found at {render_sched}")
+
+    # Store in global variable for shutdown cleanup
+    SCHEDULER_PROCS = procs
 
 
 if __name__ == "__main__":
