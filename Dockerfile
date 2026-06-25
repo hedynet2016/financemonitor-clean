@@ -1,14 +1,11 @@
 # Dockerfile for Render deployment
-FROM python:3.13-slim
+FROM python:3.11-slim
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     git \
     curl \
     && rm -rf /var/lib/apt/lists/*
-
-# Install Playwright browsers (if needed)
-# RUN pip install playwright && playwright install chromium
 
 # Set working directory
 WORKDIR /app
@@ -23,8 +20,13 @@ COPY . .
 # Create necessary directories
 RUN mkdir -p .workbuddy/memory .workbuddy/automation-backups logs
 
-# Expose port (Render will use this)
-EXPOSE 8000
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV TZ=Asia/Taipei
+ENV PORT=10000
+
+# Expose port (Render uses PORT env var)
+EXPOSE 10000
 
 # Generate config.json from environment variables
 RUN python scripts/generate_config.py || true
