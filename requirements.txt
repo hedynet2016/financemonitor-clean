@@ -2,36 +2,38 @@
 # Python 3.11+
 
 # Web framework
-flask==3.0.0
+flask>=3.0.0,<4.0
 
 # Telegram
-python-telegram-bot==20.7
+python-telegram-bot>=20.7,<21.0
 
 # Discord
-requests==2.31.0
+requests>=2.31.0,<3.0
 
 # Gmail/Email
-secure-smtplib==0.1.1
+secure-smtplib>=0.1.1
 
 # GitHub
-PyGithub==1.59.1
+PyGithub>=1.59.1,<2.0
 
 # Data processing
-pandas==2.1.4
-numpy==1.26.2
+pandas>=2.1.0,<3.0
+numpy>=1.26.0,<2.0
 
 # Visualization
-matplotlib==3.8.2
+matplotlib>=3.8.0,<4.0
 
 # Web scraping
-beautifulsoup4==4.12.2
-requests==2.31.0
+beautifulsoup4>=4.12.0,<5.0
 
 # Environment
-python-dotenv==1.0.0
+python-dotenv>=1.0.0
 
 # Scheduling
-schedule==1.2.0
+schedule>=1.2.0
 
 # Logging
-colorlog==6.8.0
+colorlog>=6.8.0
+
+# Financial data
+yfinance>=0.2.31
