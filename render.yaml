@@ -1,28 +1,29 @@
 services:
   - type: web
     name: workbuddy
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: bash scripts/render_start.sh
+    env: docker
+    dockerfilePath: ./Dockerfile
     healthCheckPath: /health
     envVars:
-      - key: PYTHON_VERSION
-        value: "3.13"
       - key: TELEGRAM_BOT_TOKEN
-        value: ""
+        sync: false
       - key: TELEGRAM_CHAT_ID
-        value: ""
+        sync: false
       - key: DISCORD_WEBHOOK_URL
-        value: ""
+        sync: false
       - key: GMAIL_SENDER
-        value: ""
+        value: hedynet2016@gmail.com
       - key: GMAIL_APP_PASSWORD
-        value: ""
+        sync: false
       - key: REPORT_RECIPIENT
-        value: ""
+        value: admin@hedynet.com
       - key: GITHUB_PAT
-        value: ""
+        sync: false
       - key: GITHUB_USER
         value: "hedynet2016"
       - key: GITHUB_REPO_BACKUP
         value: "workbuddy-backup"
+      - key: TZ
+        value: Asia/Taipei
+      - key: PYTHONUNBUFFERED
+        value: "1"
