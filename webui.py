@@ -94,7 +94,23 @@ def load_config():
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
-        logger.error(f"config.json not found at {CONFIG_FILE} — returning empty config")
+        # Render 環境：config.json 可能尚未生成，嘗試從環境變數自動生成
+        logger.warning(f"config.json not found at {CONFIG_FILE} — trying to generate from env vars...")
+        try:
+            import subprocess
+            gen_script = SCRIPT_DIR / "scripts" / "generate_config.py"
+            if gen_script.exists():
+                result = subprocess.run(
+                    [sys.executable, str(gen_script)],
+                    capture_output=True, text=True, timeout=10
+                )
+                logger.info(f"generate_config.py stdout: {result.stdout.strip()}")
+                if result.returncode == 0 and CONFIG_FILE.exists():
+                    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                        return json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to auto-generate config.json: {e}")
+        logger.error("config.json not found and auto-generation failed — returning empty config")
         return {}
     except json.JSONDecodeError as e:
         logger.error(f"config.json parse error: {e}")
