@@ -813,9 +813,9 @@ def tasks_view():
   <div class="d-flex align-items-start gap-3">
     <span class="block-num">⑩</span>
     <div class="flex-grow-1">
-      <div class="fw-bold mb-1">美國勞工部 (BLS) 經濟指標相關新聞</div>
-      <div class="mb-2"><span class="source-tag">10 媒體</span> <span class="filter-tag">CPI / PPI / 失業率 / 非農就業</span> <span class="filter-tag">一週內</span></div>
-      <div><small class="text-muted">指標：</small> {" &bull; ".join(bls_indicators)}</div>
+      <div class="fw-bold mb-1">經濟指標相關新聞</div>
+      <div class="mb-2"><span class="source-tag">10 媒體</span> <span class="filter-tag">CPI / PPI / 失業率 / 非農就業 / Fed 利率</span> <span class="filter-tag">一週內</span></div>
+      <div><small class="text-muted">涵蓋：</small> BLS / Fed / ECB / BOJ / BOE 等官方機構</div>
     </div>
   </div>
 </div>

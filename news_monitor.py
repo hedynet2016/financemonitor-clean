@@ -826,11 +826,11 @@ class NewsMonitor:
         logger.info(f"[BLS] Fetched {len(results)} economic indicators")
         return results
 
-    def fetch_bls_news(self) -> List[Dict]:
+    def fetch_economic_news(self) -> List[Dict]:
         """
-        從財經媒體 RSS 抓取與 BLS 經濟指標相關的新聞。
-        來源: CNBC, WSJ, Bloomberg, MarketWatch, Yahoo Finance, FT, Seeking Alpha, MacroMicro
-        關鍵字: CPI, PPI, 失業率, 非農就業, 通膨, 就業報告等
+        從財經媒體 RSS 抓取與經濟指標相關的新聞。
+        來源: CNBC, WSJ, Bloomberg, MarketWatch, Yahoo Finance, FT, Seeking Alpha, TechNews, MacroMicro, Digitimes
+        關鍵字: CPI, PPI, 失業率, 非農就業, 通膨, Fed, 聯準會, 利率, FOMC 等
         時間過濾: 一週內(7天)
         去重: 7日內相同標題不重複
         """
@@ -840,45 +840,57 @@ class NewsMonitor:
         now = datetime.now()
         
         # 清理超過 7 天的推播記錄
-        if hasattr(self, "_bls_news_sent"):
-            self._bls_news_sent = {
-                k: v for k, v in self._bls_news_sent.items()
+        if hasattr(self, "_economic_news_sent"):
+            self._economic_news_sent = {
+                k: v for k, v in self._economic_news_sent.items()
                 if (now - v).days < 7
             }
         else:
-            self._bls_news_sent = {}
+            self._economic_news_sent = {}
         
-        # BLS 相關新聞 RSS 來源 (改採與熱門財經新聞相同的 10 個媒體來源)
-        bls_rss_sources = self.news_sources
+        # 經濟指標相關新聞 RSS 來源 (改採與熱門財經新聞相同的 10 個媒體來源)
+        economic_rss_sources = self.news_sources
         
-        # BLS 經濟指標關鍵字（英文 + 中文）
-        bls_keywords = [
-            # 英文關鍵字
+        # 經濟指標關鍵字（英文 + 中文）
+        economic_keywords = [
+            # 英文關鍵字 - BLS 指標
             "cpi", "consumer price index", "inflation",
             "ppi", "producer price index",
             "unemployment rate", "jobless claims", "non-farm payroll",
             "nf payroll", "employment report", "jobs report",
             "labor department", "bureau of labor statistics",
             "bls", "inflation rate", "core cpi",
+            # 英文關鍵字 - Fed / 聯準會
+            "federal reserve", "fed", "fomc", "interest rate",
+            "rate hike", "rate cut", "powell", "jerome powell",
+            "monetary policy", "central bank", "rate decision",
+            "fed meeting", "fed minutes", "dot plot",
+            # 英文關鍵字 - 其他央行
+            "ecb", "european central bank", "lagarde",
+            "boj", "bank of japan", "kuroda", "ueda",
+            "bank of england", "boe", "bailey",
+            "pboc", "people's bank of china",
             # 中文關鍵字
             "消費者物價指數", "通膨", "通貨膨脹",
             "生產者物價指數",
             "失業率", "非農就業", "就業報告",
             "勞工部", "經濟數據", "經濟指標",
+            "聯準會", "聯儲", "利率", "升息", "降息",
+            "FOMC", "貨幣政策", "央行",
         ]
         
         results = []
         
-        for source in bls_rss_sources:
+        for source in economic_rss_sources:
             try:
-                articles = self.fetch_rss_feed(src)
+                articles = self.fetch_rss_feed(source)
                 for article in articles:
                     title = article.get("title", "").lower()
                     summary = article.get("summary", "").lower()
                     combined = title + " " + summary
                     
-                    # 檢查是否包含 BLS 相關關鍵字
-                    if not any(kw.lower() in combined for kw in bls_keywords):
+                    # 檢查是否包含經濟指標相關關鍵字
+                    if not any(kw.lower() in combined for kw in economic_keywords):
                         continue
                     
                     # 時間過濾: 一週內
@@ -894,32 +906,32 @@ class NewsMonitor:
                     # 去重
                     title_key = article.get("title", "")
                     dedup_key = hashlib.md5(title_key.encode("utf-8")).hexdigest()
-                    if dedup_key in self._bls_news_sent:
+                    if dedup_key in self._economic_news_sent:
                         continue
                     
                     results.append(article)
-                    self._bls_news_sent[dedup_key] = now
+                    self._economic_news_sent[dedup_key] = now
                     
             except Exception as e:
                 src_name = source.get("name", "unknown")
-                logger.warning(f"[BLS News] {src_name} fetch error: {e}")
+                logger.warning(f"[Economic News] {src_name} fetch error: {e}")
                 continue
         
         # 排序: 最新的在前
         results.sort(key=lambda x: x.get("published_parsed", (0,)), reverse=True)
         
-        logger.info(f"[BLS News] Fetched {len(results)} related news articles")
+        logger.info(f"[Economic News] Fetched {len(results)} related news articles")
         return results
 
 
-    def _format_bls_section(self, indicators: List[Dict], bls_news: List[Dict] = None) -> str:
+    def _format_economic_section(self, indicators: List[Dict], economic_news: List[Dict] = None) -> str:
         """
-        格式化美國勞工部(BLS) 經濟指標相關新聞區塊.
-        改採與熱門財經新聞相同的 10 個媒體 RSS 來源彙整.
+        格式化經濟指標相關新聞區塊.
+        從 10 個媒體 RSS 來源彙整經濟指標相關新聞.
         """
         section  = f"\n{'='*40}\n"
-        section += "🏛️ <b>美國勞工部(BLS) 經濟指標相關新聞</b>\n"
-        section += "(CPI / PPI / 失業率 / 非農就業 -- 媒體報導彙整)\n"
+        section += "📊 <b>經濟指標相關新聞</b>\n"
+        section += "(CPI / PPI / 失業率 / 非農就業 / Fed 利率決策 -- 媒體報導彙整)\n"
         section += f"{'='*40}\n\n"
 
         if indicators is None:
@@ -972,11 +984,11 @@ class NewsMonitor:
             section += "\n"
 
         # 相關新聞 (來自財經媒體 RSS)
-        if bls_news:
+        if economic_news:
             section += f"{'='*40}\n"
-            section += "📰 <b>BLS 經濟指標相關新聞</b>\n"
+            section += "📰 <b>經濟指標相關新聞</b>\n"
             section += f"{'='*40}\n\n"
-            for article in bls_news[:10]:  # 最多顯示 10 篇
+            for article in economic_news[:10]:  # 最多顯示 10 篇
                 title = article.get("title", "")
                 link = article.get("link", "")
                 published = article.get("published", "")
@@ -3862,8 +3874,8 @@ class NewsMonitor:
                                   form4_media: List[Dict] = None,
                                   ipo_news: List[Dict] = None,
                                   earnings_news: List[Dict] = None,
-                                  bls_indicators: List[Dict] = None,
-                                  bls_news: List[Dict] = None,
+                                  economic_indicators: List[Dict] = None,
+                                  economic_news: List[Dict] = None,
                                   ict_ai_events: List[Dict] = None,
                                   mag7_events: List[Dict] = None) -> str:
         """生成Telegram消息"""
@@ -3933,8 +3945,8 @@ class NewsMonitor:
             message += self._format_earnings_section(earnings_news)
         
         # ―― 區塊 ⑩:美國勞工部(BLS) 官方經濟指標 ―――――――――――――――
-        if bls_indicators is not None or bls_news:
-            message += self._format_bls_section(bls_indicators, bls_news=bls_news)
+        if economic_indicators is not None or economic_news:
+            message += self._format_economic_section(economic_indicators, economic_news=economic_news)
 
         # ―― 區塊 ⑪:ICT/AI 活動資訊(美/中/台,未來三個月) ――――――
         if ict_ai_events is not None:
@@ -4036,13 +4048,13 @@ class NewsMonitor:
         except Exception as e:
             logger.error(f"Earnings news fetch failed, will skip: {e}")
 
-        # ── 區塊 ⑩:美國勞工部(BLS) 經濟指標相關新聞 ─────────────
+        # ── 區塊 ⑩:經濟指標相關新聞 ─────────────
         # 改採與熱門財經新聞相同媒體來源，不再使用官方 BLS API
-        bls_indicators = []
-        bls_news = []
+        economic_indicators = []
+        economic_news = []
         try:
             logger.info("Fetching BLS-related news from financial media (same sources as hot news)...")
-            bls_news = self.fetch_bls_news()
+            economic_news = self.fetch_economic_news()
         except Exception as e:
             logger.error(f"BLS news fetch failed, will skip: {e}")
 
@@ -4055,8 +4067,8 @@ class NewsMonitor:
             form4_media=form4_media,
             ipo_news=ipo_news,
             earnings_news=earnings_news,
-            bls_indicators=bls_indicators,
-            bls_news=bls_news,
+            economic_indicators=economic_indicators,
+            economic_news=economic_news,
             ict_ai_events=None,  # 區塊 ⑪ 獨立發送
         )
         self.send_telegram_message(notification_message)
