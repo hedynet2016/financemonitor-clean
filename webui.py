@@ -680,7 +680,6 @@ def tasks_view():
     nw = cfg.get("news", {})
     news_hour = nw.get("daily_hour", 8)
     events_hour = nw.get("events_hour", 14)
-    eco = cfg.get("economic", {})
 
     # Build block info from code constants
     news_sources = ["CNBC", "WSJ", "Bloomberg", "MarketWatch", "Yahoo Finance", "FT", "Seeking Alpha", "TechNews", "MacroMicro", "Digitimes"]
@@ -701,7 +700,6 @@ def tasks_view():
       <tr><td class="text-muted">每日活動推播</td><td><b>{events_hour:02d}:00 ET</b> — 區塊⑪（ICT/AI 活動，未來90天）</td></tr>
       <tr><td class="text-muted">每日商品追蹤</td><td><b>16:00 台北時間</b> — 雅虎拍賣商品監控（9 關鍵字，價格 $2,000~$15,000，排除NG）</td></tr>
       <tr><td class="text-muted">每半小時股市監控</td><td>美股交易時段自動執行（跌幅>3%個股+ETF）</td></tr>
-      <tr><td class="text-muted">經濟指標警報</td><td>{'每30分鐘檢查' if eco.get('enabled') else '<span class="text-muted">已停用</span>'}</td></tr>
     </table>
   </div>
 </div>
@@ -799,8 +797,8 @@ def tasks_view():
   <div class="d-flex align-items-start gap-3">
     <span class="block-num">⑩</span>
     <div class="flex-grow-1">
-      <div class="fw-bold mb-1">美國勞工部 (BLS) 官方經濟指標</div>
-      <div class="mb-2"><span class="source-tag">BLS API v1</span> <span class="filter-tag">新數據才推送</span> <span class="filter-tag">12h 快取</span> <span class="filter-tag">7 天去重</span></div>
+      <div class="fw-bold mb-1">美國勞工部 (BLS) 經濟指標相關新聞</div>
+      <div class="mb-2"><span class="source-tag">10 媒體</span> <span class="filter-tag">CPI / PPI / 失業率 / 非農就業</span> <span class="filter-tag">一週內</span></div>
       <div><small class="text-muted">指標：</small> {" &bull; ".join(bls_indicators)}</div>
     </div>
   </div>
@@ -863,23 +861,6 @@ def tasks_view():
         <small class="text-muted ms-2">{us_mkt.get('start_hour',9):02d}:{us_mkt.get('start_minute',30):02d} - {us_mkt.get('end_hour',16):02d}:{us_mkt.get('end_minute',0):02d} (US/Eastern)</small>
         <small class="text-muted ms-2">週一至週五</small>
       </div>
-    </div>
-  </div>
-</div>
-
-<h5 class="mb-3 mt-4"><i class="bi bi-database me-2"></i>經濟指標</h5>
-
-<div class="block-card">
-  <div class="d-flex align-items-start gap-3">
-    <span class="block-num" style="font-size:1.5rem; color: var(--muted);">E</span>
-    <div class="flex-grow-1">
-      <div class="fw-bold mb-1">總經監控</div>
-      <div class="mb-2">
-        <span class="tag {'tag-success' if eco.get('enabled') else 'tag-danger'}">{'ON' if eco.get('enabled') else 'OFF'}</span>
-        <small class="text-muted ms-2">{'每30分鐘檢查' if eco.get('enabled') else '已停用'}</small>
-      </div>
-      <div><small class="text-muted">高優先級：</small><code>{" ".join(eco.get('high_priority_indicators',[]))}</code></div>
-      <div><small class="text-muted">中優先級：</small><code>{" ".join(eco.get('medium_priority_indicators',[]))}</code></div>
     </div>
   </div>
 </div>
