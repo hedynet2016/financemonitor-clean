@@ -3,7 +3,8 @@
 """
 daily_report.py - WorkBuddy Daily Report
 每日下午 6 點自動彙整推播問題、錯誤、功能變更、待辦事項，
-並以 HTML 郵件（含圓餅圖、曲線圖）寄送至 admin@hedynet.com
+並生成 HTML 報告儲存至 scripts/report_YYYY-MM-DD.html，
+供 Web UI (/report) 顯示。
 
 問題陳述原則: 5W1H1N
   Who    - 發生對象 (哪個模組/服務)
@@ -19,12 +20,9 @@ import os
 import re
 import sys
 import json
-import smtplib
 import datetime
 import base64
 from collections import defaultdict
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from pathlib import Path
 
 # ──────────────────────────────────────────────
@@ -71,9 +69,14 @@ def load_env():
 
 load_env()
 
-GMAIL_SENDER   = os.environ.get("GMAIL_SENDER", "")
-GMAIL_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
-RECIPIENT      = os.environ.get("REPORT_RECIPIENT", "admin@hedynet.com")
+# ──────────────────────────────────────────────
+# 環境變數
+# ──────────────────────────────────────────────
+# 郵件功能已停用 - 報告改由 Web UI (/report) 顯示
+# 保留變數定義以供未來參考，但不再使用
+GMAIL_SENDER   = ""  # 已停用 - 改用 Web UI
+GMAIL_PASSWORD = ""  # 已停用 - 改用 Web UI
+RECIPIENT      = ""  # 已停用 - 改用 Web UI
 
 # ──────────────────────────────────────────────
 # 日期
@@ -777,7 +780,7 @@ def build_html(issues, error_count, resolved, added, removed, todos,
   {section("📌 待完成事項與優化建議", todo_html, "")}
 
   <div class="footer">
-    WorkBuddy Daily Report &middot; 自動發送 &middot; {TODAY_DISPLAY} 18:00
+    WorkBuddy Daily Report &middot; Web UI 顯示 &middot; {TODAY_DISPLAY}
     &nbsp;|&nbsp; 問題陳述原則：5W1H1N
   </div>
 </div>
@@ -786,26 +789,14 @@ def build_html(issues, error_count, resolved, added, removed, todos,
     return html
 
 # ──────────────────────────────────────────────
-# 10. 發送郵件
+# 郵件發送功能（已停用）
 # ──────────────────────────────────────────────
+# 2026-06-27: 改為 Web UI (/report) 顯示，不再發送郵件
+# 保留函式定義供未來參考，但 main() 不再呼叫
 def send_email(html_body):
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Workbuddy Daily Report（昨日報告）{YESTERDAY_DISPLAY}"
-    msg["From"]    = GMAIL_SENDER
-    msg["To"]      = RECIPIENT
-
-    part_html = MIMEText(html_body, "html", "utf-8")
-    msg.attach(part_html)
-
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as server:
-            server.login(GMAIL_SENDER, GMAIL_PASSWORD)
-            server.sendmail(GMAIL_SENDER, [RECIPIENT], msg.as_bytes())
-        print(f"[OK] 郵件已發送至 {RECIPIENT}")
-        return True
-    except Exception as e:
-        print(f"[ERROR] 郵件發送失敗: {e}")
-        return False
+    """郵件發送功能已停用 - 報告改由 Web UI (/report) 顯示"""
+    print("[INFO] 郵件功能已停用，報告已儲存至 HTML 檔案供 Web UI 顯示")
+    return True
 
 # ──────────────────────────────────────────────
 # 主流程
@@ -842,15 +833,13 @@ def main():
         yesterday_display=YESTERDAY_DISPLAY
     )
 
-    # 發送
-    ok = send_email(html)
-
-    # 儲存副本（使用今天的日期作為檔名）
+    # 儲存 HTML 報告（供 Web UI /report 顯示）
     output_path = BASE_DIR / "scripts" / f"report_{TODAY_STR}.html"
     output_path.write_text(html, encoding="utf-8")
-    print(f"  報告副本已儲存: {output_path}")
+    print(f"[OK] 報告已儲存: {output_path}")
+    print(f"[INFO] Web UI 可於 /report 頁面檢視報告")
 
-    return 0 if ok else 1
+    return 0
 
 
 if __name__ == "__main__":
