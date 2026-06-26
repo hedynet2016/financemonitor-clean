@@ -274,6 +274,7 @@ def main():
     )
     
     parser.add_argument("--once", action="store_true", help="執行一次所有任務")
+    parser.add_argument("--monitor-only", action="store_true", help="只執行監控任務（不啟動 Web UI）")
     parser.add_argument("--task", choices=[
         "daily_report",
         "github_backup",
