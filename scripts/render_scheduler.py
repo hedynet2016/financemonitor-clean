@@ -3,9 +3,11 @@
 """
 render_scheduler.py - Render 容器內背景排程器
 在 webui + monitor 同一個容器裡運作，定時觸發：
-  - 08:00  economic_news_push.py（經濟指標新聞推播到 Telegram/Discord）
   - 09:00  render_backup.py（推送當日 logs 到 GitHub）
   - 18:00  daily_report.py（生成每日報告）
+
+經濟指標新聞推播已由 integrated_monitor.py 的 news_monitor_worker
+（區塊⑩，每日 08:00 台北時間）統一處理，不再需要獨立的 economic_news_push.py。
 
 因為 Render Cron Job 不共享 Web Service 的檔案系統，
 所以用同一容器內的背景排程來讀取 logs 最可靠。
@@ -17,15 +19,19 @@ import subprocess
 import threading
 import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import schedule
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PYTHON = sys.executable
+# schedule.at() requires pytz; datetime.now() uses zoneinfo
+TAIPEI_TZ = ZoneInfo("Asia/Taipei")
+TAIPEI_TZ_STR = "Asia/Taipei"  # for schedule.at() which uses pytz internally
 
 
 def run_daily_report():
-    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ts = datetime.datetime.now(TAIPEI_TZ).strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{ts}] [Scheduler] 啟動 daily_report.py...")
     try:
         result = subprocess.run(
@@ -46,7 +52,7 @@ def run_daily_report():
 
 
 def run_backup():
-    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ts = datetime.datetime.now(TAIPEI_TZ).strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{ts}] [Scheduler] 啟動 render_backup.py...")
     try:
         result = subprocess.run(
@@ -67,28 +73,6 @@ def run_backup():
         print(f"[{ts}] [Scheduler] render_backup.py 失敗: {e}")
 
 
-def run_economic_news_push():
-    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] [Scheduler] 啟動 economic_news_push.py...")
-    try:
-        result = subprocess.run(
-            [PYTHON, str(BASE_DIR / "scripts" / "economic_news_push.py")],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            cwd=str(BASE_DIR),
-            env={**os.environ},
-        )
-        print(result.stdout)
-        if result.stderr:
-            print(f"[STDERR] {result.stderr}", file=sys.stderr)
-        print(f"[{ts}] [Scheduler] economic_news_push.py 完成 (exit={result.returncode})")
-    except subprocess.TimeoutExpired:
-        print(f"[{ts}] [Scheduler] economic_news_push.py 超時（120s）")
-    except Exception as e:
-        print(f"[{ts}] [Scheduler] economic_news_push.py 失敗: {e}")
-
-
 def run_in_thread(func):
     def wrapper():
         t = threading.Thread(target=func, daemon=True)
@@ -97,26 +81,27 @@ def run_in_thread(func):
 
 
 def main():
-    # 設定排程（使用台北時間，容器已設定 TZ=Asia/Taipei）
-    schedule.every().day.at("08:00").do(run_in_thread(run_economic_news_push))
-    schedule.every().day.at("09:00").do(run_in_thread(run_backup))
-    schedule.every().day.at("18:00").do(run_in_thread(run_daily_report))
+    # 使用明確時區（Asia/Taipei）排程，避免容器未安裝 tzdata 時回退為 UTC
+    # 經濟指標新聞已由 integrated_monitor.py 區塊⑩統一推播（08:00 台北時間）
+    schedule.every().day.at("09:00", TAIPEI_TZ_STR).do(run_in_thread(run_backup))
+    schedule.every().day.at("18:00", TAIPEI_TZ_STR).do(run_in_thread(run_daily_report))
 
     # 啟動時執行一次測試（可透過環境變數關閉）
     if os.environ.get("SCHEDULER_TEST_ON_START", "").lower() not in ("0", "false", "no"):
         print("[Scheduler] 啟動測試：檢查腳本是否可正常 import...")
-        for script in ["scripts/economic_news_push.py", "scripts/daily_report.py", "scripts/render_backup.py"]:
+        for script in ["scripts/daily_report.py", "scripts/render_backup.py"]:
             path = BASE_DIR / script
             if path.exists():
                 print(f"  [OK] {script} 存在")
             else:
                 print(f"  [MISS] {script} 不存在")
 
+    now_str = datetime.datetime.now(TAIPEI_TZ).strftime("%Y-%m-%d %H:%M:%S")
     print("[Scheduler] 排程已啟動：")
-    print("  08:00 → economic_news_push.py（經濟指標新聞推播）")
+    print("  08:00 → 經濟指標新聞（由 integrated_monitor.py 區塊⑩統一推播）")
     print("  09:00 → render_backup.py（推送 logs 到 GitHub）")
     print("  18:00 → daily_report.py（生成每日報告）")
-    print(f"  目前時間: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"  目前時間（台北）: {now_str}")
     print()
 
     while True:
