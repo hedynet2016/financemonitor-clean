@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-economic_news_push.py - 獨立推送經濟指標相關新聞到 Telegram / Discord
-可手動執行: python scripts/economic_news_push.py
-
-注意: 經濟指標新聞已由 integrated_monitor.py 的 news_monitor_worker
-（區塊⑩，每日 08:00 台北時間）統一推播，本腳本僅供手動測試使用。
+economic_news_push.py - 定時推送經濟指標相關新聞到 Telegram / Discord
+設計給 render_scheduler.py 或 cron 呼叫
+用法: python scripts/economic_news_push.py
 """
 import json
 import sys
 import os
-import time
 import requests
 import feedparser
 from datetime import datetime, timedelta
@@ -51,37 +48,6 @@ RSS_SOURCES = [
     ("MacroMicro",  "https://www.macromicro.me/feeds/latest-articles"),
     ("Digitimes",   "https://www.digitimes.com.tw/rss.asp"),
 ]
-
-# 翻譯器（延遲初始化）
-_translator = None
-
-
-def get_translator():
-    global _translator
-    if _translator is None:
-        try:
-            from deep_translator import GoogleTranslator
-            _translator = GoogleTranslator(source='auto', target='zh-TW')
-        except ImportError:
-            print("[WARN] deep_translator 未安裝，標題將保留原文")
-            _translator = False
-    return _translator
-
-
-def translate_text(text: str) -> str:
-    """將英文文字翻譯成繁體中文，失敗時回傳原文"""
-    if not text or not text.strip():
-        return text
-    translator = get_translator()
-    if not translator:
-        return text
-    try:
-        result = translator.translate(text[:1000])
-        if result and result.lower() != text.lower():
-            return result
-    except Exception as e:
-        print(f"  [WARN] 翻譯失敗: {e}")
-    return text
 
 
 def load_config():
@@ -137,12 +103,7 @@ def format_message(news_items: list) -> str:
     now_str = datetime.now().strftime("%Y-%m-%d")
     lines = [f"🏛️ 經濟指標相關新聞 {now_str}", "=" * 40]
     for item in news_items[:15]:
-        title_zh = translate_text(item['title'])
-        if title_zh != item['title']:
-            lines.append(f"【{item['source']}】{title_zh}")
-            lines.append(f"  EN: {item['title']}")
-        else:
-            lines.append(f"【{item['source']}】{item['title']}")
+        lines.append(f"【{item['source']}】{item['title']}")
         lines.append(item["link"])
         lines.append("")
     return "\n".join(lines)
@@ -196,7 +157,6 @@ def main():
         print("[INFO] 本時段無經濟指標相關新聞，跳過推播")
         sys.exit(0)
 
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 翻譯標題中 ...")
     msg = format_message(items)
 
     if token and chat_id:
