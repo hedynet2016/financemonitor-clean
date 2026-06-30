@@ -136,12 +136,14 @@ def send_discord(message: str, webhook_url: str):
 
 def main():
     config = load_config()
+
+    # 支援兩種 config 格式：巢狀 (telegram.bot_token) 或扁平 (TELEGRAM_BOT_TOKEN)
     tg = config.get("telegram", {})
     dc = config.get("discord", {})
 
-    token = tg.get("bot_token", "")
-    chat_id = tg.get("chat_id", "")
-    webhook = dc.get("webhook_url", "")
+    token = tg.get("bot_token", "") or config.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = tg.get("chat_id", "") or config.get("TELEGRAM_CHAT_ID", "")
+    webhook = dc.get("webhook_url", "") or config.get("DISCORD_WEBHOOK_URL", "")
 
     if not token and not webhook:
         print("[ERROR] Telegram / Discord 皆未設定")
