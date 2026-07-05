@@ -46,7 +46,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-
+TAIPEI_TZ = pytz.timezone('Asia/Taipei')
 
 # ── Patch yfinance cache directory ──
 
