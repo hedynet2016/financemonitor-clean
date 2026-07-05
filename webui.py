@@ -1072,9 +1072,9 @@ def main():
     tg_token_ok = bool(_os.environ.get("TELEGRAM_BOT_TOKEN", ""))
     tg_chat_ok = bool(_os.environ.get("TELEGRAM_CHAT_ID", ""))
     dc_webhook_ok = bool(_os.environ.get("DISCORD_WEBHOOK_URL", ""))
-    logger.info(f"[DIAG] Env vars: TELEGRAM_BOT_TOKEN={'✓' if tg_token_ok else '✗'}, "
-                f"TELEGRAM_CHAT_ID={'✓' if tg_chat_ok else '✗'}, "
-                f"DISCORD_WEBHOOK_URL={'✓' if dc_webhook_ok else '✗'}, "
+    logger.info(f"[DIAG] Env vars: TELEGRAM_BOT_TOKEN={'yes' if tg_token_ok else 'no'}, "
+                f"TELEGRAM_CHAT_ID={'yes' if tg_chat_ok else 'no'}, "
+                f"DISCORD_WEBHOOK_URL={'yes' if dc_webhook_ok else 'no'}, "
                 f"PORT={args.port}, TZ={_os.environ.get('TZ', 'NOT SET')}")
 
     if not args.no_scheduler:

@@ -13,7 +13,26 @@ import logging
 import math
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Tuple, Optional
+
+# ── Patch yfinance cache directory (must be before yfinance import) ──
+import os as _os
+import tempfile as _tempfile
+_YF_SAFE_CACHE = _os.path.join(_tempfile.gettempdir(), 'yfinance_sandbox')
+_os.makedirs(_YF_SAFE_CACHE, exist_ok=True)
+_os.environ['YF_CACHE_DIR'] = _YF_SAFE_CACHE
+try:
+    import appdirs as _ad
+    _ad.user_cache_dir = lambda: _YF_SAFE_CACHE
+except ImportError:
+    pass
+
 import yfinance as yf
+
+# Directly override yfinance cache class attributes (belt-and-suspenders)
+import yfinance.cache as _yf_cache
+_yf_cache._CookieDBManager._cache_dir = _YF_SAFE_CACHE
+_yf_cache._TzDBManager._cache_dir = _YF_SAFE_CACHE
+_yf_cache._ISINDBManager._cache_dir = _YF_SAFE_CACHE
 from deep_translator import GoogleTranslator
 from notification_sender import NotificationSender
 import html

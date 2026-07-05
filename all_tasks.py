@@ -13,8 +13,27 @@ import logging
 import traceback
 import subprocess
 import atexit
+import tempfile
 from datetime import datetime
 from typing import Dict, List, Optional, Callable
+
+# ── Fix Windows console encoding (cp950 can't handle some Unicode chars) ──
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
+# ── Patch yfinance cache directory (must be before any yfinance import) ──
+_YF_SAFE_CACHE = os.path.join(tempfile.gettempdir(), 'yfinance_sandbox')
+os.makedirs(_YF_SAFE_CACHE, exist_ok=True)
+os.environ['YF_CACHE_DIR'] = _YF_SAFE_CACHE
+try:
+    import appdirs as _ad
+    _ad.user_cache_dir = lambda: _YF_SAFE_CACHE
+except ImportError:
+    pass
 
 # 設定日誌
 logging.basicConfig(

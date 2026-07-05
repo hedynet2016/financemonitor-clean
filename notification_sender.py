@@ -32,9 +32,9 @@ class NotificationSender:
         self.gmail_password = self.config.get("GMAIL_APP_PASSWORD") or os.environ.get("GMAIL_APP_PASSWORD", "")
         self.recipient = self.config.get("REPORT_RECIPIENT") or os.environ.get("REPORT_RECIPIENT", "")
         
-        logger.info(f"NotificationSender init: telegram={'✓' if self.telegram_token else '✗'}, "
-                     f"discord={'✓' if self.discord_webhook else '✗'}, "
-                     f"email={'✓' if self.gmail_sender else '✗'}")
+        logger.info(f"NotificationSender init: telegram={'yes' if self.telegram_token else 'no'}, "
+                     f"discord={'yes' if self.discord_webhook else 'no'}, "
+                     f"email={'yes' if self.gmail_sender else 'no'}")
     
     def send_telegram(self, message: str, parse_mode: str = "HTML") -> bool:
         """發送 Telegram 消息"""
@@ -50,16 +50,69 @@ class NotificationSender:
         """發送 Email"""
         return send_email(subject, body, recipient)
     
-    def send_all(self, message: str, subject: str = None) -> dict:
-        """發送通知到所有渠道"""
+    def send_all(self, message: str, subject: str = None,
+                 discord_webhook: str = None) -> dict:
+        """發送通知到所有渠道
+        
+        Args:
+            message: 消息內容
+            subject: 郵件主題（可選）
+            discord_webhook: 覆蓋 Discord Webhook URL（可選）
+        """
+        webhook = discord_webhook or self.discord_webhook
         return send_notification(message, subject,
                                  bot_token=self.telegram_token,
                                  chat_id=self.telegram_chat_id,
-                                 webhook_url=self.discord_webhook)
+                                 webhook_url=webhook)
     
-    def send_to_all(self, message: str, subject: str = None) -> dict:
+    def send_to_all(self, message: str, subject: str = None,
+                    discord_webhook: str = None) -> dict:
         """發送通知到所有渠道（別名）"""
-        return self.send_all(message, subject)
+        return self.send_all(message, subject, discord_webhook=discord_webhook)
+    
+    def send_long_message(self, message: str, discord_webhook: str = None) -> bool:
+        """分段發送超長訊息（Telegram 上限 4096 字元）
+        
+        將超長訊息按 ~3900 字元切分，優先在換行處斷開，
+        逐段發送到 Telegram 和 Discord。
+        
+        Args:
+            message: 完整訊息文字
+            discord_webhook: 覆蓋 Discord Webhook URL（可選）
+        
+        Returns:
+            True 如果至少一段發送成功
+        """
+        MAX_LEN = 3900
+        webhook = discord_webhook or self.discord_webhook
+        
+        # 按換行切分為不超過 MAX_LEN 的段落
+        chunks = []
+        remaining = message
+        while len(remaining) > MAX_LEN:
+            # 在 MAX_LEN 範圍內找最後一個換行
+            cut = remaining.rfind('\n', 0, MAX_LEN)
+            if cut == -1:
+                cut = MAX_LEN  # 找不到換行就硬切
+            chunks.append(remaining[:cut])
+            remaining = remaining[cut:].lstrip('\n')
+        chunks.append(remaining)
+        
+        logger.info(f"send_long_message: {len(message)} chars → {len(chunks)} chunks")
+        
+        any_success = False
+        for i, chunk in enumerate(chunks):
+            logger.info(f"  Sending chunk {i+1}/{len(chunks)} ({len(chunk)} chars)")
+            results = send_notification(
+                chunk, None,
+                bot_token=self.telegram_token,
+                chat_id=self.telegram_chat_id,
+                webhook_url=webhook
+            )
+            if any(results.values()):
+                any_success = True
+        
+        return any_success
     
     def send_message(self, message: str, subject: str = None, methods: list = None) -> dict:
         """發送消息（通用方法）"""
