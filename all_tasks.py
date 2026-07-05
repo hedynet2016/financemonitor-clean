@@ -288,13 +288,7 @@ def main():
     
     args = parser.parse_args()
     
-    # 啟動 Web UI（在所有任務執行前啟動）
-    webui_process = start_webui()
-    if webui_process:
-        import time
-        time.sleep(2)  # 等待 Web UI 啟動
-    
-    # 檢查配置
+    # ── 純查詢操作：不需啟動 Web UI ──
     if args.check_config:
         Config.print_config()
         missing = Config.validate([
@@ -311,7 +305,6 @@ def main():
             print("\n[OK] 所有必要環境變數已設置")
         return
     
-    # 列出任務
     if args.list:
         print("\n可用任務:")
         print("=" * 60)
@@ -328,6 +321,19 @@ def main():
             print(f"      {task_desc}")
         print("=" * 60)
         return
+    
+    # ── 無參數：直接印幫助，不啟動任何東西 ──
+    if not args.once and not args.task:
+        parser.print_help()
+        return
+    
+    # ── 有任務要執行：啟動 Web UI（除非 --monitor-only）──
+    webui_process = None
+    if not args.monitor_only:
+        webui_process = start_webui()
+        if webui_process:
+            import time
+            time.sleep(2)  # 等待 Web UI 啟動
     
     # 創建任務執行器
     executors = {
