@@ -1,77 +1,110 @@
-# Backup FinanceMonitor core files to desktop
-# This script copies critical files to desktop WorkBuddy backup folder
+# FinanceMonitor Daily Backup Script (financemonitor-clean)
+# Copies core files to Desktop\WorkBuddy only if content changed (SHA256 check)
+# Updated 2026-07-05: source path changed from old workspace to financemonitor-clean
 
-$ErrorActionPreference = "Stop"
+$SrcDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
+$DstDir  = "$env:USERPROFILE\Desktop\WorkBuddy"
+$LogFile = "$DstDir\backup.log"
 
-$timestamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
-$desktop = [System.Environment]::GetFolderPath("Desktop")
-$backupRoot = Join-Path $desktop "WorkBuddyBackup"
-$backupDir = Join-Path $backupRoot $timestamp
-
-# Create backup directory
-New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
-Write-Host "[$timestamp] Starting backup to $backupDir..." -ForegroundColor Cyan
-
-# Source directory
-$sourceDir = "C:\Users\Ben\WorkBuddy\2026-06-24-10-18-32"
-
-# Core files to backup
-$coreFiles = @(
-    "webui.py",
-    "news_monitor.py",
-    "all_tasks.py",
+# Core files to backup (synced with financemonitor-clean structure)
+$Files = @(
+    "config.json",
     "integrated_monitor.py",
+    "news_monitor.py",
+    "economic_monitor.py",
+    "stock_monitor.py",
+    "notification_sender.py",
     "telegram_bot.py",
-    "config.json.example",
+    "product_monitor.py",
+    "all_tasks.py",
+    "webui.py",
+    "wsgi.py",
+    "requirements.txt",
     "Dockerfile",
     "render.yaml",
-    "requirements.txt",
-    "scripts/daily_report.py",
-    "scripts/generate_config.py"
+    "README.md",
+    "scripts\create_test_logs.py",
+    "scripts\daily_report.py",
+    "scripts\deploy_to_render.py",
+    "scripts\economic_news_push.py",
+    "scripts\generate_config.py",
+    "scripts\render_backup.py",
+    "scripts\render_scheduler.py",
+    "scripts\render_start.sh"
 )
 
-# Copy core files
-$copiedCount = 0
-foreach ($file in $coreFiles) {
-    $sourcePath = Join-Path $sourceDir $file
-    if (Test-Path $sourcePath) {
-        $destPath = Join-Path $backupDir $file
-        $destDir = Split-Path $destPath -Parent
-        if (!(Test-Path $destDir)) {
-            New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+# Create destination folder if missing
+if (-not (Test-Path $DstDir)) {
+    New-Item -ItemType Directory -Path $DstDir -Force | Out-Null
+    Write-Host "[+] Created backup directory: $DstDir" -ForegroundColor Green
+}
+
+# Counters
+$Copied  = 0
+$Skipped = 0
+$Failed  = 0
+$TimeStr = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+Write-Host ""
+Write-Host "=====================================" -ForegroundColor Cyan
+Write-Host "  FinanceMonitor Backup - $TimeStr" -ForegroundColor Cyan
+Write-Host "=====================================" -ForegroundColor Cyan
+Write-Host "  Source : $SrcDir"
+Write-Host "  Target : $DstDir"
+Write-Host ""
+
+$LogLines = [System.Collections.Generic.List[string]]::new()
+$LogLines.Add("===== Backup $TimeStr =====")
+
+foreach ($File in $Files) {
+    $SrcPath = Join-Path $SrcDir $File
+    $DstPath = Join-Path $DstDir $File
+
+    # Ensure destination subdirectory exists (e.g. Desktop\WorkBuddy\scripts\)
+    $DstParent = Split-Path $DstPath -Parent
+    if ($DstParent -and (-not (Test-Path $DstParent))) {
+        New-Item -ItemType Directory -Path $DstParent -Force | Out-Null
+    }
+
+    if (-not (Test-Path $SrcPath)) {
+        Write-Host "  [SKIP] $File (source not found)" -ForegroundColor DarkGray
+        $LogLines.Add("SKIP    $File (source not found)")
+        $Skipped++
+        continue
+    }
+
+    $SrcHash = (Get-FileHash -Path $SrcPath -Algorithm SHA256).Hash
+
+    if (Test-Path $DstPath) {
+        $DstHash = (Get-FileHash -Path $DstPath -Algorithm SHA256).Hash
+        if ($SrcHash -eq $DstHash) {
+            Write-Host "  [=]    $File (unchanged, skip)" -ForegroundColor DarkGray
+            $LogLines.Add("NO_CHG  $File")
+            $Skipped++
+            continue
         }
-        Copy-Item -Path $sourcePath -Destination $destPath -Force
-        $copiedCount++
-        Write-Host "  ✓ Copied: $file" -ForegroundColor Green
-    } else {
-        Write-Host "  ✗ Not found: $file" -ForegroundColor Yellow
+    }
+
+    try {
+        Copy-Item -Path $SrcPath -Destination $DstPath -Force
+        Write-Host "  [OK]   $File" -ForegroundColor Green
+        $LogLines.Add("COPIED  $File")
+        $Copied++
+    } catch {
+        Write-Host "  [ERR]  $File : $_" -ForegroundColor Red
+        $LogLines.Add("ERROR   $File : $_")
+        $Failed++
     }
 }
 
-# Also backup .workbuddy/memory folder
-$memorySource = Join-Path $sourceDir ".workbuddy\memory"
-$memoryDest = Join-Path $backupDir ".workbuddy\memory"
-if (Test-Path $memorySource) {
-    Copy-Item -Path $memorySource -Destination $memoryDest -Recurse -Force
-    Write-Host "  ✓ Copied: .workbuddy/memory/" -ForegroundColor Green
-}
+# Write log
+$LogLines.Add("RESULT  copied=$Copied skipped=$Skipped failed=$Failed")
+$LogLines.Add("")
+$LogLines | Out-File -FilePath $LogFile -Encoding UTF8 -Append
 
-# Create backup manifest
-$manifest = @"
-FinanceMonitor Backup Manifest
-==========================
-Backup Time: $timestamp
-Source: $sourceDir
-Destination: $backupDir
-
-Files Backed Up:
-$($coreFiles | ForEach-Object { "  - $_" })
-
-Restore Command:
-  Copy-Item -Path "$backupDir\*" -Destination "$sourceDir" -Recurse -Force
-"@
-
-$manifest | Out-File -FilePath (Join-Path $backupDir "BACKUP_MANIFEST.txt") -Encoding UTF8
-
-Write-Host "`n[$timestamp] Backup completed! $copiedCount files copied." -ForegroundColor Cyan
-Write-Host "Backup location: $backupDir" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "=====================================" -ForegroundColor Cyan
+Write-Host "  Done! Copied=$Copied  Skipped=$Skipped  Failed=$Failed" -ForegroundColor Cyan
+Write-Host "  Log: $LogFile" -ForegroundColor Cyan
+Write-Host "=====================================" -ForegroundColor Cyan
+Write-Host ""
