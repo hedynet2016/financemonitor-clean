@@ -1067,6 +1067,16 @@ def main():
     p.add_argument("--no-scheduler", action="store_true", help="Web UI only (no background scheduler)")
     args = p.parse_args()
 
+    # 啟動診斷：顯示關鍵環境變數狀態
+    import os as _os
+    tg_token_ok = bool(_os.environ.get("TELEGRAM_BOT_TOKEN", ""))
+    tg_chat_ok = bool(_os.environ.get("TELEGRAM_CHAT_ID", ""))
+    dc_webhook_ok = bool(_os.environ.get("DISCORD_WEBHOOK_URL", ""))
+    logger.info(f"[DIAG] Env vars: TELEGRAM_BOT_TOKEN={'✓' if tg_token_ok else '✗'}, "
+                f"TELEGRAM_CHAT_ID={'✓' if tg_chat_ok else '✗'}, "
+                f"DISCORD_WEBHOOK_URL={'✓' if dc_webhook_ok else '✗'}, "
+                f"PORT={args.port}, TZ={_os.environ.get('TZ', 'NOT SET')}")
+
     if not args.no_scheduler:
         t = threading.Thread(target=start_scheduler, daemon=True)
         t.start()

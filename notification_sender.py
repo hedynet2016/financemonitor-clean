@@ -22,20 +22,29 @@ class NotificationSender:
         self.config = config or {}
         
         # 從 config 或環境變數讀取配置
-        self.telegram_token = self.config.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN", "")
-        self.telegram_chat_id = self.config.get("TELEGRAM_CHAT_ID") or os.environ.get("TELEGRAM_CHAT_ID", "")
-        self.discord_webhook = self.config.get("DISCORD_WEBHOOK_URL") or os.environ.get("DISCORD_WEBHOOK_URL", "")
+        # config.json 結構: { "telegram": {"bot_token": "...", "chat_id": "..."}, "discord": {...} }
+        tg = self.config.get("telegram", {})
+        dc = self.config.get("discord", {})
+        self.telegram_token = tg.get("bot_token") or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        self.telegram_chat_id = tg.get("chat_id") or os.environ.get("TELEGRAM_CHAT_ID", "")
+        self.discord_webhook = dc.get("webhook_url") or os.environ.get("DISCORD_WEBHOOK_URL", "")
         self.gmail_sender = self.config.get("GMAIL_SENDER") or os.environ.get("GMAIL_SENDER", "")
         self.gmail_password = self.config.get("GMAIL_APP_PASSWORD") or os.environ.get("GMAIL_APP_PASSWORD", "")
         self.recipient = self.config.get("REPORT_RECIPIENT") or os.environ.get("REPORT_RECIPIENT", "")
+        
+        logger.info(f"NotificationSender init: telegram={'✓' if self.telegram_token else '✗'}, "
+                     f"discord={'✓' if self.discord_webhook else '✗'}, "
+                     f"email={'✓' if self.gmail_sender else '✗'}")
     
     def send_telegram(self, message: str, parse_mode: str = "HTML") -> bool:
         """發送 Telegram 消息"""
-        return send_telegram_message(message, parse_mode)
+        return send_telegram_message(message, parse_mode,
+                                      bot_token=self.telegram_token,
+                                      chat_id=self.telegram_chat_id)
     
     def send_discord(self, message: str) -> bool:
         """發送 Discord 消息"""
-        return send_discord_message(message)
+        return send_discord_message(message, webhook_url=self.discord_webhook)
     
     def send_email(self, subject: str, body: str, recipient: str = None) -> bool:
         """發送 Email"""
@@ -43,7 +52,10 @@ class NotificationSender:
     
     def send_all(self, message: str, subject: str = None) -> dict:
         """發送通知到所有渠道"""
-        return send_notification(message, subject)
+        return send_notification(message, subject,
+                                 bot_token=self.telegram_token,
+                                 chat_id=self.telegram_chat_id,
+                                 webhook_url=self.discord_webhook)
     
     def send_to_all(self, message: str, subject: str = None) -> dict:
         """發送通知到所有渠道（別名）"""
@@ -51,16 +63,27 @@ class NotificationSender:
     
     def send_message(self, message: str, subject: str = None, methods: list = None) -> dict:
         """發送消息（通用方法）"""
-        return send_notification(message, subject, methods)
+        return send_notification(message, subject, methods,
+                                 bot_token=self.telegram_token,
+                                 chat_id=self.telegram_chat_id,
+                                 webhook_url=self.discord_webhook)
 
 # ==================== Telegram 通知 ====================
-def send_telegram_message(message: str, parse_mode: str = "HTML") -> bool:
-    """發送 Telegram 消息"""
+def send_telegram_message(message: str, parse_mode: str = "HTML",
+                          bot_token: str = None, chat_id: str = None) -> bool:
+    """發送 Telegram 消息
+    
+    Args:
+        message: 消息內容
+        parse_mode: 解析模式（HTML/Markdown）
+        bot_token: Bot Token（可選，預設從環境變數讀取）
+        chat_id: Chat ID（可選，預設從環境變數讀取）
+    """
     try:
         import telegram
         
-        bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-        chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+        bot_token = bot_token or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        chat_id = chat_id or os.environ.get("TELEGRAM_CHAT_ID", "")
         
         if not bot_token or not chat_id:
             logger.warning("Telegram 配置未設置，跳過發送")
@@ -146,18 +169,29 @@ def send_email(subject: str, body: str, recipient: str = None) -> bool:
         return False
 
 # ==================== 通用通知 ====================
-def send_notification(message: str, subject: str = None, methods: list = None) -> dict:
-    """發送通知到所有配置的渠道"""
+def send_notification(message: str, subject: str = None, methods: list = None,
+                      bot_token: str = None, chat_id: str = None,
+                      webhook_url: str = None) -> dict:
+    """發送通知到所有配置的渠道
+    
+    Args:
+        message: 消息內容
+        subject: 郵件主題
+        methods: 發送渠道列表
+        bot_token: Telegram Bot Token（可選）
+        chat_id: Telegram Chat ID（可選）
+        webhook_url: Discord Webhook URL（可選）
+    """
     if methods is None:
         methods = ["telegram", "discord", "email"]
     
     results = {}
     
     if "telegram" in methods:
-        results["telegram"] = send_telegram_message(message)
+        results["telegram"] = send_telegram_message(message, bot_token=bot_token, chat_id=chat_id)
     
     if "discord" in methods:
-        results["discord"] = send_discord_message(message)
+        results["discord"] = send_discord_message(message, webhook_url=webhook_url)
     
     if "email" in methods and subject:
         results["email"] = send_email(subject, message)

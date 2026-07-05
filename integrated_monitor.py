@@ -270,6 +270,10 @@ class IntegratedMonitor:
 
         last_run_date = None
         
+        logger.info(f"News monitor: target={target_hour}:00 Taipei, last_run_date=None")
+        heartbeat_count = 0
+        
+        
         # 使用明確時區（台北時間）
         taipei_tz = pytz.timezone('Asia/Taipei')
         
@@ -318,7 +322,11 @@ class IntegratedMonitor:
 
                     logger.info(f"Triggering news monitor (blocks 1-10) at {now.strftime('%H:%M')}...")
 
-                    self.news_monitor.run_news_only()
+                    try:
+                        self.news_monitor.run_news_only()
+                        logger.info(f"News monitor run COMPLETED at {datetime.now(TAIPEI_TZ).strftime('%H:%M:%S')}")
+                    except Exception as e:
+                        logger.error(f"News monitor run FAILED: {e}", exc_info=True)
 
                     last_run_date = today
 
@@ -336,6 +344,11 @@ class IntegratedMonitor:
 
                 else:
 
+                    heartbeat_count += 1
+                    if heartbeat_count % 30 == 0:
+                        logger.info(f"[HEARTBEAT] news_monitor_worker alive, "
+                                    f"now={now.strftime('%Y-%m-%d %H:%M:%S %Z')}, "
+                                    f"target_hour={target_hour}, last_run={last_run_date}")
                     time.sleep(60)
 
 
