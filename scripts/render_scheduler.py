@@ -19,9 +19,11 @@ import datetime
 from pathlib import Path
 
 import schedule
+import pytz
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PYTHON = sys.executable
+TAIPEI_TZ = pytz.timezone('Asia/Taipei')
 
 
 def run_daily_report():
@@ -97,10 +99,11 @@ def run_in_thread(func):
 
 
 def main():
-    # 設定排程（使用台北時間，容器已設定 TZ=Asia/Taipei）
-    schedule.every().day.at("08:00").do(run_in_thread(run_economic_news_push))
-    schedule.every().day.at("09:00").do(run_in_thread(run_backup))
-    schedule.every().day.at("18:00").do(run_in_thread(run_daily_report))
+    # 設定排程（明確指定台北時區，避免容器時區設定錯誤）
+    # 經濟指標新聞已由 integrated_monitor.py 區塊⑩統一推播（08:00 台北時間）
+    # 移除 run_economic_news_push，避免重複推播
+    schedule.every().day.at("09:00", TAIPEI_TZ).do(run_in_thread(run_backup))
+    schedule.every().day.at("18:00", TAIPEI_TZ).do(run_in_thread(run_daily_report))
 
     # 啟動時執行一次測試（可透過環境變數關閉）
     if os.environ.get("SCHEDULER_TEST_ON_START", "").lower() not in ("0", "false", "no"):
@@ -113,10 +116,10 @@ def main():
                 print(f"  [MISS] {script} 不存在")
 
     print("[Scheduler] 排程已啟動：")
-    print("  08:00 → economic_news_push.py（經濟指標新聞推播）")
     print("  09:00 → render_backup.py（推送 logs 到 GitHub）")
     print("  18:00 → daily_report.py（生成每日報告）")
-    print(f"  目前時間: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("  ※ 經濟指標新聞推播已整合至 integrated_monitor.py（08:00 台北時間）")
+    print(f"  目前時間: {datetime.datetime.now(TAIPEI_TZ).strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print()
 
     while True:

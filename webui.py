@@ -481,7 +481,7 @@ def dashboard():
   <div class="card-header"><i class="bi bi-info-circle me-2"></i>系統資訊</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每日 08:00 ET 新聞 + 14:00 ET 活動 + 16:00 商品追蹤 + 每半小時股市</td></tr>
+      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每日 08:00 台北時間 新聞 + 14:00 台北時間 活動 + 16:00 台北時間 商品追蹤 + 每半小時股市</td></tr>
       <tr><td class="text-muted">推送管道</td><td>Telegram Bot + Discord Webhook</td></tr>
       <tr><td class="text-muted">Python</td><td>{{py_version}}</td></tr>
       <tr><td class="text-muted">工作目錄</td><td>{{work_dir}}</td></tr>
@@ -598,26 +598,26 @@ def settings():
   </div>
 
   <div class="card mb-4">
-    <div class="card-header"><i class="bi bi-clock me-2"></i>排程（ET 美東時間）</div>
+    <div class="card-header"><i class="bi bi-clock me-2"></i>排程（台北時間）</div>
     <div class="card-body">
       <div class="row g-3">
         <div class="col-sm-4">
           <label class="form-label">每日新聞推送時間</label>
           <select class="form-select" name="news_hour">
             {% for h in range(24) %}
-            <option value="{{h}}" {{'selected' if h==dc.news_hour}}>{{'%02d:00' % h}} ET</option>
+            <option value="{{h}}" {{'selected' if h==dc.news_hour}}>{{'%02d:00' % h}} 台北時間</option>
             {% endfor %}
           </select>
-          <small class="text-muted">目前：{{'%02d:00' % dc.news_hour}} ET</small>
+          <small class="text-muted">目前：{{'%02d:00' % dc.news_hour}} 台北時間</small>
         </div>
         <div class="col-sm-4">
           <label class="form-label">每日活動推送時間</label>
           <select class="form-select" name="events_hour">
             {% for h in range(24) %}
-            <option value="{{h}}" {{'selected' if h==dc.events_hour}}>{{'%02d:00' % h}} ET</option>
+            <option value="{{h}}" {{'selected' if h==dc.events_hour}}>{{'%02d:00' % h}} 台北時間</option>
             {% endfor %}
           </select>
-          <small class="text-muted">目前：{{'%02d:00' % dc.events_hour}} ET</small>
+          <small class="text-muted">目前：{{'%02d:00' % dc.events_hour}} 台北時間</small>
         </div>
         <div class="col-sm-4 d-flex align-items-end">
           <small class="text-muted">每半小時股市監控自動運行</small>
@@ -712,8 +712,8 @@ def tasks_view():
   <div class="card-header"><i class="bi bi-clock me-2"></i>排程</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">每日完整推播</td><td><b>{news_hour:02d}:00 ET</b> — 區塊①~⑩（新聞/13F/Form4/IPO/財報/BLS）</td></tr>
-      <tr><td class="text-muted">每日活動推播</td><td><b>{events_hour:02d}:00 ET</b> — 區塊⑪（ICT/AI 活動，未來90天）</td></tr>
+      <tr><td class="text-muted" style="width:200px">每日完整推播</td><td><b>{news_hour:02d}:00 台北時間</b> — 區塊①~⑩（新聞/13F/Form4/IPO/財報/經濟指標新聞）</td></tr>
+      <tr><td class="text-muted">每日活動推播</td><td><b>{events_hour:02d}:00 台北時間</b> — 區塊⑪（ICT/AI 活動，未來90天）</td></tr>
       <tr><td class="text-muted">每日商品追蹤</td><td><b>16:00 台北時間</b> — 雅虎拍賣商品監控（9 關鍵字，價格 $2,000~$15,000，排除NG）</td></tr>
       <tr><td class="text-muted">每半小時股市監控</td><td>美股交易時段自動執行（跌幅>3%個股+ETF）</td></tr>
     </table>
@@ -815,7 +815,7 @@ def tasks_view():
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">經濟指標相關新聞</div>
       <div class="mb-2"><span class="source-tag">10 媒體</span> <span class="filter-tag">CPI / PPI / 失業率 / 非農就業 / Fed 利率</span> <span class="filter-tag">一週內</span></div>
-      <div><small class="text-muted">涵蓋：</small> BLS / Fed / ECB / BOJ / BOE 等官方機構</div>
+      <div><small class="text-muted">來源：</small> CNBC / WSJ / Bloomberg / MarketWatch 等財經媒體 RSS</div>
     </div>
   </div>
 </div>

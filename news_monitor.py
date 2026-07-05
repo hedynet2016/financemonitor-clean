@@ -994,11 +994,21 @@ class NewsMonitor:
                 published = article.get("published", "")
                 summary = article.get("summary", "")[:200]
                 
-                section += f'  📌 <b><a href="{link}">{title}</a></b>\n'
+                # 翻譯標題為中文
+                title_zh = self.translate_text(title) if title else ""
+                if not title_zh:
+                    title_zh = title  # 翻譯失敗則使用原文
+                
+                section += f'  📌 <b><a href="{link}">{title_zh}</a></b>\n'
                 if published:
                     section += f"     📅 {published}\n"
                 if summary:
-                    section += f"     📝 {summary}...\n"
+                    # 也嘗試翻譯摘要
+                    summary_zh = self.translate_text(summary[:200]) if summary else ""
+                    if summary_zh:
+                        section += f"     📝 {summary_zh[:200]}...\n"
+                    else:
+                        section += f"     📝 {summary}...\n"
                 section += "\n"
             section += "\n"
 

@@ -18,6 +18,8 @@ import logging
 
 from datetime import datetime
 
+import pytz
+
 import signal
 
 import sys
@@ -208,7 +210,7 @@ class IntegratedMonitor:
 
                 taipei_tz = pytz.timezone('Asia/Taipei')
 
-                now = datetime.now(taipei_tz)
+                now = datetime.now(TAIPEI_TZ)
 
                 current_block = now.hour * 2 + (now.minute // 30)
 
@@ -267,6 +269,10 @@ class IntegratedMonitor:
         target_hour = self.news_monitor.news_config.get('daily_hour', 8)
 
         last_run_date = None
+        
+        # 使用明確時區（台北時間）
+        taipei_tz = pytz.timezone('Asia/Taipei')
+        
 
 
 
@@ -274,7 +280,7 @@ class IntegratedMonitor:
 
             try:
 
-                now = datetime.now()
+                now = datetime.now(TAIPEI_TZ)
 
                 today = now.date()
 
@@ -353,6 +359,10 @@ class IntegratedMonitor:
         target_hour = self.news_monitor.news_config.get('events_hour', 14)
 
         last_run_date = None
+        
+        # 使用明確時區（台北時間）
+        taipei_tz = pytz.timezone('Asia/Taipei')
+        
 
 
 
@@ -360,7 +370,7 @@ class IntegratedMonitor:
 
             try:
 
-                now = datetime.now()
+                now = datetime.now(TAIPEI_TZ)
 
                 today = now.date()
 
@@ -444,7 +454,7 @@ class IntegratedMonitor:
 
 #             try:
 
-#                 now = datetime.now()
+#                 now = datetime.now(TAIPEI_TZ)
 
 #                 today = now.date()
 
@@ -521,6 +531,10 @@ class IntegratedMonitor:
         target_hour = 16  # 16:00 台北時間
 
         last_run_date = None
+        
+        # 使用明確時區（台北時間）
+        taipei_tz = pytz.timezone('Asia/Taipei')
+        
 
         
 
@@ -528,7 +542,7 @@ class IntegratedMonitor:
 
             try:
 
-                now = datetime.now()
+                now = datetime.now(TAIPEI_TZ)
 
                 today = now.date()
 

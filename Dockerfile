@@ -5,7 +5,12 @@ FROM python:3.11-slim
 RUN apt-get update && apt-get install -y \
     git \
     curl \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+# Set timezone explicitly
+ENV TZ=Asia/Taipei
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # Set working directory
 WORKDIR /app

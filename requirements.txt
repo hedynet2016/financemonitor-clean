@@ -39,3 +39,4 @@ colorlog>=6.8.0
 # Financial data
 yfinance>=0.2.31
 feedparser>=6.0.0
+pytz>=2023.3
