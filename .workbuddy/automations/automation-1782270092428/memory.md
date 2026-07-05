@@ -1,5 +1,14 @@
 # GitHub 同步 09:00 — 執行記憶
 
+## 2026-07-05 16:47
+
+- 直接在 `financemonitor-clean` 工作區執行 git add/commit/push（無需複製）
+- 2 個檔案變更：
+  - `.workbuddy/memory/2026-07-05.md`：新增 notification_sender config key 路徑錯誤修復記錄（+44 行）
+  - `backup_to_desktop.ps1`：重寫為 SHA256 差異比對備份腳本（+77/-62 行）
+- Git commit: `aa8d337` → push 成功
+- 推送目標：`hedynet2016/financemonitor-clean` main 分支
+
 ## 2026-06-30 08:50
 
 - 從 `2026-06-24-10-18-32` 複製 10 個檔案/目錄到 `financemonitor-clean`
