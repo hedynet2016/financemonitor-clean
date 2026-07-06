@@ -20,7 +20,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright Firefox browser + system dependencies
-RUN playwright install --with-deps firefox
+# Note: apt-get update is needed because we cleaned the cache above.
+# || true ensures the build doesn't fail if Playwright can't install
+# (product monitor will gracefully skip if Playwright is unavailable)
+RUN apt-get update && playwright install --with-deps firefox || echo "WARN: Playwright install failed, product monitor will be disabled"
 
 # Copy all application files
 COPY . .
