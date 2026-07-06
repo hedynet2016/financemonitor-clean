@@ -41,5 +41,14 @@ yfinance>=0.2.31
 feedparser>=6.0.0
 pytz>=2023.3
 
+# Translation (news/economic monitor - translate EN to zh-TW)
+deep-translator>=1.11.0
+
+# Platform-specific cache directories (yfinance cache patch)
+appdirs>=1.4.4
+
+# HTTP utilities (disable SSL warnings in stock_monitor)
+urllib3>=2.0.0
+
 # Browser automation (product monitor - Yahoo auction scraping)
 playwright>=1.40.0
