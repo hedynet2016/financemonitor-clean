@@ -71,10 +71,10 @@ class NotificationSender:
         return self.send_all(message, subject, discord_webhook=discord_webhook)
     
     def send_long_message(self, message: str, discord_webhook: str = None) -> bool:
-        """分段發送超長訊息（Telegram 上限 4096 字元）
+        """分段發送超長訊息（Telegram 上限 4096, Discord 上限 2000）
         
-        將超長訊息按 ~3900 字元切分，優先在換行處斷開，
-        逐段發送到 Telegram 和 Discord。
+        將超長訊息按 ~1900 字元切分（兼顧 Discord 2000 上限），
+        優先在換行處斷開，逐段發送到 Telegram 和 Discord。
         
         Args:
             message: 完整訊息文字
@@ -83,7 +83,7 @@ class NotificationSender:
         Returns:
             True 如果至少一段發送成功
         """
-        MAX_LEN = 3900
+        MAX_LEN = 1900  # Discord 上限 2000，留 100 字元緩衝
         webhook = discord_webhook or self.discord_webhook
         
         # 按換行切分為不超過 MAX_LEN 的段落
@@ -133,6 +133,7 @@ def send_telegram_message(message: str, parse_mode: str = "HTML",
         chat_id: Chat ID（可選，預設從環境變數讀取）
     """
     try:
+        import asyncio
         import telegram
         
         bot_token = bot_token or os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -143,7 +144,7 @@ def send_telegram_message(message: str, parse_mode: str = "HTML",
             return False
         
         bot = telegram.Bot(token=bot_token)
-        bot.send_message(chat_id=chat_id, text=message, parse_mode=parse_mode)
+        asyncio.run(bot.send_message(chat_id=chat_id, text=message, parse_mode=parse_mode))
         logger.info("Telegram 消息已發送")
         return True
     except ImportError:
@@ -155,7 +156,7 @@ def send_telegram_message(message: str, parse_mode: str = "HTML",
 
 # ==================== Discord 通知 ====================
 def send_discord_message(message: str, webhook_url: str = None) -> bool:
-    """發送 Discord 消息"""
+    """發送 Discord 消息（超過 2000 字元自動分段）"""
     try:
         import requests
         
@@ -166,15 +167,34 @@ def send_discord_message(message: str, webhook_url: str = None) -> bool:
             logger.warning("Discord Webhook URL 未設置，跳過發送")
             return False
         
-        data = {"content": message}
-        response = requests.post(webhook_url, json=data, timeout=10)
-        
-        if response.status_code == 204:
-            logger.info("Discord 消息已發送")
-            return True
+        # Discord 上限 2000 字元，超過自動分段
+        DISCORD_LIMIT = 1900
+        if len(message) <= DISCORD_LIMIT:
+            chunks = [message]
         else:
-            logger.error(f"Discord 發送失敗: {response.status_code}")
-            return False
+            chunks = []
+            remaining = message
+            while len(remaining) > DISCORD_LIMIT:
+                cut = remaining.rfind('\n', 0, DISCORD_LIMIT)
+                if cut == -1:
+                    cut = DISCORD_LIMIT
+                chunks.append(remaining[:cut])
+                remaining = remaining[cut:].lstrip('\n')
+            chunks.append(remaining)
+            logger.info(f"Discord 訊息過長 ({len(message)} chars)，分為 {len(chunks)} 段發送")
+        
+        all_ok = True
+        for chunk in chunks:
+            data = {"content": chunk}
+            response = requests.post(webhook_url, json=data, timeout=10)
+            
+            if response.status_code == 204:
+                logger.info("Discord 消息已發送")
+            else:
+                logger.error(f"Discord 發送失敗: {response.status_code} ({len(chunk)} chars)")
+                all_ok = False
+        
+        return all_ok
     except ImportError:
         logger.warning("requests 未安裝，無法發送 Discord 消息")
         return False
