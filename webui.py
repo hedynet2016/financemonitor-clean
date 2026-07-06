@@ -1149,13 +1149,13 @@ def start_scheduler():
     python = shutil.which("python3") or shutil.which("python") or sys.executable
 
     procs = []
-    # 1. Monitor scheduler (telegram_bot.py --no-bot)
+    # 1. Monitor scheduler (telegram_bot.py --no-bot --no-webui)
+    #    --no-webui: prevent circular webui.py startup (webui.py already running)
+    #    stdout/stderr inherit so monitor logs appear in Render log panel
     try:
         p1 = subprocess.Popen(
-            [python, str(SCRIPT_DIR / "telegram_bot.py"), "--no-bot"],
+            [python, str(SCRIPT_DIR / "telegram_bot.py"), "--no-bot", "--no-webui"],
             cwd=str(SCRIPT_DIR),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
         )
         procs.append(p1)
         logger.info(f"Monitor scheduler started (PID={p1.pid})")
@@ -1169,8 +1169,6 @@ def start_scheduler():
             p2 = subprocess.Popen(
                 [python, str(render_sched)],
                 cwd=str(SCRIPT_DIR),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
             )
             procs.append(p2)
             logger.info(f"Render scheduler started (PID={p2.pid})")
