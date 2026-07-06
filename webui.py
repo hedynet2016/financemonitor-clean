@@ -342,13 +342,14 @@ def favicon():
 
 @app.route("/health")
 def health_check():
-    """Render health check endpoint — does not require config.json"""
+    """Render health check endpoint — always return 200 if the server is running.
+    Returning 503 causes Render to restart the service, which kills all monitor threads."""
     config_exists = CONFIG_FILE.exists()
     return jsonify({
         "status": "ok",
         "config_loaded": config_exists,
         "timestamp": datetime.now().isoformat()
-    }), 200 if config_exists else 503
+    }), 200
 
 
 @app.route("/")
@@ -1085,6 +1086,9 @@ def main():
     if not args.no_browser:
         threading.Timer(1.5, lambda: webbrowser.open(f"http://localhost:{args.port}")).start()
 
+    # ── Render keep-alive: ping own /health every 10 min to prevent free-tier sleep ──
+    start_keepalive()
+
 
     # Register atexit handler to clean up child processes
     def cleanup_child_processes():
@@ -1106,6 +1110,32 @@ def main():
     print(f"  Open: http://localhost:{args.port}")
     print(f"  Press Ctrl+C to stop")
     app.run(host="0.0.0.0", port=args.port, debug=False)
+
+
+def start_keepalive():
+    """Keep Render free tier awake by pinging own /health endpoint every 10 minutes.
+    On Render, RENDER_EXTERNAL_URL is automatically set. When running locally, this is a no-op."""
+    render_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if not render_url:
+        logger.info("[KeepAlive] Not on Render (RENDER_EXTERNAL_URL not set), skipping keep-alive")
+        return
+
+    import urllib.request
+
+    def keepalive_loop():
+        while True:
+            try:
+                url = f"{render_url.rstrip('/')}/health"
+                req = urllib.request.Request(url, method="GET")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    logger.info(f"[KeepAlive] Pinged {url} → {resp.status}")
+            except Exception as e:
+                logger.warning(f"[KeepAlive] Ping failed: {e}")
+            time.sleep(600)  # 10 minutes
+
+    t = threading.Thread(target=keepalive_loop, daemon=True)
+    t.start()
+    logger.info(f"[KeepAlive] Started — pinging {render_url}/health every 10 min")
 
 
 def start_scheduler():

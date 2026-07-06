@@ -11,6 +11,8 @@ services:
         sync: false
       - key: DISCORD_WEBHOOK_URL
         sync: false
+      - key: DISCORD_EVENTS_WEBHOOK_URL
+        sync: false
       - key: GMAIL_SENDER
         value: hedynet2016@gmail.com
       - key: GMAIL_APP_PASSWORD

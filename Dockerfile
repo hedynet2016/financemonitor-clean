@@ -19,6 +19,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install Playwright Firefox browser + system dependencies
+RUN playwright install --with-deps firefox
+
 # Copy all application files
 COPY . .
 
