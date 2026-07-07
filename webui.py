@@ -1252,6 +1252,25 @@ def api_diagnostic():
     return jsonify(result)
 
 
+@app.route("/api/install-browser", methods=["POST"])
+def api_install_browser():
+    """嘗試安裝 Playwright 瀏覽器並回傳結果"""
+    import subprocess as _sp
+    try:
+        result = _sp.run(
+            ["playwright", "install", "chromium"],
+            capture_output=True, text=True, timeout=120
+        )
+        return jsonify({
+            "ok": result.returncode == 0,
+            "returncode": result.returncode,
+            "stdout": result.stdout[-3000:],
+            "stderr": result.stderr[-3000:],
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 # ── CLI entry ──────────────────────────────────────────────────────
 def main():
     import argparse, os
