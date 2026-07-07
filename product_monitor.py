@@ -5,15 +5,15 @@
 價格 $2000 ~ $15000 元，排除標題含「NG」商品，七天內同一商品不重複推播
 
 使用方法：
-  python product_monitor.py              # 一般模式（Firefox headless）
+  python product_monitor.py              # 一般模式
   python product_monitor.py --once      # 執行一次即結束（測試用）
+
+技術方案：直接呼叫雅虎拍賣 GraphQL API（persisted query），無需瀏覽器
 """
 
 import json
 import logging
 import os
-import re
-import sys
 import time
 from datetime import datetime, timedelta
 
@@ -34,9 +34,22 @@ MIN_PRICE = 2000
 DEDUP_DAYS = 7
 STATE_FILE = "yahoo_state.json"
 
+# ── GraphQL API 設定 ──────────────────────────────────────────────────
+GQL_URL = "https://graphql.ec.yahoo.com/graphql"
+GQL_SPACE_ID = "2092115390"
+GQL_LISTINGS_HASH = (
+    "0de637297197474cdd15b2f7635ab08d6b689d0e6e3974336d44e5d11b669782"
+)
+
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
+
 
 class ProductMonitor:
-    """雅虎拍賣商品監控器"""
+    """雅虎拍賣商品監控器（GraphQL API 版）"""
 
     def __init__(self, config: dict, notification_sender=None):
         self.config = config
@@ -85,109 +98,99 @@ class ProductMonitor:
         today = datetime.now().strftime("%Y-%m-%d")
         self.state.setdefault("sent", {})[key] = today
 
-    # ── 核心爬蟲邏輯 ───────────────────────────────────────────────
-    def _scrape_shop(self, browser, booth_id, shop_name, keyword):
+    # ── 核心：GraphQL API 查詢 ─────────────────────────────────────
+    def _scrape_shop(self, booth_id, shop_name, keyword):
         """
-        使用 Playwright 爬取雅虎拍賣店內搜尋結果。
-        搜尋 URL 格式：/booth/search?p=關鍵字&seller=攤商ID&sort=new
-        價格格式：$69,360（在商品卡 innerText 中）
-        標題來源：商品圖片 img[alt] 屬性
+        呼叫雅虎拍賣 GraphQL API 取得店內搜尋結果。
+        使用 persisted query（SHA256 hash），不需瀏覽器。
         """
         products = []
-        page = browser.new_page()
 
         try:
-            import urllib.parse
-            keyword_enc = urllib.parse.quote(keyword)
-            url = (
-                "https://tw.bid.yahoo.com/booth/search"
-                "?p=%s&seller=%s&sort=new"
-                % (keyword_enc, booth_id)
-            )
-            logger.info("[%s] 開啟：%s", shop_name, url)
-            page.goto(url, timeout=60000, wait_until="domcontentloaded")
+            import requests
 
-            # 等待 JS 渲染
-            time.sleep(8)
-            # 微捲動觸發懶加載
-            page.evaluate("window.scrollTo(0, 300)")
-            time.sleep(2)
-
-            # 從 DOM 擷取所有商品卡資訊
-            items_js = page.evaluate("""() => {
-                const results = [];
-                const links = document.querySelectorAll('a[href*="/item/"]');
-                const seen = new Set();
-                for (const a of links) {
-                    const href = a.getAttribute('href');
-                    if (!href) continue;
-                    const mm = href.match(/\\/item\\/(\\d+)/);
-                    if (!mm || seen.has(mm[1])) continue;
-                    seen.add(mm[1]);
-
-                    // 找商品卡容器
-                    const li = a.closest('li[role="gridcell"]') || a.closest('li') || a.parentElement;
-                    if (!li) continue;
-
-                    // 標題：從圖片 alt 取得
-                    let title = '';
-                    const img = li.querySelector('img[alt]');
-                    if (img && img.alt && img.alt.length > 5) {
-                        title = img.alt;
+            payload = {
+                "variables": {
+                    "spaceId": GQL_SPACE_ID,
+                    "storeId": booth_id,
+                    "q": keyword,
+                    "sort": "recommended",
+                    "hits": 60,
+                    "offset": 0,
+                },
+                "extensions": {
+                    "persistedQuery": {
+                        "version": 1,
+                        "sha256Hash": GQL_LISTINGS_HASH,
                     }
-                    if (!title) {
-                        title = a.getAttribute('aria-label') || a.getAttribute('title') || '';
-                    }
-                    if (!title) {
-                        title = (a.innerText || '').trim().substring(0, 100);
-                    }
+                },
+            }
 
-                    // 價格：從卡片文字找 $xx,xxx 格式（用 indexOf + 手動提取，避開 regex 轉義問題）
-                    let price = 0;
-                    const cardText = (li.innerText || a.innerText || '');
-                    // 找 '$' 後面的數字（含逗號）
-                    const dollarIdx = cardText.indexOf('$');
-                    if (dollarIdx >= 0) {
-                        let numStr = '';
-                        let j = dollarIdx + 1;
-                        while (j < cardText.length && (cardText[j] === ',' || (cardText[j] >= '0' && cardText[j] <= '9'))) {
-                            numStr += cardText[j];
-                            j++;
-                        }
-                        if (numStr) {
-                            price = parseInt(numStr.replace(/,/g, ''), 10);
-                        }
-                    }
+            headers = {
+                "User-Agent": USER_AGENT,
+                "Content-Type": "application/json",
+                "Accept": "*/*",
+                "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Origin": "https://tw.bid.yahoo.com",
+                "Referer": (
+                    "https://tw.bid.yahoo.com/booth/search"
+                    "?p=%s&seller=%s&sort=new" % (keyword, booth_id)
+                ),
+            }
 
-                    results.push({
-                        item_id: mm[1],
-                        name: title.substring(0, 100),
-                        price: price,
-                        url: 'https://tw.bid.yahoo.com/item/' + mm[1]
-                    });
-                }
-                return results;
-            }""")
+            logger.info("[%s] GraphQL 搜尋：%s", shop_name, keyword)
+            resp = requests.post(GQL_URL, headers=headers, json=payload, timeout=30)
 
-            logger.info("[%s] JS 擷取到 %d 筆資料", shop_name, len(items_js))
+            if resp.status_code != 200:
+                logger.warning("[%s] API 回傳 %d", shop_name, resp.status_code)
+                return products
 
-            for item in items_js:
-                if item["name"] and item["url"]:
-                    products.append({
-                        "shop": shop_name,
-                        "name": item["name"],
-                        "price": item["price"],
-                        "url": item["url"],
-                        "keyword": keyword,
-                    })
+            data = resp.json()
+
+            # 檢查錯誤
+            if "errors" in data:
+                errs = data["errors"]
+                msg = errs[0].get("message", str(errs)) if errs else str(errs)
+                logger.warning("[%s] GraphQL 錯誤：%s", shop_name, str(msg)[:200])
+                return products
+
+            # 解析商品列表
+            result = data.get("data", {}).get("getAuctionProductsInStore") or {}
+            total = result.get("totalCount", 0)
+            raw_products = result.get("products") or []
+
+            logger.info("[%s] API 回傳 %d 筆（totalCount=%d）", shop_name, len(raw_products), total)
+
+            for p in raw_products:
+                title = (p.get("title") or "").strip()
+                if not title or len(title) < 3:
+                    continue
+
+                item_id = p.get("id", "")
+                url = p.get("url") or ("https://tw.bid.yahoo.com/item/" + item_id)
+
+                # 價格：currentPrice（直購價）> marketPrice（市價）> biddingPrice（競標價）
+                price = 0
+                for key in ("currentPrice", "marketPrice", "biddingPrice"):
+                    val = p.get(key)
+                    if val is not None:
+                        try:
+                            price = int(float(val))
+                            break
+                        except (ValueError, TypeError):
+                            pass
+
+                products.append({
+                    "shop": shop_name,
+                    "name": title[:100],
+                    "price": price,
+                    "url": url,
+                    "keyword": keyword,
+                    "item_id": item_id,
+                })
 
         except Exception as e:
-            logger.warning("[%s] 爬取失敗：%s", shop_name, e)
-        finally:
-            try:
-                page.close()
-            except Exception:
-                pass
+            logger.warning("[%s] GraphQL 查詢失敗：%s", shop_name, e)
 
         return products
 
@@ -196,39 +199,31 @@ class ProductMonitor:
         logger.info("========== 商品追蹤開始 ==========")
         self._clean_old_state()
 
-        from playwright.sync_api import sync_playwright
-
         all_products = []
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
-            logger.info("已啟動 Chromium headless")
-
-            for shop in SHOPS:
-                shop_products = []
-                for keyword in KEYWORDS:
-                    logger.info("[%s] 搜尋：%s", shop["name"], keyword)
-                    items = self._scrape_shop(
-                        browser, shop["booth_id"], shop["name"], keyword
-                    )
-                    for p in items:
-                        if (p["price"] <= MAX_PRICE
-                                and p["price"] >= MIN_PRICE
-                                and "NG" not in p["name"]
-                                and not self._is_duplicate(p["name"], p["price"])):
-                            p["keyword"] = keyword
-                            shop_products.append(p)
-                    time.sleep(1.5)
-
-                # 依商品 ID 排序（新→舊，ID 越大越新）
-                shop_products.sort(
-                    key=lambda x: int(x["url"].rstrip("/").split("/")[-1]),
-                    reverse=True,
+        for shop in SHOPS:
+            shop_products = []
+            for keyword in KEYWORDS:
+                logger.info("[%s] 搜尋：%s", shop["name"], keyword)
+                items = self._scrape_shop(
+                    shop["booth_id"], shop["name"], keyword
                 )
-                all_products.extend(shop_products)
+                for p in items:
+                    if (p["price"] <= MAX_PRICE
+                            and p["price"] >= MIN_PRICE
+                            and "NG" not in p["name"]
+                            and not self._is_duplicate(p["name"], p["price"])):
+                        p["keyword"] = keyword
+                        shop_products.append(p)
+                time.sleep(1.5)
 
-            browser.close()
+            # 依商品 ID 排序（新→舊，ID 越大越新）
+            shop_products.sort(
+                key=lambda x: int(x.get("item_id", 0) or 0),
+                reverse=True,
+            )
+            all_products.extend(shop_products)
 
         if not all_products:
             logger.info("沒有符合條件的新商品")

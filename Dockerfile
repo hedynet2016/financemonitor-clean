@@ -19,22 +19,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright Firefox browser + system dependencies
-# Split into steps so build logs show exactly what failed
-# Step 1: install system libraries required by Firefox
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgtk-3-0 libasound2 libdbus-glib-1-2 \
-    libx11-xcb1 libxcomposite1 libxdamage1 \
-    libxrandr2 libxss1 libxcursor1 libxinerama1 \
-    libpangocairo-1.0-0 libatk1.0-0 libatk-bridge2.0-0 \
-    libcups2 libdrm2 libgbm1 libnspr4 libnss3 \
-    fonts-liberation \
-    && rm -rf /var/lib/apt/lists/*
-
-# Step 2: install Chromium browser binary
-# Show error if failed, but don't break build (render_start.sh will retry)
-RUN playwright install chromium 2>&1 || echo "WARN: Playwright Chromium install failed in Docker build, will retry at startup"
-
 # Copy all application files
 COPY . .
 

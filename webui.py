@@ -1214,29 +1214,49 @@ def api_push_history():
 
 @app.route("/api/diagnostic")
 def api_diagnostic():
-    """診斷端點：檢查 Playwright、Chromium、推播設定等"""
+    """診斷端點：檢查 GraphQL API、推播設定等"""
     result = {
-        "playwright_installed": False,
-        "browser_available": False,
-        "playwright_error": None,
-        "browser_error": None,
+        "graphql_api": False,
+        "graphql_error": None,
         "product_state_file": False,
         "product_state_entries": 0,
     }
 
-    # Check Playwright
+    # Check GraphQL API connectivity
     try:
-        from playwright.sync_api import sync_playwright
-        result["playwright_installed"] = True
-        try:
-            with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=True)
-                browser.close()
-            result["browser_available"] = True
-        except Exception as e:
-            result["browser_error"] = str(e)[:500]
-    except ImportError as e:
-        result["playwright_error"] = str(e)
+        import requests as _req
+        test_payload = {
+            "variables": {
+                "spaceId": "2092115390",
+                "storeId": "Y2311650079",
+                "q": "test",
+                "sort": "recommended",
+                "hits": 1,
+                "offset": 0,
+            },
+            "extensions": {
+                "persistedQuery": {
+                    "version": 1,
+                    "sha256Hash": "0de637297197474cdd15b2f7635ab08d6b689d0e6e3974336d44e5d11b669782",
+                }
+            },
+        }
+        test_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Content-Type": "application/json",
+            "Origin": "https://tw.bid.yahoo.com",
+            "Referer": "https://tw.bid.yahoo.com/",
+        }
+        r = _req.post(
+            "https://graphql.ec.yahoo.com/graphql",
+            json=test_payload, headers=test_headers, timeout=10,
+        )
+        if r.status_code == 200:
+            result["graphql_api"] = True
+        else:
+            result["graphql_error"] = "HTTP %d" % r.status_code
+    except Exception as e:
+        result["graphql_error"] = str(e)[:300]
 
     # Check product state file
     state_path = SCRIPT_DIR / "yahoo_state.json"
@@ -1250,48 +1270,6 @@ def api_diagnostic():
             pass
 
     return jsonify(result)
-
-
-_browser_install_result = {"status": "idle", "stdout": "", "stderr": "", "returncode": None}
-
-@app.route("/api/install-browser", methods=["POST"])
-def api_install_browser():
-    """背景安裝 Playwright 瀏覽器，立即回傳。結果用 GET 查詢。"""
-    global _browser_install_result
-    if _browser_install_result["status"] == "running":
-        return jsonify({"ok": True, "message": "Install already running, check /api/install-browser for results"})
-
-    def do_install():
-        global _browser_install_result
-        _browser_install_result = {"status": "running", "stdout": "", "stderr": "", "returncode": None}
-        import subprocess as _sp
-        try:
-            result = _sp.run(
-                ["playwright", "install", "chromium"],
-                capture_output=True, text=True, timeout=180
-            )
-            _browser_install_result = {
-                "status": "done",
-                "ok": result.returncode == 0,
-                "returncode": result.returncode,
-                "stdout": result.stdout[-3000:],
-                "stderr": result.stderr[-3000:],
-            }
-        except Exception as e:
-            _browser_install_result = {
-                "status": "error",
-                "ok": False,
-                "error": str(e)[:1000],
-            }
-
-    t = threading.Thread(target=do_install, daemon=True)
-    t.start()
-    return jsonify({"ok": True, "message": "Install started in background, GET /api/install-browser to check"})
-
-@app.route("/api/install-browser", methods=["GET"])
-def api_install_browser_status():
-    """查詢背景安裝結果"""
-    return jsonify(_browser_install_result)
 
 
 # ── CLI entry ──────────────────────────────────────────────────────
