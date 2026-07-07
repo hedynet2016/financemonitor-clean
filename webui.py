@@ -30,6 +30,7 @@ from flask import Flask, render_template_string, request, jsonify, redirect, url
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = SCRIPT_DIR / "config.json"
 LOG_FILE = SCRIPT_DIR / "monitor.log"
+HISTORY_FILE = SCRIPT_DIR / "push_history.json"
 SCHEDULER_PROCS = []   # child processes started by start_scheduler()
 STATUS_FILE = SCRIPT_DIR / ".webui_status.json"
 
@@ -132,6 +133,31 @@ def load_status():
 def save_status(data):
     with open(STATUS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def load_push_history(limit=200):
+    """讀取推播歷史（最新 limit 筆，倒序）"""
+    if not HISTORY_FILE.exists():
+        return []
+    try:
+        data = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            return []
+        return list(reversed(data[-limit:]))
+    except Exception:
+        return []
+
+
+# 推播類型顯示對照
+PUSH_TYPE_LABELS = {
+    "stock":    ("股市",   "bi-graph-up",    "text-success"),
+    "news":     ("新聞",   "bi-newspaper",   "text-info"),
+    "event":    ("活動",   "bi-calendar-event", "text-warning"),
+    "product":  ("商品",   "bi-bag",         "text-primary"),
+    "economic": ("經濟",   "bi-bank",        "text-secondary"),
+    "test":     ("測試",   "bi-send",        "text-muted"),
+    "other":    ("其他",   "bi-info-circle", "text-muted"),
+}
 
 
 def run_monitor_task(mode="once"):
@@ -274,7 +300,7 @@ BASE_LAYOUT = r"""<!DOCTYPE html>
         <li class="nav-item"><a class="nav-link {{'active' if page=='report'}}" href="/report"><i class="bi bi-file-earmark-bar-graph me-2"></i>每日報告</a></li>
         <li class="nav-item"><a class="nav-link {{'active' if page=='settings'}}" href="/settings"><i class="bi bi-gear me-2"></i>設定</a></li>
         <li class="nav-item"><a class="nav-link {{'active' if page=='tasks'}}" href="/tasks"><i class="bi bi-list-check me-2"></i>任務</a></li>
-        <li class="nav-item"><a class="nav-link {{'active' if page=='logs'}}" href="/logs"><i class="bi bi-journal-text me-2"></i>日誌</a></li>
+        <li class="nav-item"><a class="nav-link {{'active' if page=='history'}}" href="/history"><i class="bi bi-broadcast me-2"></i>推播歷史</a></li>
       </ul>
     </div>
     <div class="col-md-10">
@@ -655,31 +681,143 @@ def settings():
     return page("settings", body, dc=dc, saved=saved)
 
 
-@app.route("/logs")
-def logs_view():
-    log_lines = []
-    if LOG_FILE.exists():
-        try:
-            with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
-                log_lines = f.readlines()[-200:]
-        except Exception:
-            log_lines = ["Failed to read log file."]
-    else:
-        log_lines = ["No log file found yet."]
-    log_text = "".join(log_lines)
+@app.route("/history")
+@app.route("/logs")  # 向後相容
+def history_view():
+    """推播歷史頁面"""
+    records = load_push_history(limit=200)
 
-    body = """\
+    # 統計
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_count = sum(1 for r in records if r.get("ts", "").startswith(today_str))
+    total_tg = sum(1 for r in records if r.get("tg") is True)
+    total_dc = sum(1 for r in records if r.get("dc") is True)
+    total_fail = sum(1 for r in records if r.get("tg") is False and r.get("dc") is False)
+
+    # 建立表格行
+    rows_html = ""
+    for r in records:
+        ptype = r.get("type", "other")
+        label, icon, color = PUSH_TYPE_LABELS.get(ptype, PUSH_TYPE_LABELS["other"])
+        ts = r.get("ts", "")
+        tg = r.get("tg")
+        dc = r.get("dc")
+        preview = r.get("preview", "")
+        msg_len = r.get("len", 0)
+
+        # 管道狀態圖示
+        tg_icon = '<i class="bi bi-check-circle-fill text-success"></i>' if tg is True else \
+                  '<i class="bi bi-x-circle-fill text-danger"></i>' if tg is False else \
+                  '<i class="bi bi-dash-circle text-muted"></i>'
+        dc_icon = '<i class="bi bi-check-circle-fill text-success"></i>' if dc is True else \
+                  '<i class="bi bi-x-circle-fill text-danger"></i>' if dc is False else \
+                  '<i class="bi bi-dash-circle text-muted"></i>'
+
+        # 時間只顯示時分秒
+        ts_short = ts[11:] if len(ts) >= 19 else ts
+
+        rows_html += f"""\
+        <tr>
+          <td class="text-muted" style="white-space:nowrap;font-size:0.82rem">{ts_short}</td>
+          <td><span class="tag" style="background:rgba(59,130,246,0.15);color:var(--accent)"><i class="bi {icon} me-1"></i>{label}</span></td>
+          <td class="text-center">{tg_icon}</td>
+          <td class="text-center">{dc_icon}</td>
+          <td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.82rem" title="{preview}">{preview}</td>
+          <td class="text-muted text-end" style="font-size:0.82rem">{msg_len:,}</td>
+        </tr>
+"""
+
+    if not records:
+        rows_html = '<tr><td colspan="6" class="text-center text-muted py-4">尚無推播記錄</td></tr>'
+
+    body = f"""\
 <h4 class="mb-3 d-flex justify-content-between align-items-center">
-  <span><i class="bi bi-journal-text me-2"></i>執行日誌</span>
+  <span><i class="bi bi-broadcast me-2"></i>推播歷史</span>
   <button class="btn btn-sm btn-outline-light" onclick="location.reload()"><i class="bi bi-arrow-clockwise me-1"></i>重新整理</button>
 </h4>
-<div class="card">
-  <div class="card-body p-0">
-    <div class="log-output" id="logBox">{{log_text}}</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-md-3">
+    <div class="card p-3 text-center">
+      <div class="hero-icon mb-2"><i class="bi bi-send-check text-info"></i></div>
+      <div class="fw-bold">今日推播</div>
+      <div class="fs-4">{today_count}</div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-md-3">
+    <div class="card p-3 text-center">
+      <div class="hero-icon mb-2"><i class="bi bi-telegram text-info"></i></div>
+      <div class="fw-bold">Telegram 成功</div>
+      <div class="fs-4">{total_tg}</div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-md-3">
+    <div class="card p-3 text-center">
+      <div class="hero-icon mb-2"><i class="bi bi-discord text-primary"></i></div>
+      <div class="fw-bold">Discord 成功</div>
+      <div class="fs-4">{total_dc}</div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-md-3">
+    <div class="card p-3 text-center">
+      <div class="hero-icon mb-2"><i class="bi bi-exclamation-triangle text-danger"></i></div>
+      <div class="fw-bold">雙管道失敗</div>
+      <div class="fs-4">{total_fail}</div>
+    </div>
   </div>
 </div>
+
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-list-ul me-2"></i>最近 {len(records)} 筆推播記錄</span>
+    <select class="form-select form-select-sm" style="width:auto" id="typeFilter" onchange="filterTable()">
+      <option value="">全部類型</option>
+      <option value="stock">股市</option>
+      <option value="news">新聞</option>
+      <option value="event">活動</option>
+      <option value="product">商品</option>
+      <option value="economic">經濟</option>
+      <option value="test">測試</option>
+      <option value="other">其他</option>
+    </select>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-dark table-hover mb-0" id="historyTable">
+      <thead>
+        <tr>
+          <th style="width:80px">時間</th>
+          <th style="width:80px">類型</th>
+          <th class="text-center" style="width:50px">TG</th>
+          <th class="text-center" style="width:50px">DC</th>
+          <th>訊息摘要</th>
+          <th class="text-end" style="width:70px">字數</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows_html}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+function filterTable() {{
+  const filter = document.getElementById('typeFilter').value;
+  const rows = document.querySelectorAll('#historyTable tbody tr');
+  rows.forEach(row => {{
+    if (!filter) {{
+      row.style.display = '';
+    }} else {{
+      const typeCell = row.cells[1]?.textContent || '';
+      row.style.display = typeCell.includes(
+        {{stock:'股市',news:'新聞',event:'活動',product:'商品',economic:'經濟',test:'測試',other:'其他'}}[filter] || ''
+      ) ? '' : 'none';
+    }}
+  }});
+}}
+</script>
 """
-    return page("logs", body, log_text=log_text)
+    return page("history", body)
 
 
 @app.route("/tasks")
@@ -1050,13 +1188,12 @@ def api_status():
 
 
 @app.route("/api/logs")
-def api_logs():
-    lines = request.args.get("lines", 100, type=int)
-    if LOG_FILE.exists():
-        with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
-            all_lines = f.readlines()
-            return jsonify({"log": "".join(all_lines[-lines:])})
-    return jsonify({"log": ""})
+@app.route("/api/push-history")
+def api_push_history():
+    """推播歷史 API（向後相容 /api/logs）"""
+    limit = request.args.get("lines", 100, type=int)
+    records = load_push_history(limit=limit)
+    return jsonify({"history": records, "count": len(records)})
 
 
 # ── CLI entry ──────────────────────────────────────────────────────

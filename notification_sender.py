@@ -6,9 +6,80 @@ notification_sender.py - 通知發送模組（最小化實現）
 """
 import os
 import re
+import json
 import logging
+from datetime import datetime
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# ==================== 推播歷史記錄 ====================
+HISTORY_FILE = Path(__file__).resolve().parent / "push_history.json"
+HISTORY_MAX = 500  # 最多保留 500 筆
+
+
+def _infer_push_type(message: str) -> str:
+    """從訊息內容推斷推播類型"""
+    msg_lower = message[:500].lower()
+    if any(k in message[:200] for k in ("股市", "股票", "Stock", "stock", "美股", "台股")):
+        return "stock"
+    if any(k in message[:200] for k in ("新聞", "News", "news", "📰")):
+        return "news"
+    if any(k in message[:200] for k in ("活動", "Event", "event", "📅")):
+        return "event"
+    if any(k in message[:200] for k in ("商品", "Product", "product", "🛒", "蝦皮", "momo")):
+        return "product"
+    if any(k in message[:200] for k in ("經濟", "Economic", "economic", "GDP", "CPI", "利率")):
+        return "economic"
+    if "測試" in message[:100] or "test" in msg_lower[:100]:
+        return "test"
+    return "other"
+
+
+def _strip_html(text: str) -> str:
+    """移除 HTML 標籤，保留純文字"""
+    clean = re.sub(r'<[^>]+>', '', text)
+    clean = clean.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+    clean = clean.replace('&quot;', '"').replace('&#39;', "'")
+    # 壓縮空白
+    clean = re.sub(r'\s+', ' ', clean).strip()
+    return clean
+
+
+def _log_push_history(message: str, results: dict) -> None:
+    """記錄推播歷史到 JSON 檔案"""
+    try:
+        preview = _strip_html(message)[:150]
+        record = {
+            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "type": _infer_push_type(message),
+            "tg": results.get("telegram"),
+            "dc": results.get("discord"),
+            "email": results.get("email"),
+            "len": len(message),
+            "preview": preview,
+        }
+
+        # 讀取現有歷史
+        history = []
+        if HISTORY_FILE.exists():
+            try:
+                history = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+                if not isinstance(history, list):
+                    history = []
+            except Exception:
+                history = []
+
+        # 新增記錄並限制數量
+        history.append(record)
+        if len(history) > HISTORY_MAX:
+            history = history[-HISTORY_MAX:]
+
+        # 寫入檔案
+        HISTORY_FILE.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Failed to log push history: {e}")
+
 
 # ==================== NotificationSender 類別 ====================
 class NotificationSender:
@@ -314,7 +385,10 @@ def send_notification(message: str, subject: str = None, methods: list = None,
     
     if "email" in methods and subject:
         results["email"] = send_email(subject, message)
-    
+
+    # 記錄推播歷史
+    _log_push_history(message, results)
+
     return results
 
 # ==================== 測試 ====================

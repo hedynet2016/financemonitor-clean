@@ -1,6 +1,7 @@
 # 敏感文件
 .env
 config.json
+push_history.json
 *.log
 *.txt.bak
 
