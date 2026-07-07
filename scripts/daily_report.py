@@ -88,6 +88,15 @@ TODAY_DISPLAY = TODAY.strftime("%Y/%m/%d")
 YESTERDAY_STR = YESTERDAY.strftime("%Y-%m-%d")
 YESTERDAY_DISPLAY = YESTERDAY.strftime("%Y/%m/%d")
 
+# ── 統計週期起始日 ──
+# 2026/7 月從 7/7 起算；之後每月從 1 號重新統計
+if TODAY.year == 2026 and TODAY.month == 7:
+    PERIOD_START = datetime.date(2026, 7, 7)
+else:
+    PERIOD_START = TODAY.replace(day=1)
+PERIOD_START_STR = PERIOD_START.strftime("%Y-%m-%d")
+PERIOD_START_DISPLAY = PERIOD_START.strftime("%Y/%m/%d")
+
 # ──────────────────────────────────────────────
 # 1. 讀取當日日誌（取今天的行）
 # ──────────────────────────────────────────────
@@ -107,13 +116,13 @@ def read_today_logs():
 
 def read_recent_logs():
     """
-    讀取從昨天到今天的所有日誌（用於圓餅圖和曲線圖）
-    有幾天就算幾天（目前是 6/24 ~ 6/25，共 2 天）
+    讀取從統計週期起始日到今天的所有日誌（用於圓餅圖和曲線圖）
+    7 月從 7/7 起算，其他月從 1 號起算，次月重新統計
     """
     all_lines = []
-    # 從昨天到今天
-    for i in range((TODAY - YESTERDAY).days + 1):
-        d = YESTERDAY + datetime.timedelta(days=i)
+    # 從週期起始日到今天
+    for i in range((TODAY - PERIOD_START).days + 1):
+        d = PERIOD_START + datetime.timedelta(days=i)
         ds = d.strftime("%Y-%m-%d")
         for log_path in LOG_FILES:
             if not log_path.exists():
@@ -369,12 +378,13 @@ def read_automations():
 # ──────────────────────────────────────────────
 def get_daily_problem_counts():
     """
-    讀取從昨天到報告當天的日誌，統計每天「問題發生數量」
+    讀取從統計週期起始日到報告當天的日誌，統計每天「問題發生數量」
+    7 月從 7/7 起算，其他月從 1 號起算，次月重新統計
     回傳 [(日期label, 數量)]
     """
     counts = []
-    for i in range((TODAY - YESTERDAY).days + 1):
-        d = YESTERDAY + datetime.timedelta(days=i)
+    for i in range((TODAY - PERIOD_START).days + 1):
+        d = PERIOD_START + datetime.timedelta(days=i)
         ds = d.strftime("%Y-%m-%d")
         label = d.strftime("%m/%d")
         cnt = 0
@@ -393,14 +403,15 @@ def get_daily_problem_counts():
 
 def get_daily_solved_counts():
     """
-    讀取 MEMORY_DIR 從昨天開始到報告當天（今天）的 .md，
+    讀取 MEMORY_DIR 從統計週期起始日到報告當天的 .md，
     估算每天「問題解決數量」（以"修復"、"解決"、"fix"等關鍵字出現次數）
+    7 月從 7/7 起算，其他月從 1 號起算，次月重新統計
     回傳 [(日期label, 數量)]
     """
     counts = []
     fix_pattern = re.compile(r"修復|解決|fix|resolved|fixed|repaired|corrected", re.I)
-    for i in range((TODAY - YESTERDAY).days + 1):
-        d = YESTERDAY + datetime.timedelta(days=i)
+    for i in range((TODAY - PERIOD_START).days + 1):
+        d = PERIOD_START + datetime.timedelta(days=i)
         ds = d.strftime("%Y-%m-%d")
         label = d.strftime("%m/%d")
         md_path = MEMORY_DIR / f"{ds}.md"
@@ -505,7 +516,8 @@ def generate_pie_chart(error_count):
 
 def generate_line_chart(problem_counts, solved_counts):
     """
-    生成從昨天到報告當天的問題發生與解決數量曲線圖（雙曲線）
+    生成從統計週期起始日到報告當天的問題發生與解決數量曲線圖（雙曲線）
+    7 月從 7/7 起算，其他月從 1 號起算，次月重新統計
     回傳 base64 PNG 字串
     """
     try:
@@ -557,10 +569,10 @@ def generate_line_chart(problem_counts, solved_counts):
                         textcoords="offset points", xytext=(0, -15),
                         ha="center", color="#c8e6c9", fontsize=9)
 
-        ax.set_xlabel(f"日期（{YESTERDAY_DISPLAY} ~ {TODAY_DISPLAY}）",
+        ax.set_xlabel(f"日期（{PERIOD_START_DISPLAY} ~ {TODAY_DISPLAY}）",
                       color="#90caf9", fontsize=9, fontfamily=font_name)
         ax.set_ylabel("筆數", color="#90caf9", fontsize=9, fontfamily=font_name)
-        ax.set_title(f"從 {YESTERDAY_DISPLAY} 至 {TODAY_DISPLAY} 問題趨勢",
+        ax.set_title(f"從 {PERIOD_START_DISPLAY} 至 {TODAY_DISPLAY} 問題趨勢（月累計）",
                      color="white", fontsize=11, fontfamily=font_name, pad=8)
         ax.tick_params(colors="white", labelsize=8)
         for spine in ax.spines.values():
@@ -586,7 +598,7 @@ def generate_line_chart(problem_counts, solved_counts):
 # ──────────────────────────────────────────────
 def build_html(issues, error_count, resolved, added, removed, todos,
                automations, pie_b64, line_b64, problem_counts, solved_counts, memory_content,
-               yesterday_display=YESTERDAY_DISPLAY):
+               period_start_display=PERIOD_START_DISPLAY):
 
     def section(title, content_html, icon=""):
         return f"""
@@ -614,9 +626,9 @@ def build_html(issues, error_count, resolved, added, removed, todos,
           <thead><tr><th>問題類別</th><th>次數</th><th>佔比</th><th>狀態</th></tr></thead>
           <tbody>{rows}</tbody>
         </table>
-        <p style="font-size:12px;color:#888;margin-top:6px;">今日共記錄 <b>{total_all}</b> 筆錯誤/警告</p>"""
+        <p style="font-size:12px;color:#888;margin-top:6px;">{period_start_display} ~ {TODAY_DISPLAY} 累計 <b>{total_all}</b> 筆錯誤/警告</p>"""
     else:
-        issues_html = '<p class="ok-text">今日無錯誤或警告記錄 🎉</p>'
+        issues_html = f'<p class="ok-text">{period_start_display} ~ {TODAY_DISPLAY} 無錯誤或警告記錄 🎉</p>'
 
     # ── 圖表
     charts_html = ""
@@ -767,11 +779,11 @@ def build_html(issues, error_count, resolved, added, removed, todos,
 <body>
 <div class="wrapper">
   <div class="header">
-    <h1>📊 WorkBuddy Daily Report（昨日報告）</h1>
-    <p>報告日期：{TODAY_DISPLAY} &nbsp;|&nbsp; 數據日期：{yesterday_display} &nbsp;|&nbsp; 系統：FinanceMonitor &nbsp;|&nbsp; 自動生成</p>
+    <h1>📊 WorkBuddy Daily Report（月累計統計）</h1>
+    <p>報告日期：{TODAY_DISPLAY} &nbsp;|&nbsp; 統計區間：{period_start_display} ~ {TODAY_DISPLAY} &nbsp;|&nbsp; 系統：FinanceMonitor &nbsp;|&nbsp; 自動生成</p>
   </div>
 
-  {section("🚨 昨日推播問題彙整", issues_html, "")}
+  {section(f"🚨 推播問題彙整（{period_start_display} ~ {TODAY_DISPLAY}）", issues_html, "")}
   {charts_section}
   {section("📋 問題 5W1H1N 詳細分析", detail_html, "")}
   {section("🔧 功能與排程變更", feat_html, "")}
@@ -804,7 +816,7 @@ def send_email(html_body):
 def main():
     print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 開始生成 Daily Report ({TODAY_DISPLAY})...")
 
-    # 讀資料（修改：使用從昨天到今天的所有日誌）
+    # 讀資料（使用從統計週期起始日到今天的所有日誌）
     log_lines      = read_recent_logs()
     memory_content = read_memory_logs()
     problem_counts = get_daily_problem_counts()
@@ -830,7 +842,7 @@ def main():
         added, removed, todos,
         automations, pie_b64, line_b64,
         problem_counts, solved_counts, memory_content,
-        yesterday_display=YESTERDAY_DISPLAY
+        period_start_display=PERIOD_START_DISPLAY
     )
 
     # 儲存 HTML 報告（供 Web UI /report 顯示）
