@@ -20,10 +20,19 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright Firefox browser + system dependencies
-# Note: apt-get update is needed because we cleaned the cache above.
-# || true ensures the build doesn't fail if Playwright can't install
-# (product monitor will gracefully skip if Playwright is unavailable)
-RUN apt-get update && playwright install --with-deps firefox || echo "WARN: Playwright install failed, product monitor will be disabled"
+# Split into steps so build logs show exactly what failed
+# Step 1: install system libraries required by Firefox
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgtk-3-0 libasound2 libdbus-glib-1-2 \
+    libx11-xcb1 libxcomposite1 libxdamage1 \
+    libxrandr2 libxss1 libxcursor1 libxinerama1 \
+    libpangocairo-1.0-0 libatk1.0-0 libatk-bridge2.0-0 \
+    libcups2 libdrm2 libgbm1 libnspr4 libnss3 \
+    fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+
+# Step 2: install Firefox browser binary
+RUN playwright install firefox || echo "WARN: Playwright Firefox install failed, product monitor will be disabled"
 
 # Copy all application files
 COPY . .

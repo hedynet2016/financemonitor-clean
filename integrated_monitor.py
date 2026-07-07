@@ -599,7 +599,19 @@ class IntegratedMonitor:
 
                     except Exception as e:
 
-                        logger.error(f"Error in Product monitor: {e}")
+                        logger.error(f"Error in Product monitor: {e}", exc_info=True)
+
+                        # 推播失敗通知，讓使用者知道商品監控出問題
+                        try:
+                            from notification_sender import NotificationSender
+                            ns = NotificationSender(self.config)
+                            ns.send_to_all(
+                                f"⚠️ 商品追蹤監控執行失敗\n"
+                                f"時間：{now.strftime('%Y-%m-%d %H:%M')}\n"
+                                f"錯誤：{str(e)[:300]}"
+                            )
+                        except Exception as ne:
+                            logger.error(f"Failed to send product monitor error notification: {ne}")
 
                     last_run_date = today
 

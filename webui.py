@@ -1174,10 +1174,11 @@ def api_generate_report():
 
 
 
+@app.route("/api/run", methods=["POST"])
 def api_run():
     data = request.get_json() or {}
     mode = data.get("mode", "once")
-    if mode not in ("once", "news", "events", "stocks"):
+    if mode not in ("once", "news", "events", "stocks", "product"):
         return jsonify({"ok": False, "error": f"Invalid mode: {mode}"}), 400
 
     with _task_lock:
@@ -1209,6 +1210,46 @@ def api_push_history():
     limit = request.args.get("lines", 100, type=int)
     records = load_push_history(limit=limit)
     return jsonify({"history": records, "count": len(records)})
+
+
+@app.route("/api/diagnostic")
+def api_diagnostic():
+    """診斷端點：檢查 Playwright、Firefox、推播設定等"""
+    result = {
+        "playwright_installed": False,
+        "firefox_available": False,
+        "playwright_error": None,
+        "firefox_error": None,
+        "product_state_file": False,
+        "product_state_entries": 0,
+    }
+
+    # Check Playwright
+    try:
+        from playwright.sync_api import sync_playwright
+        result["playwright_installed"] = True
+        try:
+            with sync_playwright() as pw:
+                browser = pw.firefox.launch(headless=True)
+                browser.close()
+            result["firefox_available"] = True
+        except Exception as e:
+            result["firefox_error"] = str(e)[:500]
+    except ImportError as e:
+        result["playwright_error"] = str(e)
+
+    # Check product state file
+    state_path = SCRIPT_DIR / "yahoo_state.json"
+    if state_path.exists():
+        try:
+            import json as _json
+            state = _json.loads(state_path.read_text(encoding="utf-8"))
+            result["product_state_file"] = True
+            result["product_state_entries"] = len(state.get("sent", {}))
+        except Exception:
+            pass
+
+    return jsonify(result)
 
 
 # ── CLI entry ──────────────────────────────────────────────────────
