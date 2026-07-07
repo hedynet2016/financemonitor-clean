@@ -1252,23 +1252,46 @@ def api_diagnostic():
     return jsonify(result)
 
 
+_browser_install_result = {"status": "idle", "stdout": "", "stderr": "", "returncode": None}
+
 @app.route("/api/install-browser", methods=["POST"])
 def api_install_browser():
-    """嘗試安裝 Playwright 瀏覽器並回傳結果"""
-    import subprocess as _sp
-    try:
-        result = _sp.run(
-            ["playwright", "install", "chromium"],
-            capture_output=True, text=True, timeout=120
-        )
-        return jsonify({
-            "ok": result.returncode == 0,
-            "returncode": result.returncode,
-            "stdout": result.stdout[-3000:],
-            "stderr": result.stderr[-3000:],
-        })
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    """背景安裝 Playwright 瀏覽器，立即回傳。結果用 GET 查詢。"""
+    global _browser_install_result
+    if _browser_install_result["status"] == "running":
+        return jsonify({"ok": True, "message": "Install already running, check /api/install-browser for results"})
+
+    def do_install():
+        global _browser_install_result
+        _browser_install_result = {"status": "running", "stdout": "", "stderr": "", "returncode": None}
+        import subprocess as _sp
+        try:
+            result = _sp.run(
+                ["playwright", "install", "chromium"],
+                capture_output=True, text=True, timeout=180
+            )
+            _browser_install_result = {
+                "status": "done",
+                "ok": result.returncode == 0,
+                "returncode": result.returncode,
+                "stdout": result.stdout[-3000:],
+                "stderr": result.stderr[-3000:],
+            }
+        except Exception as e:
+            _browser_install_result = {
+                "status": "error",
+                "ok": False,
+                "error": str(e)[:1000],
+            }
+
+    t = threading.Thread(target=do_install, daemon=True)
+    t.start()
+    return jsonify({"ok": True, "message": "Install started in background, GET /api/install-browser to check"})
+
+@app.route("/api/install-browser", methods=["GET"])
+def api_install_browser_status():
+    """查詢背景安裝結果"""
+    return jsonify(_browser_install_result)
 
 
 # ── CLI entry ──────────────────────────────────────────────────────
