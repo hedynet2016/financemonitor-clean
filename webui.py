@@ -1083,27 +1083,58 @@ function generateReport() {
 """
         return page("report", body)
     
-    # Sort by modification time (newest first)
-    report_files.sort(key=os.path.getmtime, reverse=True)
+    # Sort by filename (contains ISO date YYYY-MM-DD, so alphabetical = chronological)
+    # Note: Can't use os.path.getmtime because Docker build sets all files to same mtime
+    report_files.sort(reverse=True)
     latest_report = report_files[0]
+
+    # Extract the report date from filename
+    report_date = os.path.basename(latest_report).replace("report_", "").replace(".html", "")
+
+    # Check if the latest report is today's; if not, auto-generate in background
+    from datetime import date as _date
+    today_str = _date.today().strftime("%Y-%m-%d")
+    is_stale = report_date != today_str
+    if is_stale:
+        # Trigger background generation (non-blocking)
+        try:
+            import threading as _th
+            def _gen():
+                try:
+                    py = shutil.which("python3") or shutil.which("python") or sys.executable
+                    subprocess.run(
+                        [py, str(SCRIPT_DIR / "scripts" / "daily_report.py")],
+                        capture_output=True, text=True,
+                        cwd=str(SCRIPT_DIR), timeout=300
+                    )
+                except Exception:
+                    pass
+            _th.Thread(target=_gen, daemon=True).start()
+        except Exception:
+            pass
     
     # Read the report HTML
     try:
         with open(latest_report, "r", encoding="utf-8") as f:
             report_html = f.read()
         
-        # Extract the report date from filename
-        report_date = os.path.basename(latest_report).replace("report_", "").replace(".html", "")
-        
         # Process report_html to escape backticks for JavaScript
         report_html_js = report_html.replace('`', '\\`').replace('${', '\\${')
+        
+        # Build date badge (show warning if stale)
+        if is_stale:
+            date_badge = f'<span class="badge bg-warning me-2">報告日期: {report_date}（非今日，正在背景更新）</span>'
+            auto_reload = '<script>setTimeout(()=>location.reload(),15000);</script>'
+        else:
+            date_badge = f'<span class="badge bg-info me-2">報告日期: {report_date}</span>'
+            auto_reload = ''
         
         # Display the report in an iframe
         body = f"""\
 <h4 class="mb-3 d-flex justify-content-between align-items-center">
   <span><i class="bi bi-file-earmark-bar-graph me-2"></i>每日報告</span>
   <div>
-    <span class="badge bg-info me-2">報告日期: {report_date}</span>
+    {date_badge}
     <button class="btn btn-sm btn-outline-light me-2" onclick="location.reload()">
       <i class="bi bi-arrow-clockwise me-1"></i>重新整理
     </button>
@@ -1141,6 +1172,7 @@ function generateReport() {{
     }});
 }}
 </script>
+{auto_reload}
 """
         return page("report", body)
     except Exception as e:
