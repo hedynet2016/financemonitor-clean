@@ -32,7 +32,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Step 2: install Firefox browser binary
-RUN playwright install firefox || echo "WARN: Playwright Firefox install failed, product monitor will be disabled"
+# Show error if failed, but don't break build (render_start.sh will retry)
+RUN playwright install firefox 2>&1 || echo "WARN: Playwright Firefox install failed in Docker build, will retry at startup"
 
 # Copy all application files
 COPY . .
