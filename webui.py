@@ -1214,12 +1214,12 @@ def api_push_history():
 
 @app.route("/api/diagnostic")
 def api_diagnostic():
-    """診斷端點：檢查 Playwright、Firefox、推播設定等"""
+    """診斷端點：檢查 Playwright、Chromium、推播設定等"""
     result = {
         "playwright_installed": False,
-        "firefox_available": False,
+        "browser_available": False,
         "playwright_error": None,
-        "firefox_error": None,
+        "browser_error": None,
         "product_state_file": False,
         "product_state_entries": 0,
     }
@@ -1230,11 +1230,11 @@ def api_diagnostic():
         result["playwright_installed"] = True
         try:
             with sync_playwright() as pw:
-                browser = pw.firefox.launch(headless=True)
+                browser = pw.chromium.launch(headless=True)
                 browser.close()
-            result["firefox_available"] = True
+            result["browser_available"] = True
         except Exception as e:
-            result["firefox_error"] = str(e)[:500]
+            result["browser_error"] = str(e)[:500]
     except ImportError as e:
         result["playwright_error"] = str(e)
 

@@ -31,9 +31,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
-# Step 2: install Firefox browser binary
+# Step 2: install Chromium browser binary
 # Show error if failed, but don't break build (render_start.sh will retry)
-RUN playwright install firefox 2>&1 || echo "WARN: Playwright Firefox install failed in Docker build, will retry at startup"
+RUN playwright install chromium 2>&1 || echo "WARN: Playwright Chromium install failed in Docker build, will retry at startup"
 
 # Copy all application files
 COPY . .

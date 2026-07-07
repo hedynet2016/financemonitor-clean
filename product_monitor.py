@@ -202,8 +202,8 @@ class ProductMonitor:
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         with sync_playwright() as pw:
-            browser = pw.firefox.launch(headless=True)
-            logger.info("已啟動 Firefox headless")
+            browser = pw.chromium.launch(headless=True)
+            logger.info("已啟動 Chromium headless")
 
             for shop in SHOPS:
                 shop_products = []
