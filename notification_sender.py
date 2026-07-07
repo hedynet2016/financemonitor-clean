@@ -5,6 +5,7 @@ notification_sender.py - 通知發送模組（最小化實現）
 所有配置從環境變數讀取
 """
 import os
+import re
 import logging
 
 logger = logging.getLogger(__name__)
@@ -155,8 +156,50 @@ def send_telegram_message(message: str, parse_mode: str = "HTML",
         return False
 
 # ==================== Discord 通知 ====================
+def _html_to_discord_markdown(text: str) -> str:
+    """將 HTML 標籤轉換為 Discord Markdown 格式
+    
+    Telegram 使用 HTML（parse_mode=HTML），Discord 使用 Markdown。
+    在發送 Discord 前轉換，確保兩邊顯示一致。
+    
+    轉換規則:
+      <a href="url">title</a>  →  [title](url)
+      <b>text</b>              →  **text**
+      <i>text</i>              →  *text*
+      <u>text</u>              →  __text__
+      <s>text</s>              →  ~~text~~
+      <code>text</code>        →  `text`
+      &amp; &lt; &gt; &quot;   →  & < > "
+    """
+    # 1. 超連結（最先處理，避免內含其他標籤被順序破壞）
+    #    支援 <a href="url">title</a> 和 <a href='url'>title</a>
+    text = re.sub(
+        r'<a\s+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+        r'[\2](\1)',
+        text,
+        flags=re.DOTALL,
+    )
+    # 2. 粗體
+    text = re.sub(r'<b>(.*?)</b>', r'**\1**', text, flags=re.DOTALL)
+    # 3. 斜體
+    text = re.sub(r'<i>(.*?)</i>', r'*\1*', text, flags=re.DOTALL)
+    # 4. 底線
+    text = re.sub(r'<u>(.*?)</u>', r'__\1__', text, flags=re.DOTALL)
+    # 5. 刪除線
+    text = re.sub(r'<s>(.*?)</s>', r'~~\1~~', text, flags=re.DOTALL)
+    # 6. 行內程式碼
+    text = re.sub(r'<code>(.*?)</code>', r'`\1`', text, flags=re.DOTALL)
+    # 7. HTML 實體還原
+    text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'")
+    return text
+
+
 def send_discord_message(message: str, webhook_url: str = None) -> bool:
-    """發送 Discord 消息（超過 2000 字元自動分段）"""
+    """發送 Discord 消息（超過 2000 字元自動分段）
+    
+    自動將 HTML 標籤轉換為 Discord Markdown 格式，
+    確保與 Telegram 顯示效果一致。
+    """
     try:
         import requests
         
@@ -166,6 +209,9 @@ def send_discord_message(message: str, webhook_url: str = None) -> bool:
         if not webhook_url:
             logger.warning("Discord Webhook URL 未設置，跳過發送")
             return False
+        
+        # HTML → Discord Markdown 轉換
+        message = _html_to_discord_markdown(message)
         
         # Discord 上限 2000 字元，超過自動分段
         DISCORD_LIMIT = 1900
