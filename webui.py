@@ -508,7 +508,7 @@ def dashboard():
   <div class="card-header"><i class="bi bi-info-circle me-2"></i>系統資訊</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每日 08:00 台北時間 新聞 + 14:00 台北時間 活動 + 16:00 台北時間 商品追蹤 + 每半小時股市</td></tr>
+      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控 + 08:00 新聞 + 14:00 活動 + 16:00 商品追蹤 + 09:00 自動備份 + 18:00 每日報告</td></tr>
       <tr><td class="text-muted">推送管道</td><td>Telegram Bot + Discord Webhook</td></tr>
       <tr><td class="text-muted">Python</td><td>{{py_version}}</td></tr>
       <tr><td class="text-muted">工作目錄</td><td>{{work_dir}}</td></tr>
@@ -627,6 +627,19 @@ def settings():
   <div class="card mb-4">
     <div class="card-header"><i class="bi bi-clock me-2"></i>排程（台北時間）</div>
     <div class="card-body">
+      <table class="table table-dark table-borderless mb-3">
+        <thead>
+          <tr><th style="width:120px">時間</th><th>任務</th><th style="width:120px">來源</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><b>每半小時</b></td><td>股市監控（美股交易時段，跌幅 &gt;3% 個股 + ETF）</td><td><span class="badge bg-secondary">監控</span></td></tr>
+          <tr><td><b>{{'%02d:00' % dc.news_hour}}</b></td><td>新聞 + 經濟指標推播（區塊 ①~⑩）</td><td><span class="badge bg-secondary">監控</span></td></tr>
+          <tr><td><b>{{'%02d:00' % dc.events_hour}}</b></td><td>活動推播（區塊 ⑪，ICT/AI 活動）</td><td><span class="badge bg-secondary">監控</span></td></tr>
+          <tr><td><b>16:00</b></td><td>商品追蹤（雅虎拍賣，9 關鍵字）</td><td><span class="badge bg-secondary">監控</span></td></tr>
+          <tr><td><b>09:00</b></td><td>自動備份 logs → GitHub</td><td><span class="badge bg-info">排程器</span></td></tr>
+          <tr><td><b>18:00</b></td><td>生成每日報告（Web UI /report 頁面）</td><td><span class="badge bg-info">排程器</span></td></tr>
+        </tbody>
+      </table>
       <div class="row g-3">
         <div class="col-sm-4">
           <label class="form-label">每日新聞推送時間</label>
@@ -647,7 +660,7 @@ def settings():
           <small class="text-muted">目前：{{'%02d:00' % dc.events_hour}} 台北時間</small>
         </div>
         <div class="col-sm-4 d-flex align-items-end">
-          <small class="text-muted">每半小時股市監控自動運行</small>
+          <small class="text-muted">16:00 商品追蹤 / 09:00 備份 / 18:00 報告 為固定排程</small>
         </div>
       </div>
     </div>
@@ -855,6 +868,8 @@ def tasks_view():
       <tr><td class="text-muted">每日活動推播</td><td><b>{events_hour:02d}:00 台北時間</b> — 區塊⑪（ICT/AI 活動，未來90天）</td></tr>
       <tr><td class="text-muted">每日商品追蹤</td><td><b>16:00 台北時間</b> — 雅虎拍賣商品監控（9 關鍵字，價格 $2,000~$15,000，排除NG）</td></tr>
       <tr><td class="text-muted">每半小時股市監控</td><td>美股交易時段自動執行（跌幅>3%個股+ETF）</td></tr>
+      <tr><td class="text-muted">每日自動備份</td><td><b>09:00 台北時間</b> — 推送 logs 到 GitHub（render_scheduler.py）</td></tr>
+      <tr><td class="text-muted">每日報告生成</td><td><b>18:00 台北時間</b> — 生成每日報告 HTML（render_scheduler.py）</td></tr>
     </table>
   </div>
 </div>
