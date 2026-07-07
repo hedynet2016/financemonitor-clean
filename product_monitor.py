@@ -11,6 +11,7 @@
 技術方案：直接呼叫雅虎拍賣 GraphQL API（persisted query），無需瀏覽器
 """
 
+import html
 import json
 import logging
 import os
@@ -230,26 +231,27 @@ class ProductMonitor:
             logger.info("========== 商品追蹤結束 ==========")
             return 0
 
-        # 產生推播訊息
+        # 產生推播訊息（HTML 格式，標題使用超連結）
         lines = [
-            "🔍 商品追蹤（%s）" % now_str,
+            "🔍 <b>商品追蹤（%s）</b>" % now_str,
             "共找到 %d 筆符合條件的商品（價格 $%s ~ $%s）"
             % (len(all_products), format(MIN_PRICE, ","), format(MAX_PRICE, ",")),
             "─" * 30,
         ]
 
         for i, p in enumerate(all_products[:20], 1):
+            safe_title = html.escape(p["name"][:50])
+            safe_url = html.escape(p["url"])
             lines.append(
-                "%d. [%s] %s\n"
-                "   💰 $%s  |  關鍵字：%s\n"
-                "   🔗 %s"
+                '%d. <b><a href="%s">[%s] %s</a></b>\n'
+                "   💰 $%s  |  關鍵字：%s"
                 % (
                     i,
-                    p["shop"],
-                    p["name"][:50],
+                    safe_url,
+                    html.escape(p["shop"]),
+                    safe_title,
                     format(p["price"], ",") if p["price"] else "?",
-                    p["keyword"],
-                    p["url"],
+                    html.escape(p["keyword"]),
                 )
             )
             self._mark_sent(p["name"], p["price"])
