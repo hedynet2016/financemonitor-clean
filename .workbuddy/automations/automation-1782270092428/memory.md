@@ -1,5 +1,13 @@
 # GitHub 同步 09:00 — 執行記憶
 
+## 2026-07-08 08:50
+
+- 直接在 `financemonitor-clean` 工作區執行 git add/commit/push
+- 發現 untracked `.webui_status.json`（webui 執行時產生的 runtime 狀態檔）
+- 將其加入 `.gitignore`，這是唯一變更：`.gitignore` +1 行
+- Git commit: `0c9ce2e` → push 成功
+- 推送目標：`hedynet2016/financemonitor-clean` main 分支
+
 ## 2026-07-07 08:50
 
 - 直接在 `financemonitor-clean` 工作區執行 git add/commit/push（無需複製）
