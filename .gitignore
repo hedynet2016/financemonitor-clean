@@ -29,6 +29,7 @@ Thumbs.db
 tmp/
 temp/
 *.tmp
+.webui_status.json
 
 # 備份文件
 backup/
