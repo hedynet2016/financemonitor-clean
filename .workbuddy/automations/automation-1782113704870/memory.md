@@ -35,3 +35,10 @@
 - 結果：Copied=0, Skipped=23, Failed=0
 - 所有 23 個檔案 SHA256 校驗均未變更，無需複製
 - 備份目標：C:\Users\Ben\Desktop\WorkBuddy
+
+### 2026-07-10 20:55 (manual)
+- 執行 `backup_to_desktop.ps1`
+- 結果：Copied=10, Skipped=13, Failed=0
+- 有更新的檔案：config.json, integrated_monitor.py, news_monitor.py, economic_monitor.py, stock_monitor.py, notification_sender.py, telegram_bot.py, product_monitor.py, webui.py, requirements.txt
+- 未變更跳過的檔案：all_tasks.py, wsgi.py, Dockerfile, render.yaml, README.md + 所有 scripts/
+- 備份目標：C:\Users\Ben\Desktop\WorkBuddy
