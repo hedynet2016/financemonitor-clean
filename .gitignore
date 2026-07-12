@@ -30,6 +30,7 @@ tmp/
 temp/
 *.tmp
 .webui_status.json
+monitor_state.json
 
 # 備份文件
 backup/

@@ -16,7 +16,13 @@ import time
 
 import logging
 
+import json
+
+import os
+
 from datetime import datetime
+
+from pathlib import Path
 
 import pytz
 
@@ -47,6 +53,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 TAIPEI_TZ = pytz.timezone('Asia/Taipei')
+
+# ── 持久化監控狀態（避免 Render 重啟後 catch-up 重複推播）──
+STATE_FILE = Path(__file__).resolve().parent / "monitor_state.json"
+
+
+def _load_monitor_state() -> dict:
+    """從檔案載入各監控的最後執行日期"""
+    try:
+        if STATE_FILE.exists():
+            return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_monitor_state(state: dict) -> None:
+    """儲存各監控的最後執行日期到檔案"""
+    try:
+        STATE_FILE.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Failed to save monitor state: {e}")
 
 # ── Patch yfinance cache directory ──
 
@@ -268,9 +295,19 @@ class IntegratedMonitor:
 
         target_hour = self.news_monitor.news_config.get('daily_hour', 8)
 
+        # 從持久化檔案載入上次執行日期（避免重啟後 catch-up 重複推播）
+        _state = _load_monitor_state()
+        last_run_date_str = _state.get("news_last_run")
         last_run_date = None
+        if last_run_date_str:
+            try:
+                from datetime import date as _date
+                parts = last_run_date_str.split("-")
+                last_run_date = _date(int(parts[0]), int(parts[1]), int(parts[2]))
+            except Exception:
+                pass
         
-        logger.info(f"News monitor: target={target_hour}:00 Taipei, last_run_date=None")
+        logger.info(f"News monitor: target={target_hour}:00 Taipei, last_run_date={last_run_date}")
         heartbeat_count = 0
         
         
@@ -330,7 +367,10 @@ class IntegratedMonitor:
 
                     last_run_date = today
 
-
+                    # 持久化到檔案，避免重啟後 catch-up 重複推播
+                    _s = _load_monitor_state()
+                    _s["news_last_run"] = str(today)
+                    _save_monitor_state(_s)
 
                     # 等待1小时，避免窗口内重复执行
 
@@ -371,7 +411,17 @@ class IntegratedMonitor:
 
         target_hour = self.news_monitor.news_config.get('events_hour', 14)
 
+        # 從持久化檔案載入上次執行日期
+        _state = _load_monitor_state()
+        last_run_date_str = _state.get("events_last_run")
         last_run_date = None
+        if last_run_date_str:
+            try:
+                from datetime import date as _date
+                parts = last_run_date_str.split("-")
+                last_run_date = _date(int(parts[0]), int(parts[1]), int(parts[2]))
+            except Exception:
+                pass
         
         # 使用明確時區（台北時間）
         taipei_tz = pytz.timezone('Asia/Taipei')
@@ -424,6 +474,11 @@ class IntegratedMonitor:
                     self.news_monitor.run_events_only()
 
                     last_run_date = today
+
+                    # 持久化到檔案
+                    _s = _load_monitor_state()
+                    _s["events_last_run"] = str(today)
+                    _save_monitor_state(_s)
 
 
 
@@ -543,7 +598,17 @@ class IntegratedMonitor:
 
         target_hour = 16  # 16:00 台北時間
 
+        # 從持久化檔案載入上次執行日期
+        _state = _load_monitor_state()
+        last_run_date_str = _state.get("product_last_run")
         last_run_date = None
+        if last_run_date_str:
+            try:
+                from datetime import date as _date
+                parts = last_run_date_str.split("-")
+                last_run_date = _date(int(parts[0]), int(parts[1]), int(parts[2]))
+            except Exception:
+                pass
         
         # 使用明確時區（台北時間）
         taipei_tz = pytz.timezone('Asia/Taipei')
@@ -615,7 +680,10 @@ class IntegratedMonitor:
 
                     last_run_date = today
 
-                    
+                    # 持久化到檔案
+                    _s = _load_monitor_state()
+                    _s["product_last_run"] = str(today)
+                    _save_monitor_state(_s)
 
                     # 等待1小时，避免窗口内重複執行
 
