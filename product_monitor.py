@@ -2,19 +2,23 @@
 """
 雅虎拍賣商品追蹤監控模組
 監控三個賣場（樺仔/點子3C/US3C）的九大關鍵字商品
-價格 $2000 ~ $15000 元，排除標題含「NG」商品，七天內同一商品不重複推播
+價格 $2000 ~ $15000 元，排除標題含「NG」商品
+- 刊登超過 7 天的商品自動排除
+- 同一商品 7 天內不重複推播
 
 使用方法：
   python product_monitor.py              # 一般模式
   python product_monitor.py --once      # 執行一次即結束（測試用）
 
 技術方案：直接呼叫雅虎拍賣 GraphQL API（persisted query），無需瀏覽器
+刊登日期透過商品頁面的 isoredux-data 中的 startTime 欄位取得
 """
 
 import html
 import json
 import logging
 import os
+import re
 import time
 from datetime import datetime, timedelta
 
@@ -32,7 +36,8 @@ KEYWORDS = ["NUC", "Airpod", "Apple Watch", "MacBook", "iMac",
 
 MAX_PRICE = 15000
 MIN_PRICE = 2000
-DEDUP_DAYS = 7
+DEDUP_DAYS = 7          # 同一商品 7 天內不重複推播
+MAX_LISTING_DAYS = 7    # 刊登超過 7 天的商品自動排除
 STATE_FILE = "yahoo_state.json"
 
 # ── GraphQL API 設定 ──────────────────────────────────────────────────
@@ -98,6 +103,36 @@ class ProductMonitor:
         key = self._product_key(name, price)
         today = datetime.now().strftime("%Y-%m-%d")
         self.state.setdefault("sent", {})[key] = today
+
+    # ── 刊登日期查詢 ────────────────────────────────────────────────
+    def _fetch_listing_date(self, item_id):
+        """
+        從商品頁面取得刊登日期（startTime）。
+        雅虎拍賣商品頁面的 isoredux-data 中包含 startTime（Unix timestamp）。
+        回傳 datetime 物件或 None。
+        """
+        try:
+            import requests
+
+            url = "https://tw.bid.yahoo.com/item/%s" % item_id
+            resp = requests.get(
+                url,
+                headers={"User-Agent": USER_AGENT},
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                return None
+
+            # 從 HTML 中提取 startTime
+            m = re.search(r'"startTime"\s*:\s*(\d+)', resp.text)
+            if m:
+                ts = int(m.group(1))
+                return datetime.utcfromtimestamp(ts)
+
+        except Exception as e:
+            logger.debug("取得刊登日期失敗 [%s]: %s", item_id, e)
+
+        return None
 
     # ── 核心：GraphQL API 查詢 ─────────────────────────────────────
     def _scrape_shop(self, booth_id, shop_name, keyword):
@@ -202,6 +237,7 @@ class ProductMonitor:
 
         all_products = []
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        now_utc = datetime.utcnow()
 
         for shop in SHOPS:
             shop_products = []
@@ -226,16 +262,55 @@ class ProductMonitor:
             )
             all_products.extend(shop_products)
 
+        # 過濾刊登日期：排除刊登超過 MAX_LISTING_DAYS 天的商品
+        # 商品已依 item ID 排序（新→舊），找到 20 筆近期商品即停止
+        filtered_products = []
+        skipped_old = 0
+        max_fetch = 60  # 最多查詢 60 個商品頁面，避免過多請求
+        fetch_count = 0
+        for p in all_products:
+            if len(filtered_products) >= 20 or fetch_count >= max_fetch:
+                break
+
+            fetch_count += 1
+            listing_dt = self._fetch_listing_date(p["item_id"])
+            if listing_dt is None:
+                # 無法取得刊登日期，保留商品（避免誤殺）
+                p["listing_date"] = "?"
+                filtered_products.append(p)
+                continue
+
+            age_days = (now_utc - listing_dt).days
+            p["listing_date"] = listing_dt.strftime("%Y-%m-%d")
+
+            if age_days > MAX_LISTING_DAYS:
+                logger.info("排除舊商品 [%s] 刊登於 %s（%d天前）",
+                            p["name"][:30], p["listing_date"], age_days)
+                skipped_old += 1
+                # 標記為已發送，避免後續重複檢查
+                self._mark_sent(p["name"], p["price"])
+            else:
+                filtered_products.append(p)
+
+            time.sleep(0.3)  # 避免過快請求
+
+        all_products = filtered_products
+
+        if skipped_old > 0:
+            logger.info("已排除 %d 筆刊登超過 %d 天的舊商品", skipped_old, MAX_LISTING_DAYS)
+
         if not all_products:
             logger.info("沒有符合條件的新商品")
+            self._save_state()
             logger.info("========== 商品追蹤結束 ==========")
             return 0
 
         # 產生推播訊息（HTML 格式，標題使用超連結）
         lines = [
             "🔍 <b>商品追蹤（%s）</b>" % now_str,
-            "共找到 %d 筆符合條件的商品（價格 $%s ~ $%s）"
-            % (len(all_products), format(MIN_PRICE, ","), format(MAX_PRICE, ",")),
+            "共找到 %d 筆符合條件的商品（價格 $%s ~ $%s，刊登 %d 天內）"
+            % (len(all_products), format(MIN_PRICE, ","),
+               format(MAX_PRICE, ","), MAX_LISTING_DAYS),
             "─" * 30,
         ]
 
@@ -244,13 +319,14 @@ class ProductMonitor:
             safe_url = html.escape(p["url"])
             lines.append(
                 '%d. <b><a href="%s">[%s] %s</a></b>\n'
-                "   💰 $%s  |  關鍵字：%s"
+                "   💰 $%s  |  📅 %s  |  關鍵字：%s"
                 % (
                     i,
                     safe_url,
                     html.escape(p["shop"]),
                     safe_title,
                     format(p["price"], ",") if p["price"] else "?",
+                    html.escape(p.get("listing_date", "?")),
                     html.escape(p["keyword"]),
                 )
             )
