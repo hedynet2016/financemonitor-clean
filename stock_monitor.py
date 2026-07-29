@@ -57,6 +57,40 @@ logger = logging.getLogger(__name__)
 class StockMonitor:
     """股票監控類"""
 
+    # 美股 ETF 廣泛監控池（動態依交易量排序取前 N 名）
+    US_ETF_UNIVERSE = [
+        # 大盤指數
+        "SPY", "QQQ", "IWM", "DIA", "VTI", "VOO", "IVV",
+        # 板塊 ETF
+        "XLF", "XLK", "XLE", "XLV", "XLI", "XLU", "XLRE", "XLP", "XLB", "XLC", "XLY",
+        # 槓桿/反向
+        "SOXL", "TQQQ", "SQQQ", "SPXS", "SPXL", "UPRO", "SDS",
+        # 波動率
+        "UVXY", "VIXY",
+        # 債券
+        "TLT", "HYG", "LQD", "EMB", "AGG", "BND", "SHV", "IEF", "BIL",
+        # 新興市場/國際
+        "EEM", "EFA", "VEA", "VWO", "FXI", "KWEB", "ASHR", "INDA",
+        "EWZ", "EWJ", "EWW", "RSX", "EWG", "EWQ", "EWU", "EEMS", "SCZ",
+        # 半導體/科技
+        "SMH", "XHB", "XSD", "FINX", "CLOU", "BOTZ", "ROBO", "AIQ",
+        # 原物料/貴金屬/能源
+        "XME", "XOP", "GDX", "GDXJ", "SLV", "USO", "UNG", "UCO",
+        "DBC", "WEAT", "CORN", "SOYB",
+        # ARK 系列
+        "ARKK", "ARKG", "ARKW", "ARKF", "ARKQ",
+        # 清潔能源
+        "ICLN", "TAN", "PBW", "QCLN",
+        # 生技/醫療
+        "XBI", "IBB", "PJP",
+        # 金融
+        "FNCL", "KRE", "KBE", "IAI",
+        # 航空/國防/運輸
+        "JETS", "PPA", "ITA",
+        # 主題
+        "BITQ", "BETZ", "ESPO", "CIBR",
+    ]
+
     # 台股中文名稱映射
     TW_STOCK_NAMES = {
         "2330.TW": "台積電",
@@ -279,30 +313,139 @@ class StockMonitor:
             logger.error(f"Error fetching TW ETFs: {e}")
             return []
 
-    def get_us_realtime_data(self) -> List[Dict]:
-        """從免費API獲取即時美股數據 (使用yfinance作為備選)"""
+    def _fetch_us_most_active_stocks(self, count: int = 50) -> List[Dict]:
+        """透過 Yahoo Finance screener API 動態取得全市場最活躍個股"""
         try:
-            logger.info("Fetching US stocks data...")
+            url = "https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved"
+            params = {
+                "formatted": "false",
+                "lang": "en-US",
+                "region": "US",
+                "scrIds": "most_actives",
+                "count": str(count),
+            }
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
 
-            # 使用Yahoo Finance (雖然不是嚴格的即時,但延遲約15分鐘,對於每半小時監控已經足夠)
-            # 如果需要嚴格的即時數據,需要註冊AllTick、IEX Cloud等付費服務
+            resp = requests.get(url, params=params, headers=headers, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
 
-            # 熱門美股列表 (按市值和交易量)
-            us_tickers = [
-                "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "GOOG", "META", "TSLA",
-                "BRK.B", "LLY", "AVGO", "JPM", "V", "XOM", "PG", "JNJ",
-                "COST", "MA", "HD", "MRK", "ABBV", "NFLX", "AMD", "ORCL",
-                "PEP", "BAC", "KO", "CSCO", "TMO", "WMT", "CRM", "ABT",
-                "MCD", "CVX", "DHR", "NKE", "ACN", "ADBE", "LIN", "WFC",
-                "INTC", "VZ", "DIS", "IBM", "NEE", "HON", "CAT", "MS",
-                "GS", "BA", "UNH", "LOW", "QCOM", "SCHW", "TXN"
-            ]
+            results = data.get("finance", {}).get("result", [])
+            if not results:
+                logger.warning("Screener API returned no results")
+                return []
 
-            logger.info(f"Fetching data for {len(us_tickers)} US stocks...")
-            tickers_obj = yf.Tickers(us_tickers)
+            quotes = results[0].get("quotes", [])
+            taipei_tz = pytz.timezone("Asia/Taipei")
+            ts = datetime.now(taipei_tz).isoformat()
 
             stock_data = []
-            for ticker in us_tickers:
+            for q in quotes:
+                quote_type = q.get("quoteType", "")
+                if quote_type != "EQUITY":
+                    continue
+                volume = q.get("regularMarketVolume", 0) or 0
+                price = q.get("regularMarketPrice", 0) or 0
+                if volume <= 0 or price <= 0:
+                    continue
+                stock_data.append({
+                    "ticker": q.get("symbol", ""),
+                    "name": q.get("shortName", q.get("symbol", "")),
+                    "volume": volume,
+                    "price": price,
+                    "change_percent": q.get("regularMarketChangePercent", 0) or 0,
+                    "market_cap": q.get("marketCap", 0) or 0,
+                    "market": "US",
+                    "timestamp": ts,
+                })
+
+            logger.info(f"Dynamic screener: fetched {len(stock_data)} most active US stocks")
+            return stock_data
+
+        except Exception as e:
+            logger.error(f"Yahoo Finance screener API failed: {e}")
+            return []
+
+    def _fetch_us_stocks_fallback(self) -> List[Dict]:
+        """Fallback: 使用 yfinance 從固定清單取得美股個股數據"""
+        us_tickers = [
+            "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "GOOG", "META", "TSLA",
+            "BRK.B", "LLY", "AVGO", "JPM", "V", "XOM", "PG", "JNJ",
+            "COST", "MA", "HD", "MRK", "ABBV", "NFLX", "AMD", "ORCL",
+            "PEP", "BAC", "KO", "CSCO", "TMO", "WMT", "CRM", "ABT",
+            "MCD", "CVX", "DHR", "NKE", "ACN", "ADBE", "LIN", "WFC",
+            "INTC", "VZ", "DIS", "IBM", "NEE", "HON", "CAT", "MS",
+            "GS", "BA", "UNH", "LOW", "QCOM", "SCHW", "TXN"
+        ]
+
+        logger.info(f"Fallback: fetching {len(us_tickers)} US stocks via yfinance...")
+        tickers_obj = yf.Tickers(us_tickers)
+
+        stock_data = []
+        for ticker in us_tickers:
+            try:
+                info = tickers_obj.tickers.get(ticker)
+                if not info:
+                    continue
+                info = info.info
+                volume = info.get('regularMarketVolume', 0) or 0
+                price = info.get('regularMarketPrice', 0) or 0
+                change = info.get('regularMarketChangePercent', 0) or 0
+                market_cap = info.get('marketCap', 0) or 0
+
+                if volume > 0:
+                    stock_data.append({
+                        'ticker': ticker,
+                        'name': ticker,
+                        'volume': volume,
+                        'price': price,
+                        'change_percent': change,
+                        'market_cap': market_cap,
+                        'market': 'US',
+                        'timestamp': datetime.now(pytz.timezone('Asia/Taipei')).isoformat()
+                    })
+            except Exception as e:
+                logger.warning(f"Skip {ticker}: {e}")
+                continue
+
+        logger.info(f"Fallback: fetched {len(stock_data)} US stocks")
+        return stock_data
+
+    def get_us_realtime_data(self) -> List[Dict]:
+        """動態取得美股最活躍個股數據（screener API → yfinance fallback）"""
+        logger.info("Fetching US stocks data...")
+
+        # 優先使用 Yahoo Finance screener API 動態取得全市場最活躍個股
+        stock_data = self._fetch_us_most_active_stocks(count=50)
+        if stock_data:
+            return stock_data
+
+        # Fallback: 使用 yfinance 從固定清單取得
+        logger.warning("Screener API unavailable, falling back to fixed list via yfinance")
+        try:
+            return self._fetch_us_stocks_fallback()
+        except Exception as e:
+            logger.error(f"Error fetching US stocks (fallback): {e}")
+            return []
+
+    def get_us_etf_data(self) -> List[Dict]:
+        """動態取得美股 ETF 數據（廣泛監控池 → 依交易量排序取前 N 名）"""
+        try:
+            logger.info("Fetching US ETFs data from broad universe...")
+
+            # 使用廣泛 ETF 監控池，依實際交易量動態排序
+            us_etfs = self.US_ETF_UNIVERSE
+            logger.info(f"Fetching data for {len(us_etfs)} US ETFs from universe...")
+
+            tickers_obj = yf.Tickers(us_etfs)
+
+            taipei_tz = pytz.timezone('Asia/Taipei')
+            ts = datetime.now(taipei_tz).isoformat()
+
+            etf_data = []
+            for ticker in us_etfs:
                 try:
                     info = tickers_obj.tickers.get(ticker)
                     if not info:
@@ -314,40 +457,43 @@ class StockMonitor:
                     change = info.get('regularMarketChangePercent', 0) or 0
                     market_cap = info.get('marketCap', 0) or 0
 
-                    if volume > 0:
-                        stock_data.append({
+                    if volume > 0 and price > 0:
+                        etf_data.append({
                             'ticker': ticker,
-                            'name': ticker,  # 美股使用代號
+                            'name': ticker,
                             'volume': volume,
                             'price': price,
                             'change_percent': change,
                             'market_cap': market_cap,
                             'market': 'US',
-                            'timestamp': datetime.now(pytz.timezone('Asia/Taipei')).isoformat()
+                            'type': 'etf',
+                            'timestamp': ts
                         })
-                        logger.debug(f"{ticker} (US): Volume={volume:,}, Price=${price:.2f}")
                 except Exception as e:
-                    logger.warning(f"Skip {ticker}: {e}")
+                    logger.warning(f"Skip ETF {ticker}: {e}")
                     continue
 
-            logger.info(f"Fetched {len(stock_data)} US stocks")
-            return stock_data
+            # 依交易量降序排序
+            etf_data.sort(key=lambda x: x['volume'], reverse=True)
+
+            logger.info(f"Fetched {len(etf_data)} US ETFs from universe (sorted by volume)")
+            return etf_data
 
         except Exception as e:
-            logger.error(f"Error fetching US stocks: {e}")
-            return []
+            logger.error(f"Error fetching US ETFs from universe: {e}")
+            # Fallback: 使用 config 中的小清單
+            logger.warning("Falling back to config ETF list")
+            return self._fetch_us_etfs_fallback()
 
-    def get_us_etf_data(self) -> List[Dict]:
-        """從 yfinance 獲取美股 ETF 即時數據"""
+    def _fetch_us_etfs_fallback(self) -> List[Dict]:
+        """Fallback: 使用 config 中的 ETF 清單取得數據"""
         try:
-            logger.info("Fetching US ETFs data...")
-
             us_etfs = self.us_etfs
             if not us_etfs:
-                logger.info("No US ETFs configured")
+                logger.info("No US ETFs configured for fallback")
                 return []
 
-            logger.info(f"Fetching data for {len(us_etfs)} US ETFs...")
+            logger.info(f"Fallback: fetching {len(us_etfs)} US ETFs from config...")
             tickers_obj = yf.Tickers(us_etfs)
 
             etf_data = []
@@ -375,16 +521,16 @@ class StockMonitor:
                             'type': 'etf',
                             'timestamp': datetime.now(pytz.timezone('Asia/Taipei')).isoformat()
                         })
-                        logger.debug(f"{ticker} (ETF): Volume={volume:,}, Price=${price:.2f}")
                 except Exception as e:
                     logger.warning(f"Skip ETF {ticker}: {e}")
                     continue
 
-            logger.info(f"Fetched {len(etf_data)} US ETFs")
+            etf_data.sort(key=lambda x: x['volume'], reverse=True)
+            logger.info(f"Fallback: fetched {len(etf_data)} US ETFs")
             return etf_data
 
         except Exception as e:
-            logger.error(f"Error fetching US ETFs: {e}")
+            logger.error(f"Error fetching US ETFs (fallback): {e}")
             return []
 
     def get_stock_data(self) -> List[Dict]:
@@ -562,7 +708,7 @@ class StockMonitor:
         if drop_stocks:
             message += f"{'='*35}\n"
             message += f"🇺🇸 <b>美股個股跌幅排行</b>\n"
-            message += f"（交易量前20名且跌幅超過3%）\n"
+            message += f"（動態篩選交易量前20名且跌幅超過3%）\n"
             message += f"{'='*35}\n\n"
             
             for i, stock in enumerate(drop_stocks, 1):
@@ -577,7 +723,7 @@ class StockMonitor:
         else:
             message += f"{'='*35}\n"
             message += f"🇺🇸 <b>美股個股跌幅排行</b>\n"
-            message += f"（交易量前20名且跌幅超過3%）\n"
+            message += f"（動態篩選交易量前20名且跌幅超過3%）\n"
             message += f"{'='*35}\n\n"
             message += f"✅ 今日無符合條件的個股（交易量前20名中無跌幅超過3%的個股）\n\n"
         
@@ -585,7 +731,7 @@ class StockMonitor:
         if drop_etfs:
             message += f"{'='*35}\n"
             message += f"📊 <b>美股 ETF 跌幅排行</b>\n"
-            message += f"（交易量前10名且跌幅超過3%）\n"
+            message += f"（動態篩選交易量前10名且跌幅超過3%）\n"
             message += f"{'='*35}\n\n"
             
             for i, etf in enumerate(drop_etfs, 1):
@@ -600,7 +746,7 @@ class StockMonitor:
         else:
             message += f"{'='*35}\n"
             message += f"📊 <b>美股 ETF 跌幅排行</b>\n"
-            message += f"（交易量前10名且跌幅超過3%）\n"
+            message += f"（動態篩選交易量前10名且跌幅超過3%）\n"
             message += f"{'='*35}\n\n"
             message += f"✅ 今日無符合條件的 ETF（交易量前10名中無跌幅超過3%的 ETF）\n\n"
         

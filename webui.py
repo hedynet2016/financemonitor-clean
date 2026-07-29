@@ -995,11 +995,11 @@ def tasks_view():
       <div class="row g-3">
         <div class="col-md-6">
           <div class="fw-bold mb-1"><span class="filter-tag">個股（Top 20 交易量）</span> <span class="filter-tag">跌幅 >3%</span></div>
-          <div><small class="text-muted">{len(us_stocks)} 追蹤：</small><br><code>{" ".join(us_stocks)}</code></div>
+          <div><small class="text-muted">全市場動態篩選（screener API）</small></div>
         </div>
         <div class="col-md-6">
           <div class="fw-bold mb-1"><span class="filter-tag">ETF（Top 10 交易量）</span> <span class="filter-tag">跌幅 >3%</span></div>
-          <div><small class="text-muted">{len(us_etfs)} 追蹤：</small><br><code>{" ".join(us_etfs)}</code></div>
+          <div><small class="text-muted">96 檔 ETF 監控池，依交易量動態排序</small></div>
         </div>
       </div>
     </div>
