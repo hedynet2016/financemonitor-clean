@@ -45,11 +45,11 @@ def generate():
             ).split(","),
             "tw_stocks": os.environ.get(
                 "TW_STOCKS",
-                "2330.TW,2317.TW,2454.TW,2308.TW,2382.TW,2412.TW,2327.TW,2882.TW,2881.TW,2880.TW,2885.TW,2886.TW,2887.TW,2890.TW,2891.TW,2892.TW,4938.TW,3231.TW,3008.TW"
+                "2330.TW,2454.TW,2308.TW,2891.TW,2882.TW,2881.TW,3293.TWO"
             ).split(","),
             "tw_etfs": os.environ.get(
                 "TW_ETFS",
-                "0050.TW,0051.TW,0052.TW,0053.TW,0054.TW,0055.TW,0056.TW,0057.TW,0058.TW,0060.TW,0061.TW,0062.TW"
+                "00403A.TW,00981A.TW,0050.TW,00830.TW,00919.TW,00878.TW,0056.TW"
             ).split(",")
         },
         "trading_hours": {

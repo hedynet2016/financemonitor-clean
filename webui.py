@@ -1015,8 +1015,8 @@ def tasks_view():
         <span class="tag {'tag-success' if tw_mkt.get('enabled') else 'tag-danger'}">{'ON' if tw_mkt.get('enabled') else 'OFF'}</span>
         <small class="text-muted ms-2">{tw_mkt.get('start_hour',9):02d}:{tw_mkt.get('start_minute',0):02d} - {tw_mkt.get('end_hour',13):02d}:{tw_mkt.get('end_minute',30):02d} (Asia/Taipei)</small>
       </div>
-      <div><small class="text-muted">{len(tw_stocks)} 個股：</small><br><code>{" ".join([s.replace('.TW','') for s in tw_stocks])}</code></div>
-      <div class="mt-2"><small class="text-muted">{len(tw_etfs)} ETF：</small><br><code>{" ".join([s.replace('.TW','') for s in tw_etfs])}</code></div>
+      <div><small class="text-muted">{len(tw_stocks)} 個股：</small><br><code>{" ".join([s.replace('.TWO','').replace('.TW','') for s in tw_stocks])}</code></div>
+      <div class="mt-2"><small class="text-muted">{len(tw_etfs)} ETF：</small><br><code>{" ".join([s.replace('.TWO','').replace('.TW','') for s in tw_etfs])}</code></div>
     </div>
   </div>
 </div>

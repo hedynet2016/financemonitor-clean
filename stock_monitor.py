@@ -60,80 +60,36 @@ class StockMonitor:
     # 台股中文名稱映射
     TW_STOCK_NAMES = {
         "2330.TW": "台積電",
-        "2317.TW": "鴻海",
         "2454.TW": "聯發科",
         "2308.TW": "台達電",
-        "2382.TW": "廣達",
-        "2412.TW": "中華電",
-        "2327.TW": "國巨",
+        "2891.TW": "中信金",
         "2882.TW": "國泰金",
         "2881.TW": "富邦金",
-        "2880.TW": "華南金",
-        "2885.TW": "元大金",
-        "2886.TW": "兆豐金",
-        "2887.TW": "台新金",
-          "2890.TW": "永豐金",
-        "2891.TW": "中信金",
-        "2892.TW": "第一金",
-        "4938.TW": "和碩",
-        "3231.TW": "緯創",
-        "3008.TW": "大立光",
-        "1101.TW": "台泥",
-        "2002.TW": "中鋼",
-        "6505.TW": "台塑化",
-        "1301.TW": "台塑",
-        "1326.TW": "台化",
-        "1303.TW": "南亞",
-        "2207.TW": "和泰車",
-        "2330.TW": "台積電",
-        "2890.TW": "永豐金",
-        "3008.TW": "大立光",
-        "2409.TW": "友達",
-        "2412.TW": "中華電",
-        "2357.TW": "華碩",
-        "2395.TW": "研華",
-        "2347.TW": "聯強",
-        "2454.TW": "聯發科",
-        "2474.TW": "可成",
-        "3045.TW": "台灣大",
-        "6286.TW": "愛之味",
-        "1216.TW": "統一",
-        "1201.TW": "味全",
-        "1227.TW": "佳格",
-        "1231.TW": "南僑",
-        "1234.TW": "黑松",
-        "1235.TW": "台灣糖業",
-        "1236.TW": "台塑石化",
-        "1237.TW": "台灣聚合"
+        "3293.TWO": "鈊象電子",
     }
 
     # 台股 ETF 中文名稱映射
     TW_ETF_NAMES = {
+        "00403A.TW": "主動統一升級50",
+        "00981A.TW": "主動統一台股增長",
         "0050.TW": "元大台灣50",
-        "0051.TW": "元大中型100",
-        "0052.TW": "富邦科技",
-        "0053.TW": "元大電子",
-        "0054.TW": "元大台商50",
-        "0055.TW": "元大MSCI金融",
+        "00830.TW": "國泰費城半導體",
+        "00919.TW": "群益台灣精選高息",
+        "00878.TW": "國泰永續高股息",
         "0056.TW": "元大高股息",
-        "0057.TW": "富邦摩台",
-        "0058.TW": "富邦發達",
-        "0060.TW": "元大新台幣",
-        "0061.TW": "元大寶滬深",
-        "0062.TW": "富邦上証",
-        "0063.TW": "元大MSCI新興市場",
-        "0064.TW": "元大台灣金融",
-        "0065.TW": "富邦台灣中小",
-        "0066.TW": "富邦NASDAQ",
-        "0067.TW": "富邦恒生",
-        "0068.TW": "富邦DJ工業",
-        "0069.TW": "寶來標智滬深300",
-        "0070.TW": "富邦台灣加權",
     }
+
+    def _strip_tw_suffix(self, ticker: str) -> str:
+        """移除台股代碼的 .TW 或 .TWO 後綴"""
+        if ticker.endswith('.TWO'):
+            return ticker[:-4]
+        if ticker.endswith('.TW'):
+            return ticker[:-3]
+        return ticker
 
     def get_tw_etf_name(self, ticker: str) -> str:
         """取得台股 ETF 中文名稱"""
-        return self.TW_ETF_NAMES.get(ticker, ticker.replace('.TW', ''))
+        return self.TW_ETF_NAMES.get(ticker, self._strip_tw_suffix(ticker))
 
     def __init__(self, config_file: str = 'config.json'):
         """初始化監控器"""
@@ -165,7 +121,7 @@ class StockMonitor:
 
     def get_tw_stock_name(self, ticker: str) -> str:
         """獲取台股中文名稱"""
-        return self.TW_STOCK_NAMES.get(ticker, ticker)
+        return self.TW_STOCK_NAMES.get(ticker, self._strip_tw_suffix(ticker))
 
     def is_trading_time(self, market: str = 'all') -> Dict[str, bool]:
         """檢查是否為交易時間"""
@@ -216,17 +172,11 @@ class StockMonitor:
         try:
             logger.info("Fetching TW stocks from Yahoo Finance...")
 
-            # 熱門台股列表 (使用 Yahoo Finance 代碼)
-            tw_tickers = [
-                "2330.TW", "2317.TW", "2454.TW", "2308.TW", "2382.TW",
-                "2412.TW", "2327.TW", "2882.TW", "2881.TW", "2880.TW",
-                "2885.TW", "2886.TW", "2887.TW", "2890.TW",
-                "2891.TW", "2892.TW", "4938.TW", "3231.TW", "3008.TW",
-                "1101.TW", "2002.TW", "6505.TW", "1301.TW", "1326.TW",
-                "1303.TW", "2207.TW", "2409.TW", "2357.TW", "2395.TW",
-                "2347.TW", "2474.TW", "3045.TW", "1216.TW", "1201.TW",
-                "1227.TW", "1231.TW", "1234.TW", "6286.TW"
-            ]
+            # 從 config.json 讀取監控的台股個股清單
+            tw_tickers = self.tw_tickers
+            if not tw_tickers:
+                logger.info("No TW stocks configured")
+                return []
 
             logger.info(f"Fetching data for {len(tw_tickers)} TW stocks from Yahoo Finance...")
             tickers_obj = yf.Tickers(tw_tickers)
@@ -685,7 +635,7 @@ class StockMonitor:
                 change_sign = "+" if stock['change_percent'] >= 0 else ""
                 change_emoji = "📈" if stock['change_percent'] >= 0 else "📉"
                 change_color = "🟢" if stock['change_percent'] >= 0 else "🔴"
-                stock_code = stock['ticker'].replace('.TW', '')
+                stock_code = self._strip_tw_suffix(stock['ticker'])
                 stock_name = stock['name']
                 
                 message += f"{i}. <b>{stock_code} {stock_name}</b>\n"
@@ -710,7 +660,7 @@ class StockMonitor:
                 change_sign = "+" if etf['change_percent'] >= 0 else ""
                 change_emoji = "📈" if etf['change_percent'] >= 0 else "📉"
                 change_color = "🟢" if etf['change_percent'] >= 0 else "🔴"
-                etf_code = etf['ticker'].replace('.TW', '')
+                etf_code = self._strip_tw_suffix(etf['ticker'])
                 etf_name = etf['name']
                 
                 message += f"{i}. <b>{etf_code} {etf_name}</b>\n"
