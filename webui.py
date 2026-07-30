@@ -1313,6 +1313,24 @@ def main():
     p.add_argument("--no-scheduler", action="store_true", help="Web UI only (no background scheduler)")
     args = p.parse_args()
 
+    # 啟動時立即生成 config.json（避免 subprocess 找不到）
+    if not CONFIG_FILE.exists():
+        logger.info("[Startup] config.json not found — generating from env vars...")
+        try:
+            gen_script = SCRIPT_DIR / "scripts" / "generate_config.py"
+            if gen_script.exists():
+                import subprocess as _sp
+                _r = _sp.run([sys.executable, str(gen_script)],
+                             capture_output=True, text=True, timeout=30)
+                if _r.returncode == 0:
+                    logger.info("[Startup] config.json generated successfully")
+                else:
+                    logger.error(f"[Startup] generate_config.py failed: {_r.stderr[-500:]}")
+            else:
+                logger.error(f"[Startup] generate_config.py not found at {gen_script}")
+        except Exception as e:
+            logger.error(f"[Startup] Failed to generate config.json: {e}")
+
     # 啟動診斷：顯示關鍵環境變數狀態
     import os as _os
     tg_token_ok = bool(_os.environ.get("TELEGRAM_BOT_TOKEN", ""))
@@ -1321,7 +1339,8 @@ def main():
     logger.info(f"[DIAG] Env vars: TELEGRAM_BOT_TOKEN={'yes' if tg_token_ok else 'no'}, "
                 f"TELEGRAM_CHAT_ID={'yes' if tg_chat_ok else 'no'}, "
                 f"DISCORD_WEBHOOK_URL={'yes' if dc_webhook_ok else 'no'}, "
-                f"PORT={args.port}, TZ={_os.environ.get('TZ', 'NOT SET')}")
+                f"PORT={args.port}, TZ={_os.environ.get('TZ', 'NOT SET')}, "
+                f"config.json={'exists' if CONFIG_FILE.exists() else 'MISSING'}")
 
     if not args.no_scheduler:
         t = threading.Thread(target=start_scheduler, daemon=True)

@@ -195,9 +195,31 @@ class IntegratedMonitor:
 
     def _load_config(self, config_file: str) -> dict:
 
-        """讀取設定檔"""
+        """讀取設定檔，若不存在則自動從環境變數生成"""
 
         import json
+        import os
+        import subprocess
+        import sys
+
+        if not os.path.exists(config_file):
+            logger.warning(f"config.json not found at {config_file} — auto-generating from env vars...")
+            try:
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                gen_script = os.path.join(script_dir, "scripts", "generate_config.py")
+                if os.path.exists(gen_script):
+                    result = subprocess.run(
+                        [sys.executable, gen_script],
+                        capture_output=True, text=True, timeout=30
+                    )
+                    if result.returncode == 0:
+                        logger.info("config.json auto-generated successfully")
+                    else:
+                        logger.error(f"generate_config.py failed: {result.stderr[-500:]}")
+                else:
+                    logger.error(f"generate_config.py not found at {gen_script}")
+            except Exception as e:
+                logger.error(f"Failed to auto-generate config.json: {e}")
 
         with open(config_file, 'r', encoding='utf-8') as f:
 
