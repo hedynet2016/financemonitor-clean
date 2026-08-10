@@ -140,7 +140,10 @@ class StockMonitor:
         self.all_tickers = self.us_tickers + self.us_etfs + self.tw_tickers + self.tw_etfs
 
         logger.info(f"StockMonitor initialized with {len(self.us_tickers)} US stocks and {len(self.tw_tickers)} TW stocks")
-    
+
+        # 台股數據來源追蹤（Yahoo Finance / TWSE OpenAPI）
+        self._tw_data_source = "Yahoo Finance"
+
     def load_config(self, config_file: str) -> Dict:
         """加載配置文件"""
         try:
@@ -247,16 +250,28 @@ class StockMonitor:
                             'timestamp': datetime.now(pytz.timezone('Asia/Taipei')).isoformat()
                         })
                         logger.debug(f"{ticker} ({name}): Volume={volume:,}, Price=NT${price:.2f}")
+                    time.sleep(1)  # 降低 Yahoo Finance 限流風險
                 except Exception as e:
                     logger.warning(f"Skip {ticker}: {e}")
+                    time.sleep(1)
                     continue
 
             logger.info(f"Fetched {len(stock_data)} TW stocks from Yahoo Finance")
+
+            # yfinance 限流或失敗時，自動切換到 TWSE OpenAPI
+            if not stock_data and tw_tickers:
+                logger.warning("Yahoo Finance returned no TW stock data (likely rate limited), falling back to TWSE OpenAPI...")
+                self._tw_data_source = "TWSE OpenAPI"
+                return self._fetch_tw_from_twse(tw_tickers)
+
+            self._tw_data_source = "Yahoo Finance"
             return stock_data
 
         except Exception as e:
             logger.error(f"Error fetching TW stocks from Yahoo Finance: {e}")
-            return []
+            logger.warning("Trying TWSE OpenAPI as fallback...")
+            self._tw_data_source = "TWSE OpenAPI"
+            return self._fetch_tw_from_twse(self.tw_tickers)
 
     def get_tw_etf_data(self) -> List[Dict]:
         """從 Yahoo Finance 獲取台股 ETF 即時數據"""
@@ -302,15 +317,149 @@ class StockMonitor:
                             'timestamp': datetime.now(pytz.timezone('Asia/Taipei')).isoformat()
                         })
                         logger.debug(f"{ticker} (ETF): Volume={volume:,}, Price=NT${price:.2f}")
+                    time.sleep(1)  # 降低 Yahoo Finance 限流風險
                 except Exception as e:
                     logger.warning(f"Skip ETF {ticker}: {e}")
+                    time.sleep(1)
                     continue
 
-            logger.info(f"Fetched {len(etf_data)} TW ETFs")
+            logger.info(f"Fetched {len(etf_data)} TW ETFs from Yahoo Finance")
+
+            # yfinance 限流或失敗時，自動切換到 TWSE OpenAPI
+            if not etf_data and tw_etfs:
+                logger.warning("Yahoo Finance returned no TW ETF data (likely rate limited), falling back to TWSE OpenAPI...")
+                self._tw_data_source = "TWSE OpenAPI"
+                return self._fetch_tw_from_twse(tw_etfs)
+
+            self._tw_data_source = "Yahoo Finance"
             return etf_data
 
         except Exception as e:
             logger.error(f"Error fetching TW ETFs: {e}")
+            logger.warning("Trying TWSE OpenAPI as fallback for TW ETFs...")
+            self._tw_data_source = "TWSE OpenAPI"
+            return self._fetch_tw_from_twse(self.tw_etfs)
+
+    def _fetch_tw_from_twse(self, tickers: List[str]) -> List[Dict]:
+        """從 TWSE/TPEx API 取得台股數據（yfinance 限流時的 fallback）
+
+        上市(.TW) → TWSE STOCK_DAY API（最近交易日收盤數據）
+        上櫃(.TWO) → TPEx 日收盤行情 API
+        回傳格式與 yfinance 相同，volume 單位為股
+        """
+        try:
+            logger.info(f"TWSE Fallback: fetching {len(tickers)} TW tickers...")
+            taipei_tz = pytz.timezone('Asia/Taipei')
+            ts = datetime.now(taipei_tz).isoformat()
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json",
+            }
+
+            now = datetime.now(taipei_tz)
+            date_yyyymmdd = now.strftime('%Y%m%d')
+            roc_date = f"{now.year - 1911}/{now.month:02d}/{now.day:02d}"
+
+            # 先取得所有上櫃(OTC)股票資料（一次性，供 .TWO 股票查詢）
+            tpex_rows = None
+            otc_tickers = [t for t in tickers if t.endswith('.TWO')]
+            if otc_tickers:
+                tpex_rows = self._fetch_tpex_daily(roc_date, headers)
+
+            stock_data = []
+            for ticker in tickers:
+                try:
+                    code = self._strip_tw_suffix(ticker)
+
+                    if ticker.endswith('.TWO'):
+                        # 上櫃：從 TPEx 資料中查找
+                        if not tpex_rows:
+                            logger.warning(f"TWSE: no TPEx data for {ticker}")
+                            continue
+                        row = None
+                        for r in tpex_rows:
+                            if r[0].strip() == code:
+                                row = r
+                                break
+                        if not row:
+                            logger.warning(f"TWSE: {ticker} not found in TPEx data")
+                            continue
+                        # TPEx fields: 代號, 名稱, 收盤, 漲跌, 開盤, 最高, 最低, 均價, 成交股數, 成交金額
+                        name = row[1].strip()
+                        price = float(row[2].replace(',', '').strip())
+                        change_str = row[3].replace(',', '').strip()
+                        change = float(change_str) if change_str else 0.0
+                        vol_str = row[8].replace(',', '').strip()
+                        volume = int(vol_str) if vol_str else 0
+                    else:
+                        # 上市：使用 TWSE STOCK_DAY API
+                        url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&stockNo={code}&date={date_yyyymmdd}"
+                        resp = requests.get(url, headers=headers, timeout=10)
+                        resp.raise_for_status()
+                        data = resp.json()
+                        if data.get("stat") != "OK" or not data.get("data"):
+                            logger.warning(f"TWSE: no STOCK_DAY data for {ticker}")
+                            time.sleep(0.3)
+                            continue
+                        # 取最後一筆（最近交易日）
+                        record = data["data"][-1]
+                        # Fields: 日期, 成交股數, 成交金額, 開盤價, 最高價, 最低價, 收盤價, 漲跌價差, 成交筆數, 註記
+                        vol_str = record[1].replace(',', '').strip()
+                        volume = int(vol_str) if vol_str else 0
+                        price = float(record[6].replace(',', '').strip())
+                        change_str = record[7].replace(',', '').strip()
+                        change = float(change_str) if change_str else 0.0
+                        name = self.get_tw_stock_name(ticker) if ticker in self.TW_STOCK_NAMES else self.get_tw_etf_name(ticker)
+
+                    if volume > 0 and price > 0:
+                        previous_close = price - change if change != 0 else price
+                        change_percent = (change / previous_close * 100) if previous_close > 0 else 0
+
+                        stock_data.append({
+                            'ticker': ticker,
+                            'name': name,
+                            'volume': volume,
+                            'price': price,
+                            'change': change,
+                            'change_percent': change_percent,
+                            'market_cap': 0,
+                            'market': 'TW',
+                            'timestamp': ts,
+                        })
+                        logger.info(f"TWSE: {ticker} ({name}) vol={volume:,} price={price:.2f} change={change_percent:+.2f}%")
+
+                    time.sleep(0.3)
+
+                except Exception as e:
+                    logger.warning(f"TWSE: skip {ticker}: {e}")
+                    time.sleep(0.3)
+                    continue
+
+            logger.info(f"TWSE Fallback: fetched {len(stock_data)}/{len(tickers)} tickers")
+            return stock_data
+
+        except Exception as e:
+            logger.error(f"TWSE API error: {e}")
+            return []
+
+    def _fetch_tpex_daily(self, roc_date: str, headers: dict) -> list:
+        """取得 TPEx 上櫃股票日收盤行情（一次性取得全部，再由呼叫端篩選）"""
+        try:
+            url = f"https://www.tpex.org.tw/web/stock/aftertrading/daily_close_quotes/stk_quote_result.php?l=zh-tw&d={roc_date}"
+            resp = requests.get(url, headers=headers, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("stat") != "ok":
+                logger.warning(f"TPEx: stat={data.get('stat')}")
+                return []
+            tables = data.get("tables", [])
+            if not tables:
+                return []
+            rows = tables[0].get("data", [])
+            logger.info(f"TPEx: fetched {len(rows)} OTC stocks for {roc_date}")
+            return rows
+        except Exception as e:
+            logger.error(f"TPEx API error: {e}")
             return []
 
     def _fetch_us_most_active_stocks(self, count: int = 50) -> List[Dict]:
@@ -822,8 +971,8 @@ class StockMonitor:
         
         message += f"{'='*35}\n"
         message += f"🤖 由 WorkBuddy 股票監控系統自動生成\n"
-        message += f"📊 數據來源: Yahoo Finance"
-        
+        message += f"📊 數據來源: {getattr(self, '_tw_data_source', 'Yahoo Finance')}"
+
         return message
     def send_telegram_message(self, message: str) -> bool:
         """發送通知訊息到所有啟用的渠道"""
