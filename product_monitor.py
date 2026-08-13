@@ -40,6 +40,11 @@ DEDUP_DAYS = 7          # 同一商品 7 天內不重複推播
 MAX_LISTING_DAYS = 7    # 刊登超過 7 天的商品自動排除
 STATE_FILE = "yahoo_state.json"
 
+# ── PChome 24h 熱銷排行設定 ──────────────────────────────────────────
+PCHOME_SEARCH_URL = "https://ecshweb.pchome.com.tw/search/v3.3/all/results"
+PCHOME_KEYWORDS = ["螢幕", "延長線", "充電器", "電腦"]
+PCHOME_TOP_N = 3        # 每個關鍵字取前 N 名
+
 # ── GraphQL API 設定 ──────────────────────────────────────────────────
 GQL_URL = "https://graphql.ec.yahoo.com/graphql"
 GQL_SPACE_ID = "2092115390"
@@ -230,6 +235,105 @@ class ProductMonitor:
 
         return products
 
+    # ── PChome 24h 熱銷排行 ────────────────────────────────────────
+    def _fetch_pchome_top_products(self, keyword, top_n=PCHOME_TOP_N):
+        """
+        查詢 PChome 24h 購物的熱銷排行商品。
+        使用 sort=sale/dc 依銷量降序排列，取前 top_n 名。
+        免認證、純 requests。
+        """
+        products = []
+        try:
+            import requests
+
+            params = {
+                "q": keyword,
+                "page": 1,
+                "sort": "sale/dc",
+            }
+            headers = {
+                "User-Agent": USER_AGENT,
+                "Accept": "application/json",
+                "Accept-Language": "zh-TW,zh;q=0.9",
+            }
+
+            logger.info("[PChome] 搜尋熱銷排行：%s（取前 %d 名）", keyword, top_n)
+            resp = requests.get(
+                PCHOME_SEARCH_URL, params=params, headers=headers, timeout=15
+            )
+
+            if resp.status_code != 200:
+                logger.warning("[PChome] API 回傳 %d", resp.status_code)
+                return products
+
+            data = resp.json()
+            raw_prods = data.get("prods") or []
+
+            for p in raw_prods[:top_n]:
+                prod_id = p.get("Id", "")
+                name = (p.get("name") or "").strip()
+                if not name:
+                    continue
+                price = p.get("price", 0)
+                try:
+                    price = int(price)
+                except (ValueError, TypeError):
+                    price = 0
+                url = "https://24h.pchome.com.tw/prod/%s" % prod_id
+
+                products.append({
+                    "keyword": keyword,
+                    "name": name[:100],
+                    "price": price,
+                    "url": url,
+                    "rank": len(products) + 1,
+                })
+
+            logger.info("[PChome] %s：取得 %d 筆熱銷商品", keyword, len(products))
+
+        except Exception as e:
+            logger.warning("[PChome] 查詢失敗 [%s]：%s", keyword, e)
+
+        return products
+
+    def _build_pchome_section(self):
+        """
+        查詢所有 PChome 關鍵字的熱銷排行，組成 HTML 推播段落。
+        回傳 HTML 字串，失敗時回傳空字串。
+        """
+        all_products = []
+        for kw in PCHOME_KEYWORDS:
+            items = self._fetch_pchome_top_products(kw)
+            all_products.extend(items)
+            time.sleep(0.5)  # 避免過快請求
+
+        if not all_products:
+            return ""
+
+        lines = [
+            "",
+            "─" * 30,
+            "🏆 <b>PChome 24h 熱銷排行</b>",
+            "（共 %d 筆，依銷量排序）" % len(all_products),
+        ]
+
+        current_kw = None
+        for p in all_products:
+            if p["keyword"] != current_kw:
+                current_kw = p["keyword"]
+                lines.append("")
+                lines.append("📱 <b>%s 熱銷 TOP %d</b>" % (current_kw, PCHOME_TOP_N))
+
+            safe_title = html.escape(p["name"][:60])
+            safe_url = html.escape(p["url"])
+            price_str = format(p["price"], ",") if p["price"] else "?"
+            lines.append(
+                '  %d. <a href="%s">%s</a>  💰 $%s'
+                % (p["rank"], safe_url, safe_title, price_str)
+            )
+
+        return "\n".join(lines)
+
     # ── 主流程 ────────────────────────────────────────────────────
     def run(self):
         logger.info("========== 商品追蹤開始 ==========")
@@ -300,40 +404,56 @@ class ProductMonitor:
             logger.info("已排除 %d 筆刊登超過 %d 天的舊商品", skipped_old, MAX_LISTING_DAYS)
 
         if not all_products:
-            logger.info("沒有符合條件的新商品")
+            logger.info("沒有符合條件的雅虎拍賣新商品")
+
+        # ── PChome 24h 熱銷排行 ──
+        pchome_section = self._build_pchome_section()
+
+        # 若雅虎拍賣和 PChome 都沒有結果，則不推播
+        if not all_products and not pchome_section:
             self._save_state()
-            logger.info("========== 商品追蹤結束 ==========")
+            logger.info("========== 商品追蹤結束（無任何商品）==========")
             return 0
 
         # 產生推播訊息（HTML 格式，標題使用超連結）
         lines = [
             "🔍 <b>商品追蹤（%s）</b>" % now_str,
-            "共找到 %d 筆符合條件的商品（價格 $%s ~ $%s，刊登 %d 天內）"
-            % (len(all_products), format(MIN_PRICE, ","),
-               format(MAX_PRICE, ","), MAX_LISTING_DAYS),
-            "─" * 30,
         ]
 
-        for i, p in enumerate(all_products[:20], 1):
-            safe_title = html.escape(p["name"][:50])
-            safe_url = html.escape(p["url"])
+        if all_products:
             lines.append(
-                '%d. <b><a href="%s">[%s] %s</a></b>\n'
-                "   💰 $%s  |  📅 %s  |  關鍵字：%s"
-                % (
-                    i,
-                    safe_url,
-                    html.escape(p["shop"]),
-                    safe_title,
-                    format(p["price"], ",") if p["price"] else "?",
-                    html.escape(p.get("listing_date", "?")),
-                    html.escape(p["keyword"]),
-                )
+                "共找到 %d 筆符合條件的商品（價格 $%s ~ $%s，刊登 %d 天內）"
+                % (len(all_products), format(MIN_PRICE, ","),
+                   format(MAX_PRICE, ","), MAX_LISTING_DAYS)
             )
-            self._mark_sent(p["name"], p["price"])
+            lines.append("─" * 30)
+
+            for i, p in enumerate(all_products[:20], 1):
+                safe_title = html.escape(p["name"][:50])
+                safe_url = html.escape(p["url"])
+                lines.append(
+                    '%d. <b><a href="%s">[%s] %s</a></b>\n'
+                    "   💰 $%s  |  📅 %s  |  關鍵字：%s"
+                    % (
+                        i,
+                        safe_url,
+                        html.escape(p["shop"]),
+                        safe_title,
+                        format(p["price"], ",") if p["price"] else "?",
+                        html.escape(p.get("listing_date", "?")),
+                        html.escape(p["keyword"]),
+                    )
+                )
+                self._mark_sent(p["name"], p["price"])
+
+        # 附加 PChome 熱銷排行段落
+        if pchome_section:
+            lines.append(pchome_section)
 
         message = "\n".join(lines)
-        logger.info("準備推播 %d 筆商品", min(len(all_products), 20))
+        logger.info("準備推播：雅虎拍賣 %d 筆 + PChome %d 筆",
+                    min(len(all_products), 20) if all_products else 0,
+                    len(PCHOME_KEYWORDS) * PCHOME_TOP_N)
 
         # 推播到 Telegram + Discord（使用 events_webhook）
         sent = 0
