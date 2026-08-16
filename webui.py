@@ -851,7 +851,7 @@ def tasks_view():
 
     # Build block info from code constants
     news_sources = ["CNBC", "WSJ", "Bloomberg", "MarketWatch", "Yahoo Finance", "FT", "Seeking Alpha", "TechNews", "MacroMicro", "Digitimes"]
-    sec_api_13f = ["Berkshire Hathaway", "ARK Invest", "Baupost Group", "Appaloosa", "Tiger Global", "Bridgewater", "Soros Fund", "Dalio"]
+    sec_api_13f = ["Berkshire Hathaway", "ARK Invest", "Baupost Group", "Appaloosa", "Tiger Global", "Bridgewater", "Soros Fund", "Dalio", "Norges Bank (挪威主權基金)", "Temasek (新加坡淡馬錫)"]
     mag7 = ["AAPL (Apple)", "MSFT (Microsoft)", "NVDA (NVIDIA)", "GOOGL (Alphabet)", "AMZN (Amazon)", "META (Meta)", "TSLA (Tesla)"]
     vip_categories = ["Trump family", "Pelosi", "Musk/Gates/Bezos/Zuck/Huang/Cook", "Buffett/Druckenmiller/Dalio/Burry"]
     bls_indicators = ["CPI (CUUR0000SA0)", "Core CPI (CUUR0000SA0L1E)", "PPI (WPSFD4)", "Unemployment (LNS14000000)", "Non-Farm Payrolls (CES0000000001)"]

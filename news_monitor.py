@@ -217,6 +217,18 @@ class NewsMonitor:
                 'cik': '0001536411', 'category': '投資大師', 'display_name': 'Druckenmiller',
                 'keywords': ['druckenmiller', 'stanley druckenmiller', 'duquesne'],
             },
+            # 主權基金(Sovereign Wealth Funds,皆有向 SEC 申報 13F-HR)
+            {
+                'name': 'Norges Bank (Norway GPFG)',
+                'cik': '0001374170', 'category': '主權基金', 'display_name': '挪威主權基金(Norges Bank)',
+                'keywords': ['norges bank', 'norway sovereign', 'norwegian sovereign',
+                             'government pension fund global', 'norway wealth fund', 'nbim'],
+            },
+            {
+                'name': 'Temasek Holdings (Private) Ltd',
+                'cik': '0001021944', 'category': '主權基金', 'display_name': '新加坡淡馬錫',
+                'keywords': ['temasek'],
+            },
         ]
         # ── 13F 持倉公司英文名稱 → 中文對照表 ──────────────────────────
         # SEC 13F 的 nameOfIssuer 欄位為英文大寫縮寫,此處提供中文標準譯名
@@ -1615,10 +1627,15 @@ class NewsMonitor:
                 entries = list(root.iter('infoTable'))
 
             def _find_text(entry, tag):
-                el = entry.find(f'{{{_NS13F}}}{tag}')
-                if el is None:
-                    el = entry.find(tag)
-                return el.text.strip() if el is not None and el.text else ''
+                # 依序嘗試:命名空間直接子節點 → 無命名空間直接子節點
+                #          → 命名空間遞迴 → 無命名空間遞迴
+                # (sshPrnamt 巢狀於 shrsOrPrnAmt 之下,必須遞迴才能找到)
+                for path in (f'{{{_NS13F}}}{tag}', tag,
+                             f'.//{{{_NS13F}}}{tag}', f'.//{tag}'):
+                    el = entry.find(path)
+                    if el is not None:
+                        return el.text.strip() if el.text else ''
+                return ''
 
             for entry in entries:
                 name = _find_text(entry, 'nameOfIssuer')
@@ -1766,8 +1783,8 @@ class NewsMonitor:
         if not filings_13f:
             section += "📭 目前無法取得 13F 持倉資料(SEC 伺服器可能暫時無回應)\n"
         else:
-            category_order = ['投資大師', '科技名人']
-            category_emoji = {'投資大師': '💰', '科技名人': '💻'}
+            category_order = ['投資大師', '科技名人', '主權基金']
+            category_emoji = {'投資大師': '💰', '科技名人': '💻', '主權基金': '🏛️'}
 
             # 超過 180 天（半年）的機構先分離出來，不顯示持倉
             STALE_DAYS = 180
