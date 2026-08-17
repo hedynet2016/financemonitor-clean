@@ -508,7 +508,7 @@ def dashboard():
   <div class="card-header"><i class="bi bi-info-circle me-2"></i>系統資訊</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控 + 08:00 新聞 + 14:00 活動 + 16:00 商品追蹤（雅虎拍賣+PChome熱銷）+ 09:00 自動備份 + 18:00 每日報告</td></tr>
+      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控 + 08:00 新聞（含 AI 動能觀察）+ 14:00 活動 + 16:00 商品追蹤（雅虎拍賣+PChome熱銷）+ 09:00 自動備份 + 18:00 每日報告</td></tr>
       <tr><td class="text-muted">推送管道</td><td>Telegram Bot + Discord Webhook</td></tr>
       <tr><td class="text-muted">Python</td><td>{{py_version}}</td></tr>
       <tr><td class="text-muted">工作目錄</td><td>{{work_dir}}</td></tr>
@@ -633,7 +633,7 @@ def settings():
         </thead>
         <tbody>
           <tr><td><b>每半小時</b></td><td>股市監控（美股交易時段，跌幅 &gt;3% 個股 + ETF）</td><td><span class="badge bg-secondary">監控</span></td></tr>
-          <tr><td><b>{{'%02d:00' % dc.news_hour}}</b></td><td>新聞 + 經濟指標推播（區塊 ①~⑩）</td><td><span class="badge bg-secondary">監控</span></td></tr>
+          <tr><td><b>{{'%02d:00' % dc.news_hour}}</b></td><td>新聞 + 經濟指標 + AI 動能觀察推播（區塊 ①~⑩）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>{{'%02d:00' % dc.events_hour}}</b></td><td>活動推播（區塊 ⑪，ICT/AI 活動）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>16:00</b></td><td>商品追蹤（雅虎拍賣 9 關鍵字 + PChome 24h 熱銷排行 4 品類）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>09:00</b></td><td>自動備份 logs → GitHub</td><td><span class="badge bg-info">排程器</span></td></tr>
@@ -959,6 +959,17 @@ def tasks_view():
       <div class="fw-bold mb-1">美股財報公布（科技七巨頭）</div>
       <div class="mb-2"><span class="source-tag">10 來源</span> <span class="filter-tag">Mag 7 公司名</span> <span class="filter-tag">1 週內</span> <span class="filter-tag">12h 快取</span></div>
       <div><small class="text-muted">監控公司：</small> {" &bull; ".join(mag7)}</div>
+    </div>
+  </div>
+</div>
+
+<div class="block-card">
+  <div class="d-flex align-items-start gap-3">
+    <span class="block-num">🤖</span>
+    <div class="flex-grow-1">
+      <div class="fw-bold mb-1">AI 動能觀察（資本支出 &amp; Token 需求）</div>
+      <div class="mb-2"><span class="source-tag">10 來源</span> <span class="filter-tag">AI capex / token demand 關鍵字</span> <span class="filter-tag">1 週內</span> <span class="filter-tag">7 日去重</span></div>
+      <div><small class="text-muted">追蹤企業：</small> 台積電(TSMC) &bull; AVGO &bull; CRWV &bull; AMZN &bull; MSFT &bull; GOOGL &bull; NVDA &bull; LITE</div>
     </div>
   </div>
 </div>

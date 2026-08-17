@@ -407,6 +407,45 @@ class NewsMonitor:
             'TSLA': {'name': 'Tesla', 'zh': '特斯拉'},
         }
 
+        # ── AI 動能觀察:AI 資本支出 & Token 需求變化 ────────────────────
+        # 來源:與熱門財經新聞相同媒體(CNBC/WSJ/Bloomberg/MarketWatch/FT/Yahoo Finance/Seeking Alpha/科技新報/MacroMicro/Digitimes)
+        # 追蹤企業:台積電 + AVGO/CRWV/AMZN/MSFT/GOOGL/NVDA/LITE
+        # 7日內同一標題不重複推播,文章發布超過一週則不再顯示
+        self._ai_momentum_sent: Dict[str, datetime] = {}
+        self._ai_momentum_cache: List[Dict] = []
+        self._ai_momentum_cache_time: Optional[datetime] = None
+        self._ai_momentum_cache_ttl_hours: int = 12
+        # AI 動能觀察追蹤企業(英文/中文關鍵字用於 RSS 匹配)
+        self.ai_momentum_companies = {
+            'TSMC':  {'name': 'TSMC',             'zh': '台積電',     'patterns': ['tsmc', 'taiwan semiconductor', '台積電', '台積']},
+            'AVGO':  {'name': 'Broadcom',          'zh': '博通',       'patterns': ['avgo', 'broadcom', '博通']},
+            'CRWV':  {'name': 'CoreWeave',         'zh': 'CoreWeave',  'patterns': ['crwv', 'coreweave']},
+            'AMZN':  {'name': 'Amazon',            'zh': '亞馬遜',     'patterns': ['amzn', 'amazon', 'aws', '亞馬遜']},
+            'MSFT':  {'name': 'Microsoft',         'zh': '微軟',       'patterns': ['msft', 'microsoft', 'azure', '微軟']},
+            'GOOGL': {'name': 'Alphabet',          'zh': '谷歌',       'patterns': ['googl', 'google', 'alphabet', 'gemini', '谷歌', 'google cloud']},
+            'NVDA':  {'name': 'NVIDIA',            'zh': '輝達',       'patterns': ['nvda', 'nvidia', '輝達', '黑威爾', 'blackwell', 'h100', 'h200', 'gb200']},
+            'LITE':  {'name': 'Lumentum',          'zh': 'Lumentum',   'patterns': ['lite', 'lumentum']},
+        }
+        # AI 資本支出 & Token 需求相關關鍵字(英文+中文)
+        self.ai_momentum_keywords = [
+            # AI 資本支出 (capex)
+            'capex', 'capital expenditure', 'capital spending', 'ai investment',
+            'ai spending', 'data center spending', 'data center investment',
+            'infrastructure spending', 'gpu spending', 'ai infrastructure',
+            'ai buildout', 'compute capacity', 'ai capacity',
+            # Token 需求
+            'token demand', 'token usage', 'token consumption', 'api calls',
+            'inference demand', 'inference cost', 'token pricing',
+            'ai workload', 'ai workload growth', 'compute demand',
+            # 財報 / 指引中的 AI 相關
+            'ai revenue', 'ai guidance', 'ai outlook', 'ai growth',
+            'ai monetization', 'ai adoption', 'ai deployment',
+            # 中文關鍵字
+            '資本支出', 'AI 投資', 'AI 基礎建設', '資料中心', '算力',
+            'AI 算力', '推論需求', 'AI 需求', 'AI 營收', 'AI 貨幣化',
+            'AI 資本', '光通訊', '矽光子', 'AI 晶片',
+        ]
+
         # ── 美國勞工部(BLS) 經濟指標快取 ──────────────────────────────
         # 使用 BLS 公開 API v1(無需 Key),每次呼叫取最近一期發布值
         # 快取 12 小時避免頻繁呼叫
@@ -2878,6 +2917,210 @@ class NewsMonitor:
         section += "⚠️ 同一財報訊息不重複推播\n"
         return section
 
+    # ════════════════════════════════════════════════════════════════
+    # ■ AI 動能觀察:AI 資本支出 & Token 需求變化
+    # ════════════════════════════════════════════════════════════════
+
+    def fetch_ai_momentum_news(self) -> List[Dict]:
+        """
+        從與熱門財經新聞相同媒體來源抓取 AI 動能觀察相關報導,
+        篩選 AI 資本支出(capex)及 Token 需求變化主題,
+        並匹配台積電、AVGO、CRWV、AMZN、MSFT、GOOGL、NVDA、LITE 等重要科技企業.
+
+        過濾規則:
+          - 文章發布超過 7 天則不再顯示
+          - 7 日內同一標題不重複推播(以標題 hash 去重)
+          - 必須同時包含 AI 關鍵字 + 至少一家追蹤企業
+
+        每筆回傳格式:
+        {
+          'title':      str,     # 原文標題
+          'title_zh':   str,     # 中文翻譯
+          'summary':    str,     # 原文摘要
+          'summary_zh': str,     # 中文摘要
+          'source':     str,     # 來源名稱
+          'link':       str,     # 文章連結
+          'published':  datetime,
+          'key':        str,     # 去重 key (標題 hash)
+          'company':    str,     # 匹配到的企業 ticker (如 'NVDA')
+        }
+        """
+        import hashlib as _hs
+
+        now = datetime.now()
+
+        # 快取命中
+        if (self._ai_momentum_cache_time and
+                (now - self._ai_momentum_cache_time).total_seconds() < self._ai_momentum_cache_ttl_hours * 3600 and
+                self._ai_momentum_cache):
+            logger.info("  [AI Momentum] Using cached data")
+            return self._ai_momentum_cache
+
+        # 清理超過 7 天已發送記錄
+        self._ai_momentum_sent = {
+            k: v for k, v in self._ai_momentum_sent.items()
+            if (now - v).days < 7
+        }
+
+        headers = {'User-Agent': 'Mozilla/5.0 (compatible; WorkBuddyMonitor/1.0; +https://workbuddy.com)'}
+        results = []
+        seen_keys: set = set()
+
+        # 使用與熱門財經新聞相同的 RSS 來源
+        for source in self.news_sources:
+            src_name = source['name']
+            rss_url = source['rss_url']
+            try:
+                resp = requests.get(rss_url, headers=headers, timeout=15)
+                if resp.status_code >= 500:
+                    logger.warning(f"  [AI Momentum] {src_name} HTTP {resp.status_code}, skipping")
+                    continue
+                feed = feedparser.parse(resp.text if resp.ok else rss_url)
+                entries = feed.entries[:40]
+                logger.debug(f"  [AI Momentum] {src_name}: fetched {len(entries)} entries")
+
+                for entry in entries:
+                    try:
+                        title_raw = entry.get('title', '')
+                        if self._is_error_title(title_raw):
+                            continue
+
+                        summary = self._clean_html(entry.get('summary', entry.get('description', '')))
+                        link = entry.get('link', '')
+                        combined = (title_raw + ' ' + summary).lower()
+
+                        # 必須包含 AI 關鍵字
+                        if not any(kw in combined for kw in self.ai_momentum_keywords):
+                            continue
+
+                        # 必須匹配至少一家追蹤企業
+                        matched_company = None
+                        for ticker, info in self.ai_momentum_companies.items():
+                            if any(p in combined for p in info['patterns']):
+                                matched_company = ticker
+                                break
+
+                        # 若無企業匹配,但有強 AI 關鍵字仍可收錄(降級為 general)
+                        if not matched_company:
+                            # 只有在極強的 AI capex/token 訊號時才收錄無企業關聯文
+                            strong_signals = ['capex', 'capital expenditure', 'token demand',
+                                              'ai infrastructure', 'data center spending',
+                                              '資本支出', 'AI 基礎建設', '算力']
+                            if not any(s in combined for s in strong_signals):
+                                continue
+
+                        try:
+                            pub_dt = datetime(*entry.published_parsed[:6])
+                        except Exception:
+                            pub_dt = now
+
+                        # 發佈超過 7 天的文章不再顯示
+                        if (now - pub_dt).days > 7:
+                            continue
+
+                        key = _hs.sha256(title_raw.encode()).hexdigest()[:16]
+                        if key in seen_keys or key in self._ai_momentum_sent:
+                            continue
+                        seen_keys.add(key)
+
+                        # 翻譯(科技新報/MacroMicro/Digitimes 已為中文,跳過)
+                        is_chinese_source = src_name in ('科技新報 TechNews', 'MacroMicro 財經M平方', 'Digitimes 科技媒體')
+                        if is_chinese_source or len(title_raw) >= 200:
+                            title_zh = title_raw
+                            summary_zh = summary[:300] if summary else ''
+                        else:
+                            try:
+                                title_zh = self.translator.translate(title_raw)
+                                summary_zh = self.translator.translate(summary[:300]) if summary else ''
+                            except Exception:
+                                title_zh = title_raw
+                                summary_zh = summary[:150]
+
+                        results.append({
+                            'title':      title_raw,
+                            'title_zh':   title_zh,
+                            'summary':    summary[:300],
+                            'summary_zh': summary_zh,
+                            'source':     src_name,
+                            'link':       link,
+                            'published':  pub_dt,
+                            'key':        key,
+                            'company':    matched_company,
+                        })
+                        self._ai_momentum_sent[key] = now
+                    except Exception as e:
+                        logger.debug(f"  [AI Momentum {src_name}] entry error: {e}")
+            except Exception as e:
+                logger.warning(f"  [AI Momentum] {src_name} RSS error: {e}")
+
+        # 按時間降序,有企業匹配的優先
+        results.sort(key=lambda x: (x['company'] is None, x['published']), reverse=True)
+
+        self._ai_momentum_cache = results
+        self._ai_momentum_cache_time = now
+        logger.info(f"[AI Momentum] Fetched {len(results)} AI momentum news items")
+        return results
+
+    def _format_ai_momentum_section(self, ai_momentum_news: List[Dict]) -> str:
+        """格式化 AI 動能觀察區塊"""
+        section  = f"\n{'='*40}\n"
+        section += "🤖 <b>AI 動能觀察</b>(資本支出 & Token 需求)\n"
+        section += f"{'='*40}\n\n"
+
+        if not ai_momentum_news:
+            section += "📭 目前無 AI 動能相關新聞\n"
+            section += f"{'='*40}\n"
+            return section
+
+        # 分類顯示:有企業匹配的優先
+        company_news = [n for n in ai_momentum_news if n['company']]
+        general_news = [n for n in ai_momentum_news if not n['company']]
+
+        if company_news:
+            section += "🏢 <b>【追蹤企業 AI 動態】</b>\n"
+            for idx, item in enumerate(company_news, 1):
+                pub_str    = item['published'].strftime('%m/%d %H:%M')
+                title_show = self._safe_title_zh(item)
+                sum_show   = self._safe_summary_zh(item)
+                company_zh = self.ai_momentum_companies.get(item['company'], {}).get('zh', item['company'])
+                section += (
+                    f"#{idx} 📌 <b>{company_zh} ({item['company']})</b>\n"
+                    f"   <b><a href=\"{html.escape(item['link'])}\">{html.escape(title_show)}</a></b>\n"
+                    f"   \U0001f524 {html.escape(item['title'])}\n"
+                )
+                if sum_show:
+                    section += f"   \U0001f4dd {html.escape(sum_show[:180])}\n"
+                section += (
+                    f"   \U0001f550 {pub_str}  \u25aa  \u4f86\u6e90: {html.escape(item['source'])}\n\n"
+                )
+
+        if general_news:
+            section += "🌐 <b>【AI 產業趨勢】</b>\n"
+            for idx, item in enumerate(general_news, 1):
+                pub_str    = item['published'].strftime('%m/%d %H:%M')
+                title_show = self._safe_title_zh(item)
+                sum_show   = self._safe_summary_zh(item)
+                section += (
+                    f"#{idx} \U0001f4cc <b><a href=\"{html.escape(item['link'])}\">{html.escape(title_show)}</a></b>\n"
+                    f"   \U0001f524 {html.escape(item['title'])}\n"
+                )
+                if sum_show:
+                    section += f"   \U0001f4dd {html.escape(sum_show[:180])}\n"
+                section += (
+                    f"   \U0001f550 {pub_str}  \u25aa  \u4f86\u6e90: {html.escape(item['source'])}\n\n"
+                )
+
+        section += f"{'='*40}\n"
+        section += (
+            "\U0001f4cb \u8ffd\u8e64\u4f01\u696d: "
+            "\u53f0\u7a4d\u96fb(TSMC) / AVGO / CRWV / AMZN / MSFT / GOOGL / NVDA / LITE\n"
+        )
+        section += (
+            "\U0001f4f0 \u4f86\u6e90: CNBC / WSJ / Bloomberg / MarketWatch / FT / Yahoo Finance / Seeking Alpha / \u79d1\u6280\u65b0\u5831 / MacroMicro / Digitimes\n"
+        )
+        section += "\u26a0\ufe0f \u6587\u7ae0\u767c\u4f48\u8d85\u904e\u4e00\u9031\u5247\u4e0d\u518d\u91cd\u8907\u63a8\u64ad\n"
+        return section
+
     def get_options_ranking(self) -> Tuple[List[Dict], List[Dict]]:
         """
         抓取美股選擇權交易量,回傳 Call 前10 與 Put 前10
@@ -3923,7 +4166,8 @@ class NewsMonitor:
                                   economic_indicators: List[Dict] = None,
                                   economic_news: List[Dict] = None,
                                   ict_ai_events: List[Dict] = None,
-                                  mag7_events: List[Dict] = None) -> str:
+                                  mag7_events: List[Dict] = None,
+                                  ai_momentum_news: List[Dict] = None) -> str:
         """生成Telegram消息"""
         current_time = datetime.now()
         date_str = current_time.strftime('%Y年%m月%d日')
@@ -3989,6 +4233,10 @@ class NewsMonitor:
         # ―― 區塊 ⑨:美股財報公布(科技七巨頭)――――――――――――――――――――――
         if earnings_news is not None:
             message += self._format_earnings_section(earnings_news)
+        
+        # ―― 區塊 ⑨-AI:AI 動能觀察(資本支出 & Token 需求)―――――――
+        if ai_momentum_news is not None:
+            message += self._format_ai_momentum_section(ai_momentum_news)
         
         # ―― 區塊 ⑩:美國勞工部(BLS) 官方經濟指標 ―――――――――――――――
         if economic_indicators is not None or economic_news:
@@ -4094,6 +4342,14 @@ class NewsMonitor:
         except Exception as e:
             logger.error(f"Earnings news fetch failed, will skip: {e}")
 
+        # ── 區塊 ⑨-AI:AI 動能觀察(資本支出 & Token 需求)─────
+        ai_momentum_news = []
+        try:
+            logger.info("Fetching AI momentum news (capex & token demand)...")
+            ai_momentum_news = self.fetch_ai_momentum_news()
+        except Exception as e:
+            logger.error(f"AI momentum news fetch failed, will skip: {e}")
+
         # ── 區塊 ⑩:經濟指標相關新聞 ─────────────
         # 改採與熱門財經新聞相同媒體來源，不再使用官方 BLS API
         economic_indicators = []
@@ -4116,6 +4372,7 @@ class NewsMonitor:
             economic_indicators=economic_indicators,
             economic_news=economic_news,
             ict_ai_events=None,  # 區塊 ⑪ 獨立發送
+            ai_momentum_news=ai_momentum_news,
         )
         self.send_telegram_message(notification_message)
 
