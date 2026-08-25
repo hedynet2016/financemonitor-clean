@@ -518,8 +518,11 @@ class NewsMonitor:
         if len(english_name) <= 60:
             try:
                 translated = self.translator.translate(english_name)
-                # 若翻譯結果與原文相同(無法翻譯),直接回傳原文
-                if translated and translated.lower() != english_name.lower():
+                # 防護：翻譯結果若為錯誤頁文字或無 CJK，回傳原文
+                if (translated and
+                    translated.lower() != english_name.lower() and
+                    not self._is_error_title(translated) and
+                    (not self._is_mostly_ascii(english_name) or self._has_cjk(translated))):
                     return translated
             except Exception:
                 pass
@@ -592,36 +595,116 @@ class NewsMonitor:
         ('error establishing a database connection', 200),
     ]
 
+    # ── 無長度限制的錯誤偵測 pattern（Google Translate 回傳整頁 HTML 時） ──
+    _ERROR_TITLE_NOLIMIT_PATTERNS = [
+        '<html',
+        '<!doctype',
+        '<head>',
+        '<body>',
+        '<!DOCTYPE'.lower(),
+        'err_too_many_requests',
+        'too many requests',
+        'rate limit',
+        'quota exceeded',
+        'translation api error',
+        'the request timed out',
+        'connection reset',
+        'err_connection',
+        'err_name_not_resolved',
+        'err_ssl',
+        'err_cache_miss',
+        'that\u2019s an error',
+        "that's an error",
+    ]
+
     @staticmethod
     def _is_error_title(title: str) -> bool:
         """判斷 entry title 是否為伺服器錯誤頁的標題（如 'Error 500 (Server Error)!!'）"""
         if not title:
             return True
         t = title.lower().strip()
+
+        # 1. 檢查有長度限制的 pattern
         for pat, max_len in NewsMonitor._ERROR_TITLE_PATTERNS:
             if pat in t and len(t) <= max_len:
+                return True
+
+        # 2. 檢查無長度限制的 pattern（HTML 標籤、API 錯誤等）
+        for pat in NewsMonitor._ERROR_TITLE_NOLIMIT_PATTERNS:
+            if pat in t:
+                return True
+
+        # 3. 檢查過多替換字元 U+FFFD（亂碼）
+        if '\ufffd' in t:
+            repl_count = t.count('\ufffd')
+            if repl_count >= 2 or repl_count / max(len(t), 1) > 0.1:
+                return True
+
+        # 4. 檢查過多控制字元（二進制/亂碼資料）
+        ctrl_count = sum(1 for c in title if ord(c) < 0x20 and c not in '\n\r\t')
+        if ctrl_count > 3:
+            return True
+
+        return False
+
+    @staticmethod
+    def _has_cjk(text: str) -> bool:
+        """檢查文字中是否包含 CJK 字元（中日韓統一表意文字、韓文 Hangul）"""
+        if not text:
+            return False
+        for c in text:
+            cp = ord(c)
+            # CJK Unified Ideographs: U+4E00 ~ U+9FFF
+            # CJK Extension A: U+3400 ~ U+4DBF
+            # CJK Compatibility: U+F900 ~ U+FAFF
+            # Hangul Syllables: U+AC00 ~ U+D7AF
+            # Hangul Jamo: U+1100 ~ U+11FF
+            if (0x4E00 <= cp <= 0x9FFF or
+                0x3400 <= cp <= 0x4DBF or
+                0xF900 <= cp <= 0xFAFF or
+                0xAC00 <= cp <= 0xD7AF or
+                0x1100 <= cp <= 0x11FF):
+                return True
+            # CJK Extension B+ (surrogate pairs in Python 3)
+            if 0xD840 <= cp <= 0xD87F:  # high surrogate for CJK Ext B+
                 return True
         return False
 
     @staticmethod
+    def _is_mostly_ascii(text: str) -> bool:
+        """檢查文字是否主要為 ASCII（英文）字元"""
+        if not text:
+            return False
+        ascii_count = sum(1 for c in text if ord(c) < 0x80)
+        return ascii_count / len(text) > 0.8
+
+    @staticmethod
     def _safe_title_zh(item: dict, title_key: str = 'title_zh', orig_key: str = 'title') -> str:
         """
-        取 title_zh，若為空或含錯誤頁文字則降級回原文 title。
+        取 title_zh，若為空、含錯誤頁文字、或翻譯結果無中文字元則降級回原文 title。
         用於所有格式化函數，防止 Google Translate 500 回傳值滲入推播訊息。
         """
         zh = item.get(title_key, '') or ''
+        orig = item.get(orig_key, '') or ''
         if not zh or NewsMonitor._is_error_title(zh):
-            return item.get(orig_key, '') or ''
+            return orig
+        # 若原文主要為英文但翻譯結果完全無 CJK 字元，可能是翻譯失敗
+        if NewsMonitor._is_mostly_ascii(orig) and not NewsMonitor._has_cjk(zh):
+            return orig
         return zh
 
     @staticmethod
     def _safe_summary_zh(item: dict, sum_key: str = 'summary_zh', orig_key: str = 'summary') -> str:
         """
-        取 summary_zh，若為空或含錯誤頁文字則降級回原文 summary。
+        取 summary_zh，若為空、含錯誤頁文字、或翻譯結果無中文字元則降級回原文 summary。
         """
         zh = item.get(sum_key, '') or ''
+        orig = item.get(orig_key, '') or ''
         if not zh or NewsMonitor._is_error_title(zh):
-            return item.get(orig_key, '') or ''
+            return orig
+        # 若原文主要為英文但翻譯結果完全無 CJK 字元，可能是翻譯失敗
+        if NewsMonitor._is_mostly_ascii(orig) and not NewsMonitor._has_cjk(zh):
+            return orig
         return zh
 
     def fetch_rss_feed(self, source: Dict) -> List[Dict]:
@@ -727,15 +810,25 @@ class NewsMonitor:
         for attempt in range(max_retries):
             try:
                 result = self.translator.translate(text)
-                # 防護：翻譯結果若為伺服器錯誤頁面文字（如 Google Translate 500 回傳），直接回傳原文
-                if result and self._is_error_title(result):
-                    logger.debug(f"Translation returned error-page text, using original: {result[:60]!r}")
+
+                # 防護 1：翻譯結果若為伺服器錯誤頁面文字（如 Google Translate 500 回傳），直接回傳原文
+                if not result:
+                    logger.debug("Translation returned empty, using original")
                     return text
+                if self._is_error_title(result):
+                    logger.warning(f"Translation returned error-page text, using original: {result[:80]!r}")
+                    return text
+
+                # 防護 2：若原文主要為英文但翻譯結果完全無 CJK 字元，可能是翻譯失敗
+                if self._is_mostly_ascii(text) and not self._has_cjk(result):
+                    logger.debug(f"Translation returned non-CJK result, using original: {result[:60]!r}")
+                    return text
+
                 return result
             except Exception as e:
                 logger.warning(f"Translation attempt {attempt + 1} failed: {e}")
                 if attempt < max_retries - 1:
-                    time.sleep(2)
+                    time.sleep(2 + attempt)  # 漸進式延遲: 2s, 3s, 4s
                 else:
                     return text  # 翻译失败则返回原文
     
@@ -2265,8 +2358,8 @@ class NewsMonitor:
                                 break
 
                         try:
-                            title_zh   = self.translator.translate(title_raw)    if len(title_raw)   < 200 else title_raw
-                            summary_zh = self.translator.translate(summary[:300]) if summary else ''
+                            title_zh   = self.translate_text(title_raw)    if len(title_raw)   < 200 else title_raw
+                            summary_zh = self.translate_text(summary[:300]) if summary else ''
                         except Exception:
                             title_zh   = title_raw
                             summary_zh = summary[:150]
@@ -2521,8 +2614,8 @@ class NewsMonitor:
                             continue
                         seen_keys.add(key)
                         try:
-                            title_zh   = self.translator.translate(title_raw)    if len(title_raw)   < 200 else title_raw
-                            summary_zh = self.translator.translate(summary[:300]) if summary else ''
+                            title_zh   = self.translate_text(title_raw)    if len(title_raw)   < 200 else title_raw
+                            summary_zh = self.translate_text(summary[:300]) if summary else ''
                         except Exception:
                             title_zh   = title_raw
                             summary_zh = summary[:150]
@@ -2558,7 +2651,7 @@ class NewsMonitor:
                     continue
                 seen_keys.add(key)
                 try:
-                    title_zh = self.translator.translate(title_raw) if len(title_raw) < 200 else title_raw
+                    title_zh = self.translate_text(title_raw) if len(title_raw) < 200 else title_raw
                 except Exception:
                     title_zh = title_raw
                 pub_dt = now
@@ -2777,8 +2870,8 @@ class NewsMonitor:
                         seen_keys.add(key)
 
                         try:
-                            title_zh   = self.translator.translate(title_raw)    if len(title_raw)   < 200 else title_raw
-                            summary_zh = self.translator.translate(summary[:300]) if summary else ''
+                            title_zh   = self.translate_text(title_raw)    if len(title_raw)   < 200 else title_raw
+                            summary_zh = self.translate_text(summary[:300]) if summary else ''
                         except Exception:
                             title_zh   = title_raw
                             summary_zh = summary[:150]
@@ -2823,7 +2916,7 @@ class NewsMonitor:
                     continue
                 seen_keys.add(key)
                 try:
-                    title_zh = self.translator.translate(title_raw) if len(title_raw) < 200 else title_raw
+                    title_zh = self.translate_text(title_raw) if len(title_raw) < 200 else title_raw
                 except Exception:
                     title_zh = title_raw
                 pub_dt = now
@@ -3030,8 +3123,8 @@ class NewsMonitor:
                             summary_zh = summary[:300] if summary else ''
                         else:
                             try:
-                                title_zh = self.translator.translate(title_raw)
-                                summary_zh = self.translator.translate(summary[:300]) if summary else ''
+                                title_zh = self.translate_text(title_raw)
+                                summary_zh = self.translate_text(summary[:300]) if summary else ''
                             except Exception:
                                 title_zh = title_raw
                                 summary_zh = summary[:150]
