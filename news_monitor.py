@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # - FOMC / CPI / 非農就業：來源 Federal Reserve & BLS 官方 2026 年度日程
 #   （FOMC 決議日 = 會議第二天 14:00 ET；CPI/非農 = 當日 08:30 ET）
 # - 財報日期為「預估值」，實際日期以各公司 IR 公告為準，建議每季校準一次
-# - SpaceX 為未上市公司，無公開定期財報，故不列入
+# - SpaceX 於 2026/6/12 在納斯達克上市（代碼 SPCX），已列入財報追蹤
 # - 每年初需更新此資料表（官方行事曆通常在年底前公布下年度日程）
 # ══════════════════════════════════════════════════════════════════════
 FINANCIAL_CALENDAR_2026 = [
@@ -87,6 +87,7 @@ FINANCIAL_CALENDAR_2026 = [
     {'date': '2026-10-28', 'category': '財報', 'title': 'MICROSOFT FY2027 Q1 財報', 'ticker': 'MSFT', 'note': '預估日'},
     {'date': '2026-10-28', 'category': '財報', 'title': 'GOOGLE (Alphabet) Q3 財報', 'ticker': 'GOOGL', 'note': '預估日'},
     {'date': '2026-10-30', 'category': '財報', 'title': 'AMAZON Q3 財報', 'ticker': 'AMZN', 'note': '預估日'},
+    {'date': '2026-11-03', 'category': '財報', 'title': 'SPACEX Q3 財報', 'ticker': 'SPCX', 'note': '預估日'},
     {'date': '2026-11-18', 'category': '財報', 'title': 'NVIDIA FY2027 Q3 財報', 'ticker': 'NVDA', 'note': '預估日'},
     {'date': '2026-12-10', 'category': '財報', 'title': 'AVGO 博通 FY2026 Q4 財報', 'ticker': 'AVGO', 'note': '預估日'},
 ]
@@ -3300,9 +3301,9 @@ class NewsMonitor:
         section += f"{'='*40}\n"
         section += (
             "📋 追蹤: FOMC / CPI / 非農就業 + "
-            "TSMC / TESLA / NVIDIA / MSFT / AMZN / GOOGL / AVGO 財報\n"
+            "TSMC / TESLA / NVIDIA / MSFT / AMZN / GOOGL / AVGO / SPCX 財報\n"
         )
-        section += "⚠️ 財報日期為預估值，以公司公告為準；SpaceX 未上市無公開財報\n"
+        section += "⚠️ 財報日期為預估值，以公司公告為準\n"
         return section
 
     def get_options_ranking(self) -> Tuple[List[Dict], List[Dict]]:

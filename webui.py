@@ -1003,7 +1003,7 @@ def tasks_view():
       <div class="fw-bold mb-1">財經行事曆（未來 30 天，由近到遠）</div>
       <div class="mb-2"><span class="source-tag">Fed / BLS 官方日程</span> <span class="filter-tag">財報為預估日</span> <span class="filter-tag">未來 30 天</span></div>
       <div><small class="text-muted">追蹤：</small> FOMC 利率決議 &bull; CPI 物價指數 &bull; 非農就業報告</div>
-      <div><small class="text-muted">財報：</small> TSMC &bull; TESLA &bull; NVIDIA &bull; MSFT &bull; AMZN &bull; GOOGL &bull; AVGO（預估日，以公司公告為準；SpaceX 未上市無公開財報）</div>
+      <div><small class="text-muted">財報：</small> TSMC &bull; TESLA &bull; NVIDIA &bull; MSFT &bull; AMZN &bull; GOOGL &bull; AVGO &bull; SPACEX(SPCX)（預估日，以公司公告為準）</div>
     </div>
   </div>
 </div>
