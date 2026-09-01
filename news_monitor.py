@@ -58,6 +58,42 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ══════════════════════════════════════════════════════════════════════
+# 財經行事曆資料表（2026 年官方已公布日程 + 財報預估日）
+# - FOMC / CPI / 非農就業：來源 Federal Reserve & BLS 官方 2026 年度日程
+#   （FOMC 決議日 = 會議第二天 14:00 ET；CPI/非農 = 當日 08:30 ET）
+# - 財報日期為「預估值」，實際日期以各公司 IR 公告為準，建議每季校準一次
+# - SpaceX 為未上市公司，無公開定期財報，故不列入
+# - 每年初需更新此資料表（官方行事曆通常在年底前公布下年度日程）
+# ══════════════════════════════════════════════════════════════════════
+FINANCIAL_CALENDAR_2026 = [
+    # ── 聯準會 FOMC 利率決議 ────────────────────────────────────────
+    {'date': '2026-09-16', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '9/15-16 會議（含 SEP 點陣圖）'},
+    {'date': '2026-10-28', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '10/27-28 會議'},
+    {'date': '2026-12-09', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '12/8-9 會議（含 SEP 點陣圖）'},
+    # ── 美國 CPI 物價指數（BLS）────────────────────────────────────
+    {'date': '2026-09-11', 'category': 'CPI',   'title': '美國 8 月 CPI 物價指數', 'note': 'BLS 公布 08:30 ET'},
+    {'date': '2026-10-14', 'category': 'CPI',   'title': '美國 9 月 CPI 物價指數', 'note': 'BLS 公布 08:30 ET'},
+    {'date': '2026-11-10', 'category': 'CPI',   'title': '美國 10 月 CPI 物價指數', 'note': 'BLS 公布 08:30 ET'},
+    {'date': '2026-12-10', 'category': 'CPI',   'title': '美國 11 月 CPI 物價指數', 'note': 'BLS 公布 08:30 ET'},
+    # ── 非農就業報告（Employment Situation，BLS）──────────────────
+    {'date': '2026-09-04', 'category': '非農就業', 'title': '美國 8 月非農就業報告', 'note': 'BLS 公布 08:30 ET'},
+    {'date': '2026-10-02', 'category': '非農就業', 'title': '美國 9 月非農就業報告', 'note': 'BLS 公布 08:30 ET'},
+    {'date': '2026-11-06', 'category': '非農就業', 'title': '美國 10 月非農就業報告', 'note': 'BLS 公布 08:30 ET'},
+    {'date': '2026-12-04', 'category': '非農就業', 'title': '美國 11 月非農就業報告', 'note': 'BLS 公布 08:30 ET'},
+    # ── 追蹤公司財報（預估日）──────────────────────────────────────
+    {'date': '2026-10-15', 'category': '財報', 'title': 'TSMC 台積電 Q3 財報', 'ticker': 'TSM',  'note': '預估日'},
+    {'date': '2026-10-22', 'category': '財報', 'title': 'TESLA Q3 財報', 'ticker': 'TSLA', 'note': '預估日'},
+    {'date': '2026-10-28', 'category': '財報', 'title': 'MICROSOFT FY2027 Q1 財報', 'ticker': 'MSFT', 'note': '預估日'},
+    {'date': '2026-10-28', 'category': '財報', 'title': 'GOOGLE (Alphabet) Q3 財報', 'ticker': 'GOOGL', 'note': '預估日'},
+    {'date': '2026-10-30', 'category': '財報', 'title': 'AMAZON Q3 財報', 'ticker': 'AMZN', 'note': '預估日'},
+    {'date': '2026-11-18', 'category': '財報', 'title': 'NVIDIA FY2027 Q3 財報', 'ticker': 'NVDA', 'note': '預估日'},
+    {'date': '2026-12-10', 'category': '財報', 'title': 'AVGO 博通 FY2026 Q4 財報', 'ticker': 'AVGO', 'note': '預估日'},
+]
+
+# 星期中文對照（datetime.weekday(): 0=Monday）
+_WEEKDAY_ZH = ['一', '二', '三', '四', '五', '六', '日']
+
 
 class NewsMonitor:
     """新闻监控类"""
@@ -3214,6 +3250,61 @@ class NewsMonitor:
         section += "\u26a0\ufe0f \u6587\u7ae0\u767c\u4f48\u8d85\u904e\u4e00\u9031\u5247\u4e0d\u518d\u91cd\u8907\u63a8\u64ad\n"
         return section
 
+    # ── 財經行事曆（未來 30 天）───────────────────────────────────────
+    def fetch_financial_calendar(self, days: int = 30) -> List[Dict]:
+        """取得未來 N 天內的財經行事曆事件（由近到遠排序）。
+
+        事件類型: FOMC 利率決議 / CPI / 非農就業 / 追蹤公司財報。
+        """
+        events: List[Dict] = []
+        today = datetime.now().date()
+        cutoff = today + timedelta(days=days)
+        for ev in FINANCIAL_CALENDAR_2026:
+            try:
+                ev_date = datetime.strptime(ev['date'], '%Y-%m-%d').date()
+            except (ValueError, KeyError):
+                continue
+            if today <= ev_date <= cutoff:
+                item = dict(ev)
+                item['days_left'] = (ev_date - today).days
+                item['weekday'] = _WEEKDAY_ZH[ev_date.weekday()]
+                item['date_display'] = ev_date.strftime('%m/%d')
+                events.append(item)
+        events.sort(key=lambda x: x['date'])
+        return events
+
+    def _format_financial_calendar_section(self, calendar_events: List[Dict]) -> str:
+        """格式化財經行事曆區塊（未來 30 天）"""
+        section  = f"\n{'='*40}\n"
+        section += "📅 <b>財經行事曆</b>（未來 30 天）\n"
+        section += f"{'='*40}\n\n"
+
+        if not calendar_events:
+            section += "📭 未來 30 天內暫無已排定的財經事件\n"
+            section += f"{'='*40}\n"
+            return section
+
+        cat_emoji = {'FOMC': '🏦', 'CPI': '🏷️', '非農就業': '📊', '財報': '💰'}
+        for idx, ev in enumerate(calendar_events, 1):
+            emoji = cat_emoji.get(ev['category'], '📌')
+            days = ev['days_left']
+            when = '今天' if days == 0 else f'剩 {days} 天'
+            ticker = f"（{ev['ticker']}）" if ev.get('ticker') else ''
+            note = f" · {ev['note']}" if ev.get('note') else ''
+            section += (
+                f"{emoji} {ev['date_display']}（{ev['weekday']}）"
+                f"<b>{html.escape(ev['title'])}</b>{ticker}\n"
+            )
+            section += f"    ⏳ {when}{note}\n\n"
+
+        section += f"{'='*40}\n"
+        section += (
+            "📋 追蹤: FOMC / CPI / 非農就業 + "
+            "TSMC / TESLA / NVIDIA / MSFT / AMZN / GOOGL / AVGO 財報\n"
+        )
+        section += "⚠️ 財報日期為預估值，以公司公告為準；SpaceX 未上市無公開財報\n"
+        return section
+
     def get_options_ranking(self) -> Tuple[List[Dict], List[Dict]]:
         """
         抓取美股選擇權交易量,回傳 Call 前10 與 Put 前10
@@ -4260,7 +4351,8 @@ class NewsMonitor:
                                   economic_news: List[Dict] = None,
                                   ict_ai_events: List[Dict] = None,
                                   mag7_events: List[Dict] = None,
-                                  ai_momentum_news: List[Dict] = None) -> str:
+                                  ai_momentum_news: List[Dict] = None,
+                                  financial_calendar: List[Dict] = None) -> str:
         """生成Telegram消息"""
         current_time = datetime.now()
         date_str = current_time.strftime('%Y年%m月%d日')
@@ -4339,6 +4431,10 @@ class NewsMonitor:
         if ict_ai_events is not None:
             message += self._format_ict_ai_events_section(ict_ai_events)
         
+        # ―― 區塊 ⑫:財經行事曆(未來 30 天) ―――――――――――――――
+        if financial_calendar is not None:
+            message += self._format_financial_calendar_section(financial_calendar)
+        
         return message
 
     def send_telegram_message(self, message: str, discord_webhook: str = None) -> bool:
@@ -4352,7 +4448,7 @@ class NewsMonitor:
         return any(results.values())
     
     def run_news_only(self):
-        """執行一次新聞監控檢查(區塊 ①~⑩)"""
+        """執行一次新聞監控檢查(區塊 ①~⑫)"""
         logger.info("="*50)
         logger.info("Starting news-only monitor check (blocks 1-10)...")
         logger.info("="*50)
@@ -4453,6 +4549,14 @@ class NewsMonitor:
         except Exception as e:
             logger.error(f"BLS news fetch failed, will skip: {e}")
 
+        # ── 區塊 ⑫:財經行事曆(未來 30 天)──────────────
+        financial_calendar = []
+        try:
+            logger.info("Fetching financial calendar (next 30 days)...")
+            financial_calendar = self.fetch_financial_calendar(days=30)
+        except Exception as e:
+            logger.error(f"Financial calendar fetch failed, will skip: {e}")
+
         # 發送整合通知(不含區塊 ⑪)
         logger.info("Sending notification report (news blocks 1-10)...")
         notification_message = self.generate_telegram_message(
@@ -4466,6 +4570,7 @@ class NewsMonitor:
             economic_news=economic_news,
             ict_ai_events=None,  # 區塊 ⑪ 獨立發送
             ai_momentum_news=ai_momentum_news,
+            financial_calendar=financial_calendar,
         )
         self.send_telegram_message(notification_message)
 
@@ -4507,7 +4612,7 @@ class NewsMonitor:
         logger.info("Starting full monitor check (news + events)...")
         logger.info("="*50)
 
-        # 執行新聞區塊 ①~⑩
+        # 執行新聞區塊 ①~⑫
         self.run_news_only()
 
         # 執行活動區塊 ⑪
