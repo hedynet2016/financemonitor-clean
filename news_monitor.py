@@ -836,6 +836,45 @@ class NewsMonitor:
         logger.info(f"Successfully fetched {len(articles)} articles from {source['name']}")
         return articles
 
+    # 全域翻譯節流時間戳（類變量，所有實例共用）
+    _last_translate_ts = 0.0
+    _TRANSLATE_MIN_INTERVAL = 0.4  # 每次翻譯呼叫最小間隔（秒），Google 免費端限 5 req/s
+    _google_throttled_until = 0.0  # Google 限流冷卻期截止時間（time.time()）
+    _GOOGLE_THROTTLE_COOLDOWN = 600  # 限流後冷卻 10 分鐘，期間直接走 MyMemory 備援
+
+    def _throttle_translate(self):
+        """翻譯全域節流：確保相鄰兩次呼叫至少間隔 _TRANSLATE_MIN_INTERVAL 秒。
+        修正: 早上八點推播多區塊連續翻譯爆量觸發 Google 限流(5 req/s)。
+        """
+        import time as _time
+        now = _time.monotonic()
+        wait = NewsMonitor._TRANSLATE_MIN_INTERVAL - (now - NewsMonitor._last_translate_ts)
+        if wait > 0:
+            _time.sleep(wait)
+        NewsMonitor._last_translate_ts = _time.monotonic()
+
+    def _fallback_translate(self, text: str) -> str:
+        """Google Translate 失敗時的備用引擎: MyMemory API（免費無 key）。
+        成功回傳譯文；失敗回傳空字串（呼叫端降級用原文）。
+        """
+        try:
+            self._throttle_translate()
+            resp = requests.get(
+                'https://api.mymemory.translated.net/get',
+                params={'q': text[:500], 'langpair': 'en|zh-TW'},
+                timeout=15,
+            )
+            data = resp.json()
+            translated = (data.get('responseData') or {}).get('translatedText', '') or ''
+            translated = html.unescape(translated).strip()
+            # 驗證結果有效（非錯誤頁、含 CJK）
+            if translated and not self._is_error_title(translated) and self._has_cjk(translated):
+                return translated
+            logger.warning(f"MyMemory fallback invalid result: {translated[:60]!r}")
+        except Exception as e:
+            logger.warning(f"MyMemory fallback failed: {e}")
+        return ""
+
     def translate_text(self, text: str, max_retries: int = 3) -> str:
         if not text or not text.strip():
             return ""
@@ -845,7 +884,15 @@ class NewsMonitor:
             text = text[:1000] + "..."
 
         for attempt in range(max_retries):
+            # Google 限流冷卻期內直接走 MyMemory 備援，避免每篇浪費 ~30 秒無效重試
+            if time.time() < NewsMonitor._google_throttled_until:
+                fallback = self._fallback_translate(text)
+                if fallback:
+                    return fallback
+                return text
+
             try:
+                self._throttle_translate()
                 result = self.translator.translate(text)
 
                 # 防護 1：翻譯結果若為伺服器錯誤頁面文字（如 Google Translate 500 回傳），直接回傳原文
@@ -863,11 +910,27 @@ class NewsMonitor:
 
                 return result
             except Exception as e:
+                is_rate_limited = 'TooManyRequests' in type(e).__name__ or 'too many requests' in str(e).lower()
                 logger.warning(f"Translation attempt {attempt + 1} failed: {e}")
+                if is_rate_limited:
+                    # 進入 Google 限流冷卻期（10 分鐘），後續呼叫直接走 MyMemory
+                    NewsMonitor._google_throttled_until = time.time() + NewsMonitor._GOOGLE_THROTTLE_COOLDOWN
+                    fallback = self._fallback_translate(text)
+                    if fallback:
+                        logger.info("Translation succeeded via MyMemory fallback (rate-limited)")
+                        return fallback
+                    return text
                 if attempt < max_retries - 1:
-                    time.sleep(2 + attempt)  # 漸進式延遲: 2s, 3s, 4s
+                    time.sleep(2 + attempt)
                 else:
-                    return text  # 翻译失败则返回原文
+                    # Google 全部失敗 → 嘗試 MyMemory 備用引擎
+                    fallback = self._fallback_translate(text)
+                    if fallback:
+                        logger.info("Translation succeeded via MyMemory fallback")
+                        return fallback
+                    return text  # 備用引擎也失敗，返回原文
+
+        return text
     
     # ════════════════════════════════════════════════════════════════
     # ■ 美國勞工部(BLS) 官方經濟指標
@@ -1119,7 +1182,20 @@ class NewsMonitor:
         
         # 排序: 最新的在前
         results.sort(key=lambda x: x.get("published_parsed", (0,)), reverse=True)
-        
+
+        # 在 fetch 階段預先翻譯前 12 篇（比照熱門新聞模式）。
+        # 修正: 原本在 _format_economic_section 格式化時才 inline 翻譯,
+        # 訊息組裝時連續 20 次呼叫 Google Translate 易被限流,失敗後直接殘留英文原文。
+        for idx, article in enumerate(results[:12]):
+            if idx > 0:
+                time.sleep(0.5)  # 呼叫間隔,降低限流風險
+            try:
+                article['title_zh'] = self.translate_text(article.get('title', ''))
+                summary_raw = (article.get('summary') or '')[:200]
+                article['summary_zh'] = self.translate_text(summary_raw) if summary_raw else ''
+            except Exception as e:
+                logger.warning(f"[Economic News] translate error: {e}")
+
         logger.info(f"[Economic News] Fetched {len(results)} related news articles")
         return results
 
@@ -1189,26 +1265,19 @@ class NewsMonitor:
             section += "📰 <b>經濟指標相關新聞</b>\n"
             section += f"{'='*40}\n\n"
             for article in economic_news[:10]:  # 最多顯示 10 篇
-                title = article.get("title", "")
                 link = article.get("link", "")
                 published = article.get("published", "")
                 summary = article.get("summary", "")[:200]
-                
-                # 翻譯標題為中文
-                title_zh = self.translate_text(title) if title else ""
-                if not title_zh:
-                    title_zh = title  # 翻譯失敗則使用原文
-                
+
+                # 使用 fetch 階段已翻譯的欄位（_safe_* 會自動過濾錯誤頁與翻譯失敗結果）
+                title_zh = self._safe_title_zh(article)
+                summary_zh = self._safe_summary_zh(article)
+
                 section += f'  📌 <b><a href="{link}">{title_zh}</a></b>\n'
                 if published:
                     section += f"     📅 {published}\n"
                 if summary:
-                    # 也嘗試翻譯摘要
-                    summary_zh = self.translate_text(summary[:200]) if summary else ""
-                    if summary_zh:
-                        section += f"     📝 {summary_zh[:200]}...\n"
-                    else:
-                        section += f"     📝 {summary}...\n"
+                    section += f"     📝 {summary_zh[:200]}...\n"
                 section += "\n"
             section += "\n"
 
