@@ -1346,7 +1346,8 @@ def api_translate_test():
             "AZURE_TRANSLATOR_KEY": bool(os.environ.get("AZURE_TRANSLATOR_KEY")),
             "MYMEMORY_EMAIL": bool(os.environ.get("MYMEMORY_EMAIL")),
         },
-        "engine_chain": "deepl > azure > bing > gtx > clients5 > deep_translator > mymemory",
+        "engine_chain": ("deepl > azure > bing > gtx > clients5 > deep_translator "
+                         "> pollinations(LLM,免key) > mymemory"),
     }
 
     # ── 原始 HTTP 端點測試（找出網路層失敗原因）─────────────────────
