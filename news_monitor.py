@@ -847,6 +847,14 @@ class NewsMonitor:
     _last_azure_error = None  # 最近一次 Azure 翻譯錯誤（供 /api/translate-test 診斷）
     _last_bing_error = None   # 最近一次 Bing 翻譯錯誤（供 /api/translate-test 診斷）
 
+    # ── 引擎斷路器 ────────────────────────────────────────────────
+    # Render 共享 IP 上多數引擎會持續失敗（Google 429、Bing 401…），若每次
+    # 呼叫都重試，整份推播會多花數百分鐘。連續失敗達門檻即停用該引擎，
+    # 直到下一次 run 開始時重置。
+    _engine_fail: Dict[str, int] = {}
+    _engine_dead = set()
+    _ENGINE_FAIL_THRESHOLD = 3
+
     # ── Bing Translator 免 key 工作階段（類變量，所有實例共用）─────────
     # 作法: 由 bing.com/translator 頁面取得 AbusePreventionHelper token 後
     # 呼叫官方 ttranslatev3 端點。與 Google 系端點完全無關，可繞過
@@ -858,6 +866,37 @@ class NewsMonitor:
     _bing_iid = 'translator.5028'
     _bing_expire = 0.0
     _BING_TOKEN_TTL = 600  # token 有效期（秒），過期自動重新取得
+
+    @staticmethod
+    def _note_engine(name: str, ok: bool):
+        """記錄引擎成敗，連續失敗達門檻即停用（本次執行不再嘗試）。"""
+        if ok:
+            NewsMonitor._engine_fail[name] = 0
+            NewsMonitor._engine_dead.discard(name)
+            return
+        n = NewsMonitor._engine_fail.get(name, 0) + 1
+        NewsMonitor._engine_fail[name] = n
+        if n >= NewsMonitor._ENGINE_FAIL_THRESHOLD and name not in NewsMonitor._engine_dead:
+            NewsMonitor._engine_dead.add(name)
+            logger.info(f"[translate] engine '{name}' 連續失敗 {n} 次，本次執行停用")
+
+    @staticmethod
+    def reset_engine_state():
+        """重置引擎斷路器（每次推播執行開始時呼叫）。"""
+        NewsMonitor._engine_fail.clear()
+        NewsMonitor._engine_dead.clear()
+
+    def _try_engine(self, name: str, fn, text: str) -> str:
+        """套用斷路器後呼叫單一引擎；已停用者直接略過。"""
+        if name in NewsMonitor._engine_dead:
+            return ''
+        try:
+            r = fn(text) or ''
+        except Exception as e:
+            logger.debug(f"engine {name} raised: {e}")
+            r = ''
+        NewsMonitor._note_engine(name, bool(r))
+        return r
 
     def _throttle_translate(self):
         """翻譯全域節流：確保相鄰兩次呼叫至少間隔 _TRANSLATE_MIN_INTERVAL 秒。
@@ -1117,7 +1156,7 @@ class NewsMonitor:
     # Yandex(403) / Reverso(403) 全面封鎖後，實測唯一可用的免 key 途徑。
     _POLLI_URL = 'https://text.pollinations.ai/openai'
     _POLLI_MODEL = 'openai'
-    _POLLI_FALLBACK_MODELS = ('mistral',)  # 主模型失敗時改用（同一服務、不同後端）
+    _POLLI_FALLBACK_MODELS = ('openai-fast',)  # 主模型失敗時改用（實測可用清單）
     _POLLI_MIN_INTERVAL = 3.0   # 匿名端點限流：請求間隔至少 3 秒
     _last_polli_ts = 0.0
     _last_polli_error = None
@@ -1160,15 +1199,13 @@ class NewsMonitor:
             return {}
         numbered = '\n'.join('%d. %s' % (i, t.replace('\n', ' ')[:300])
                              for i, t in enumerate(items, 1))
+        # 提示詞保持精簡：實測過長的指示詞會讓模型輸出被截斷或加註說明，
+        # 導致批次解析失敗（批次越大越明顯）。
         prompt = (
-            "You are a professional financial translator for a Taiwanese audience. "
-            "Translate each numbered English financial headline below into Traditional "
-            "Chinese (Taiwan financial media style: use 聯準會, 台積電, 那斯達克, "
-            "自由現金流 etc., NOT Simplified-Chinese wording such as 美聯儲).\n"
-            "Rules:\n"
-            "- Output EXACTLY one line per item, in the format: N. translation\n"
-            "- Do NOT add explanations, notes, headers or extra lines\n"
-            "- Keep ticker symbols and company names accurate\n\n" + numbered
+            "Translate each numbered English financial headline into Traditional Chinese "
+            "using Taiwan financial terminology (聯準會 not 美聯儲). "
+            "Output EXACTLY one line per item as \"N. translation\". No explanations.\n\n"
+            + numbered
         )
         content = self._polli_raw_request(prompt, timeout=90, tag='batch')
         if not content:
@@ -1196,28 +1233,33 @@ class NewsMonitor:
         依序嘗試主模型與備援模型（同一服務、不同後端），提高可用性。
         """
         for model in (NewsMonitor._POLLI_MODEL,) + tuple(NewsMonitor._POLLI_FALLBACK_MODELS):
-            try:
-                self._throttle_polli()
-                resp = requests.post(
-                    NewsMonitor._POLLI_URL,
-                    json={'model': model,
-                          'messages': [{'role': 'user', 'content': prompt}],
-                          'temperature': 0.2},
-                    timeout=timeout,
-                )
-                if resp.status_code != 200:
-                    NewsMonitor._last_polli_error = '%s [%s] HTTP %d: %s' % (
-                        tag, model, resp.status_code, resp.text[:130])
-                    continue
-                content = (resp.json().get('choices') or [{}])[0].get(
-                    'message', {}).get('content', '') or ''
-                if content.strip():
-                    return content
-                NewsMonitor._last_polli_error = '%s [%s] 空回應' % (tag, model)
-            except Exception as e:
-                NewsMonitor._last_polli_error = '%s [%s] %s: %s' % (
-                    tag, model, type(e).__name__, str(e)[:130])
-                logger.debug(f"Pollinations request failed ({model}): {e}")
+            # 匿名端點偶有「HTTP 200 但 content 為空」的過載/限流情況，重試一次
+            for attempt in range(2):
+                try:
+                    self._throttle_polli()
+                    resp = requests.post(
+                        NewsMonitor._POLLI_URL,
+                        json={'model': model,
+                              'messages': [{'role': 'user', 'content': prompt}],
+                              'temperature': 0.2},
+                        timeout=timeout,
+                    )
+                    if resp.status_code != 200:
+                        NewsMonitor._last_polli_error = '%s [%s] HTTP %d: %s' % (
+                            tag, model, resp.status_code, resp.text[:130])
+                        break
+                    content = (resp.json().get('choices') or [{}])[0].get(
+                        'message', {}).get('content', '') or ''
+                    if content.strip():
+                        return content
+                    NewsMonitor._last_polli_error = '%s [%s] 空回應' % (tag, model)
+                    if attempt == 0:
+                        time.sleep(6)  # 過載多為暫時性，稍候重試同一模型
+                except Exception as e:
+                    NewsMonitor._last_polli_error = '%s [%s] %s: %s' % (
+                        tag, model, type(e).__name__, str(e)[:130])
+                    logger.debug(f"Pollinations request failed ({model}): {e}")
+                    break
         return ''
 
     def _pollinations_translate(self, text: str) -> str:
@@ -1260,7 +1302,7 @@ class NewsMonitor:
         ascii_letters = sum(1 for c in s if c.isascii() and c.isalpha())
         return ascii_letters / max(len(s), 1) > 0.5
 
-    def prefetch_translations(self, texts, batch_size: int = 10, max_items: int = 200) -> int:
+    def prefetch_translations(self, texts, batch_size: int = 8, max_items: int = 200) -> int:
         """批次預翻譯並寫入快取（供 LLM 引擎使用，避免逐筆翻譯過慢）。
 
         回傳實際新增至快取的筆數。已快取、非英文、或不可翻譯者一律跳過。
@@ -1283,11 +1325,19 @@ class NewsMonitor:
         for i in range(0, len(pending), batch_size):
             chunk = pending[i:i + batch_size]
             mapping = self._pollinations_translate_batch(chunk)
+            # 整批失敗（多為匿名端點暫時過載）→ 拆半重試一次，提高成功率
+            if not mapping and len(chunk) > 1:
+                time.sleep(4)
+                half = max(1, len(chunk) // 2)
+                for sub in (chunk[:half], chunk[half:]):
+                    if sub:
+                        mapping.update(self._pollinations_translate_batch(sub))
+                        time.sleep(2)
             for src, dst in mapping.items():
                 NewsMonitor._translate_cache[hashlib.md5(src.encode('utf-8')).hexdigest()] = dst
                 added += 1
             if i + batch_size < len(pending):
-                time.sleep(1.0)  # 批次間隔，降低限流風險
+                time.sleep(2.0)  # 批次間隔，降低限流風險
         if added:
             logger.info(f"Prefetched {added} translations via LLM batch ({len(pending)} candidates)")
         return added
@@ -1324,34 +1374,34 @@ class NewsMonitor:
 
         result = ''
 
-        # ── 引擎 1: DeepL（需 DEEPL_API_KEY，配額以 key 計量不受共享 IP 影響）──
-        result = self._deepl_translate(text)
+        # 註: 每個網路引擎都經過斷路器（_try_engine），連續失敗即本次執行停用，
+        #     避免 Render 上失效的引擎每筆字串都浪費數秒重試。
 
-        # ── 引擎 2: Azure Translator（需 AZURE_TRANSLATOR_KEY）────────
-        if not result:
-            result = self._azure_translate(text)
+        # ── 引擎 1: DeepL / 引擎 2: Azure（需 API key，配額以 key 計量）──
+        result = self._deepl_translate(text) or self._azure_translate(text)
 
-        # ── 引擎 3: Bing Translator（免 key/免註冊，與 Google 無關）──
-        # Render 共享 IP 被 Google 全面封鎖(429)時的主力引擎
+        # ── 引擎 3: Bing Translator（免 key，與 Google 無關）────────
         if not result:
-            result = self._bing_translate(text)
+            result = self._try_engine('bing', self._bing_translate, text)
 
-        # ── 引擎 4: Google gtx 端點（免費，Render 共享 IP 可能被限流）──
+        # ── 引擎 4: Google gtx 端點 ─────────────────────────────────
         if not result:
-            result = self._google_gtx_translate(text)
+            result = self._try_engine('gtx', self._google_gtx_translate, text)
 
         # ── 引擎 5: Chrome 擴充端點 clients5（獨立配額池）────────────
         if not result:
-            result = self._google_clients5_translate(text)
+            result = self._try_engine('clients5', self._google_clients5_translate, text)
 
-        # ── 引擎 6: deep_translator Google（前五者失敗時嘗試）────────
-        if not result and time.time() >= NewsMonitor._google_throttled_until:
+        # ── 引擎 6: deep_translator Google ─────────────────────────
+        if not result and time.time() >= NewsMonitor._google_throttled_until \
+                and 'deep_translator' not in NewsMonitor._engine_dead:
             for attempt in range(max_retries):
                 try:
                     self._throttle_translate()
                     r = self.translator.translate(text)
                     if r and not self._is_error_title(r) and (not self._is_mostly_ascii(text) or self._has_cjk(r)):
                         result = r
+                        NewsMonitor._note_engine('deep_translator', True)
                         break
                 except Exception as e:
                     is_rate_limited = 'TooManyRequests' in type(e).__name__ or 'too many requests' in str(e).lower()
@@ -1362,15 +1412,17 @@ class NewsMonitor:
                         break
                     if attempt < max_retries - 1:
                         time.sleep(2 + attempt)
+            if not result:
+                NewsMonitor._note_engine('deep_translator', False)
 
         # ── 引擎 7: Pollinations LLM（免 key/免註冊，實測 Render 可用）──
         # Render 共享 IP 上 Google/Bing/MyMemory 全被擋時的主力
         if not result:
-            result = self._pollinations_translate(text)
+            result = self._try_engine('pollinations', self._pollinations_translate, text)
 
         # ── 引擎 8: MyMemory（最終防線，匿名限額 5000 字元/天/IP）────
         if not result:
-            result = self._fallback_translate(text)
+            result = self._try_engine('mymemory', self._fallback_translate, text)
 
         # 全部失敗 → 降級回原文，但不寫入快取（下次仍可重試）
         if not result:
@@ -1634,9 +1686,20 @@ class NewsMonitor:
         # 在 fetch 階段預先翻譯前 12 篇（比照熱門新聞模式）。
         # 修正: 原本在 _format_economic_section 格式化時才 inline 翻譯,
         # 訊息組裝時連續 20 次呼叫 Google Translate 易被限流,失敗後直接殘留英文原文。
-        for idx, article in enumerate(results[:12]):
-            if idx > 0:
-                time.sleep(0.5)  # 呼叫間隔,降低限流風險
+        # 再修正: 逐筆翻譯在 Render 上過慢，改為先用批次預翻譯填快取，
+        #        之後逐筆讀取即命中快取（LLM 引擎一次可處理多筆）。
+        _econ_texts = []
+        for article in results[:12]:
+            _econ_texts.append(article.get('title', ''))
+            _s = (article.get('summary') or '')[:200]
+            if _s:
+                _econ_texts.append(_s)
+        try:
+            self.prefetch_translations(_econ_texts, batch_size=8)
+        except Exception as e:
+            logger.warning(f"[Economic News] prefetch error: {e}")
+
+        for article in results[:12]:
             try:
                 article['title_zh'] = self.translate_text(article.get('title', ''))
                 summary_raw = (article.get('summary') or '')[:200]
@@ -1789,6 +1852,13 @@ class NewsMonitor:
         # 取前10名
         top_10 = all_articles[:10]
 
+        # 批次預翻譯填快取（Render 上逐筆翻譯需數百分鐘，必須先批次處理）
+        try:
+            self.prefetch_translations(
+                [x for a in top_10 for x in (a.get('title', ''), a.get('summary', ''))])
+        except Exception as e:
+            logger.warning(f"Top articles prefetch failed: {e}")
+
         # 添加排名并翻译
         for i, article in enumerate(top_10, 1):
             article['rank'] = i
@@ -1924,6 +1994,12 @@ class NewsMonitor:
         # 按發布時間排序(最新優先),取前20筆
         results.sort(key=lambda x: x['published'], reverse=True)
         results = results[:20]
+
+        # 批次預翻譯填快取
+        try:
+            self.prefetch_translations([it.get('title', '') for it in results])
+        except Exception as e:
+            logger.warning(f"VIP trade prefetch failed: {e}")
 
         # 翻譯標題
         for item in results:
@@ -2127,6 +2203,13 @@ class NewsMonitor:
         # 按發布時間降序,取前 20 筆
         results.sort(key=lambda x: x['published'], reverse=True)
         results = results[:20]
+
+        # 批次預翻譯填快取
+        try:
+            self.prefetch_translations(
+                [x for it in results for x in (it.get('title', ''), it.get('summary', ''))])
+        except Exception as e:
+            logger.warning(f"13F media prefetch failed: {e}")
 
         # 翻譯標題與摘要
         for item in results:
@@ -4742,6 +4825,21 @@ class NewsMonitor:
             'ACCUPASS 活動通', 'DIGITIMES EventPlus', '活動行 Huodongxing',
             'Allevents.in',
         }
+        # 批次預翻譯填快取（僅英文來源）
+        try:
+            _ev_pending = []
+            for it in results:
+                if it.get('source') in zh_translate_sources:
+                    continue
+                if it.get('title'):
+                    _ev_pending.append(it['title'][:200])
+                if it.get('summary'):
+                    _ev_pending.append(it['summary'][:300])
+            if _ev_pending:
+                self.prefetch_translations(_ev_pending)
+        except Exception as e:
+            logger.warning(f"[Events] prefetch failed: {e}")
+
         for item in results:
             try:
                 if item['source'] not in zh_translate_sources:
@@ -4995,6 +5093,9 @@ class NewsMonitor:
         logger.info("="*50)
         logger.info("Starting news-only monitor check (blocks 1-10)...")
         logger.info("="*50)
+
+        # 重置翻譯引擎斷路器（上一輪失效的引擎可能已恢復）
+        NewsMonitor.reset_engine_state()
 
         # 獲取熱門文章
         top_articles = self.get_top_articles()
