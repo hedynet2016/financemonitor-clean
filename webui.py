@@ -1634,6 +1634,35 @@ def api_translate_test():
             out["final"] = mon.translate_text(sample)
         except Exception as e:
             out["final"] = "ERROR: %s" % str(e)[:200]
+
+        # ── 免 key LLM 批次翻譯實測（?llm=1 時執行，較耗時）──────────
+        if request.args.get("llm") == "1":
+            import time as _t3
+            _sample_titles = [
+                "BNY Chief Economist on Fed Rate Hike, BOJ Outlook",
+                "Coeur Mining: A Buyable Q3 Dip, Strong Free Cash Flow Outlook",
+                "Musk Backer Valor Hands Investors $8.5 Billion of SpaceX Stock",
+                "Apple's Quality Is Tempting, But I'm Put Off By The Valuation",
+                "Wall Street Breakfast With Steven Cress (Generating Alpha)",
+                "Gold Holds Decline After Fed Tilts Hawkish and Raises Rates",
+                "Asian Bonds Decline as Fed Hikes, Dollar Jumps: Markets Wrap",
+                "Tempus AI Inc Reports Quarterly Growth, Raises Guidance",
+            ]
+            _t0 = _t3.time()
+            try:
+                _m = mon._pollinations_translate_batch(_sample_titles)
+            except Exception as e:
+                _m = {}
+                out["llm_batch"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:200])}
+            _dur = _t3.time() - _t0
+            out["llm_batch"] = {
+                "elapsed_sec": round(_dur, 1),
+                "ok_count": len(_m),
+                "total": len(_sample_titles),
+                "per_item_sec": round(_dur / max(len(_sample_titles), 1), 2),
+                "results": {k[:45]: v[:70] for k, v in _m.items()},
+                "last_error": NewsMonitor._last_polli_error,
+            }
     except Exception as e:
         out["error"] = str(e)[:300]
     return jsonify(out)

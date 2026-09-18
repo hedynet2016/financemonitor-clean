@@ -1112,11 +1112,183 @@ class NewsMonitor:
             logger.warning(f"MyMemory fallback failed: {e}")
         return ""
 
+    # ── Pollinations 免 key LLM 端點（類變量）────────────────────────
+    # Render 共享 IP 被 Google(429) / MyMemory(429) / Bing(401) /
+    # Yandex(403) / Reverso(403) 全面封鎖後，實測唯一可用的免 key 途徑。
+    _POLLI_URL = 'https://text.pollinations.ai/openai'
+    _POLLI_MODEL = 'openai'
+    _POLLI_MIN_INTERVAL = 3.0   # 匿名端點限流：請求間隔至少 3 秒
+    _last_polli_ts = 0.0
+    _last_polli_error = None
+
+    def _throttle_polli(self):
+        """Pollinations 專用節流（匿名限流較嚴）。"""
+        wait = NewsMonitor._POLLI_MIN_INTERVAL - (time.monotonic() - NewsMonitor._last_polli_ts)
+        if wait > 0:
+            time.sleep(wait)
+        NewsMonitor._last_polli_ts = time.monotonic()
+
+    @staticmethod
+    def _clean_llm_output(raw: str) -> str:
+        """清洗 LLM 輸出：去除引號、markdown、說明文字、尾註。"""
+        if not raw:
+            return ''
+        s = raw.strip()
+        # 去除 markdown code fence
+        s = _re.sub(r'^```[a-zA-Z]*\s*|\s*```$', '', s).strip()
+        # 去除常見前綴（"翻譯："、"Translation:" 等）
+        s = _re.sub(r'^(?:翻譯|译文|譯文|translation|output)\s*[:：]\s*', '', s, flags=_re.I)
+        # 去除包裹引號
+        s = s.strip('"\'“”「」『』').strip()
+        # 只取第一行（LLM 常附加說明）
+        lines = [ln.strip() for ln in s.split('\n') if ln.strip()]
+        s = lines[0] if lines else ''
+        s = s.strip('"\'“”「」『』').strip()
+        # 去除尾註式括號說明（如 "（此為翻譯）"）
+        s = _re.sub(r'[（(]\s*(?:此為|這是|以下為)?(?:翻譯|譯文|translation)[^）)]*[）)]\s*$', '', s).strip()
+        return s
+
+    def _pollinations_translate_batch(self, texts: List[str]) -> Dict[str, str]:
+        """批次翻譯（一次 LLM 請求處理多個字串），回傳 {原文: 譯文}。
+
+        單筆 LLM 翻譯需 8~20 秒，逐筆處理整份推播會過慢，故合併成批次請求，
+        以編號行輸出後解析。解析失敗或數量不符時回傳空 dict（由呼叫端降級）。
+        """
+        items = [t for t in texts if t and t.strip()]
+        if not items:
+            return {}
+        numbered = '\n'.join('%d. %s' % (i, t.replace('\n', ' ')[:300])
+                             for i, t in enumerate(items, 1))
+        prompt = (
+            "You are a professional financial translator for a Taiwanese audience. "
+            "Translate each numbered English financial headline below into Traditional "
+            "Chinese (Taiwan financial media style: use 聯準會, 台積電, 那斯達克, "
+            "自由現金流 etc., NOT Simplified-Chinese wording such as 美聯儲).\n"
+            "Rules:\n"
+            "- Output EXACTLY one line per item, in the format: N. translation\n"
+            "- Do NOT add explanations, notes, headers or extra lines\n"
+            "- Keep ticker symbols and company names accurate\n\n" + numbered
+        )
+        try:
+            self._throttle_polli()
+            resp = requests.post(
+                NewsMonitor._POLLI_URL,
+                json={'model': NewsMonitor._POLLI_MODEL,
+                      'messages': [{'role': 'user', 'content': prompt}],
+                      'temperature': 0.2},
+                timeout=90,
+            )
+            if resp.status_code != 200:
+                NewsMonitor._last_polli_error = 'batch HTTP %d: %s' % (resp.status_code, resp.text[:150])
+                return {}
+            content = (resp.json().get('choices') or [{}])[0].get('message', {}).get('content', '') or ''
+        except Exception as e:
+            NewsMonitor._last_polli_error = 'batch %s: %s' % (type(e).__name__, str(e)[:150])
+            return {}
+
+        mapping = {}
+        for line in content.split('\n'):
+            m = _re.match(r'\s*(\d+)\s*[.、)]\s*(.+)$', line)
+            if not m:
+                continue
+            idx = int(m.group(1)) - 1
+            if 0 <= idx < len(items):
+                cleaned = self._clean_llm_output(m.group(2))
+                if cleaned and self._has_cjk(cleaned) and not self._is_error_title(cleaned):
+                    mapping[items[idx]] = cleaned
+        if not mapping:
+            NewsMonitor._last_polli_error = 'batch 解析失敗: %r' % content[:150]
+        else:
+            NewsMonitor._last_polli_error = None
+        return mapping
+
+    def _pollinations_translate(self, text: str) -> str:
+        """單筆免 key LLM 翻譯（Pollinations 文字端點）。
+
+        成功回傳譯文；失敗回傳空字串（呼叫端續用下一引擎）。
+        """
+        try:
+            prompt = (
+                "Translate the following English financial headline into Traditional "
+                "Chinese (Taiwan financial media style). Output ONLY the translation, "
+                "with no quotes, notes or explanations:\n\n" + text[:600]
+            )
+            self._throttle_polli()
+            resp = requests.post(
+                NewsMonitor._POLLI_URL,
+                json={'model': NewsMonitor._POLLI_MODEL,
+                      'messages': [{'role': 'user', 'content': prompt}],
+                      'temperature': 0.2},
+                timeout=60,
+            )
+            if resp.status_code != 200:
+                NewsMonitor._last_polli_error = 'HTTP %d: %s' % (resp.status_code, resp.text[:150])
+                return ''
+            content = (resp.json().get('choices') or [{}])[0].get('message', {}).get('content', '') or ''
+            cleaned = self._clean_llm_output(content)
+            if cleaned and self._has_cjk(cleaned) and not self._is_error_title(cleaned):
+                NewsMonitor._last_polli_error = None
+                return cleaned
+            NewsMonitor._last_polli_error = '無效輸出: %r' % content[:150]
+        except Exception as e:
+            NewsMonitor._last_polli_error = '%s: %s' % (type(e).__name__, str(e)[:150])
+            logger.debug(f"Pollinations translate failed: {e}")
+        return ''
+
+    @staticmethod
+    def _is_translatable(text: str) -> bool:
+        """判斷字串是否值得送翻譯（過濾 URL、代碼、純數字、已含中文者）。"""
+        if not text or len(text.strip()) < 8:
+            return False
+        s = text.strip()
+        if s.startswith('http') or '://' in s:
+            return False
+        if any('\u4e00' <= c <= '\u9fff' for c in s):
+            return False
+        # 至少 3 個英文字母開頭的單字才視為句子（避免翻譯代碼/代號）
+        words = [w for w in _re.split(r'\s+', s) if len(w) >= 2 and w[0].isalpha()]
+        if len(words) < 3:
+            return False
+        ascii_letters = sum(1 for c in s if c.isascii() and c.isalpha())
+        return ascii_letters / max(len(s), 1) > 0.5
+
+    def prefetch_translations(self, texts, batch_size: int = 10, max_items: int = 200) -> int:
+        """批次預翻譯並寫入快取（供 LLM 引擎使用，避免逐筆翻譯過慢）。
+
+        回傳實際新增至快取的筆數。已快取、非英文、或不可翻譯者一律跳過。
+        """
+        pending, seen = [], set()
+        for t in texts:
+            if not isinstance(t, str):
+                continue
+            key = hashlib.md5(t.encode('utf-8')).hexdigest()
+            if key in NewsMonitor._translate_cache or key in seen:
+                continue
+            if not self._is_translatable(t):
+                continue
+            seen.add(key)
+            pending.append(t)
+            if len(pending) >= max_items:
+                break
+
+        added = 0
+        for i in range(0, len(pending), batch_size):
+            chunk = pending[i:i + batch_size]
+            mapping = self._pollinations_translate_batch(chunk)
+            for src, dst in mapping.items():
+                NewsMonitor._translate_cache[hashlib.md5(src.encode('utf-8')).hexdigest()] = dst
+                added += 1
+            if i + batch_size < len(pending):
+                time.sleep(1.0)  # 批次間隔，降低限流風險
+        if added:
+            logger.info(f"Prefetched {added} translations via LLM batch ({len(pending)} candidates)")
+        return added
+
     def translate_text(self, text: str, max_retries: int = 2) -> str:
         """翻譯為繁體中文（多引擎鏈 + 快取）。
 
         引擎順序: 快取 → DeepL → Azure → Bing → gtx → clients5
-                  → deep_translator → MyMemory。
+                  → deep_translator → Pollinations LLM → MyMemory。
         前七者互為備援：
           · DeepL / Azure 需設定環境變數 API key（配額以 key 計量，最可靠）
           · Bing 完全免 key／免註冊，且與 Google 無關，是 Render 共享 IP
@@ -1183,7 +1355,12 @@ class NewsMonitor:
                     if attempt < max_retries - 1:
                         time.sleep(2 + attempt)
 
-        # ── 引擎 7: MyMemory（最終防線，匿名限額 5000 字元/天/IP）────
+        # ── 引擎 7: Pollinations LLM（免 key/免註冊，實測 Render 可用）──
+        # Render 共享 IP 上 Google/Bing/MyMemory 全被擋時的主力
+        if not result:
+            result = self._pollinations_translate(text)
+
+        # ── 引擎 8: MyMemory（最終防線，匿名限額 5000 字元/天/IP）────
         if not result:
             result = self._fallback_translate(text)
 
@@ -4690,7 +4867,32 @@ class NewsMonitor:
         current_time = datetime.now()
         date_str = current_time.strftime('%Y年%m月%d日')
         time_str = current_time.strftime('%H:%M')
-        
+
+        # ── 批次預翻譯 ────────────────────────────────────────────
+        # Render 共享 IP 上逐筆翻譯會因限流失敗；改為先掃描所有區塊的英文
+        # 字串，用免 key LLM 引擎批次翻譯並寫入快取，之後各區塊格式化時即
+        # 直接命中快取，不重複呼叫外部服務。
+        try:
+            _pending = []
+            for _lst in (top_articles, top_calls, top_puts, politician_trades,
+                         filings_13f, media_13f, form4_trades, form4_media,
+                         ipo_news, earnings_news, economic_news, mag7_events,
+                         ai_momentum_news):
+                if not isinstance(_lst, list):
+                    continue
+                for _it in _lst:
+                    if not isinstance(_it, dict):
+                        continue
+                    for _k in ('title', 'headline', 'summary', 'description',
+                               'company', 'name', 'text'):
+                        _v = _it.get(_k)
+                        if isinstance(_v, str):
+                            _pending.append(_v)
+            if _pending:
+                self.prefetch_translations(_pending)
+        except Exception as e:
+            logger.warning(f"Translation prefetch skipped: {e}")
+
         message = '\n\U0001f4f0 <b>七巨頭 + OpenAI/SpaceX/Anthropic 熱門新聞 Top10</b>\n'
         message += '\U0001f4c5 ' + date_str + ' EST\n'
         message += '\U0001f550 生成时间: ' + time_str + '\n'
