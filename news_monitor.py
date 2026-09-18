@@ -47,7 +47,7 @@ from bs4 import BeautifulSoup
 #   總經數據:MacroMicro 財經M平方(繁體中文 RSS,含行情快報/總經解讀)
 #   官方經濟數據:美國勞工部(BLS) - CPI、PPI、非農就業、失業率(公開 API)
 #   注:Reuters/Morningstar/Schwab 公開 RSS 已失效,已替換為同等級可用來源
-# 另附美股選擇權 Call/Put 交易量前十排行、名人交易揭露、SEC 官方 13F 持倉
+# 另附名人交易揭露、SEC 官方 13F 持倉
 
 # 配置日誌
 logging.basicConfig(
@@ -384,38 +384,13 @@ class NewsMonitor:
         self._13f_cache_time: Optional[datetime] = None
         self._13f_cache_ttl_hours: int = 6  # 13F 數據每季度更新一次,快取6小時
 
-        # 監控選擇權的美股清單(市值大、選擇權流動性高)
-        self.options_tickers = [
-            "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA",
-            "AMD", "NFLX", "SPY", "QQQ", "AVGO", "JPM", "BAC", "XOM",
-            "INTC", "CRM", "ORCL", "BABA", "MU"
-        ]
-
-        # ── SEC Form 4 高管持股異動監控清單 ────────────────────────────
-        # 僅追蹤科技七巨頭 CEO / CFO 對自家股票的買賣申報
-        # CIK 來源:SEC EDGAR 官方
-        self.form4_companies = [
-            {'name': 'Apple',     'zh': '蘋果',           'cik': '0000320193',  'ticker': 'AAPL'},
-            {'name': 'Microsoft', 'zh': '微軟',           'cik': '0000789019',  'ticker': 'MSFT'},
-            {'name': 'NVIDIA',    'zh': '輝達 NVIDIA',    'cik': '0001045810',  'ticker': 'NVDA'},
-            {'name': 'Alphabet',  'zh': 'Alphabet(Google)','cik': '0001652044', 'ticker': 'GOOGL'},
-            {'name': 'Amazon',    'zh': '亞馬遜',          'cik': '0001018724', 'ticker': 'AMZN'},
-            {'name': 'Meta',      'zh': 'Meta(臉書)',      'cik': '0001326801', 'ticker': 'META'},
-            {'name': 'Tesla',     'zh': '特斯拉',          'cik': '0001318605', 'ticker': 'TSLA'},
-            # 僅追蹤七巨頭，不再追蹤延伸科技龍頭
-        ]
-        # 高管職銜白名單(只取這些職位的 Form 4)
-        # 僅追蹤 CEO / CFO 兩個核心職位
-        self.form4_titles_whitelist = [
-            'ceo', 'chief executive officer', 'chief executive',
-            'cfo', 'chief financial officer', 'chief financial',
-        ]
-        # Form 4 快取(24 小時,避免頻繁爬取)
-        self._form4_cache: List[Dict] = []
-        self._form4_cache_time: Optional[datetime] = None
-        self._form4_cache_ttl_hours: int = 12
-        # Form 4 已處理記錄(保留用,不再作過濾):key = accession_no
-        self._form4_sent: Dict[str, datetime] = {}
+        # ── 已移除的區塊（2026-09-18 使用者要求取消）───────────────────
+        # ⑦ SEC Form 4 高管持股異動（官方申報 + 媒體報導）
+        #   → 原 self.form4_companies / form4_titles_whitelist /
+        #     _form4_cache* / _form4_sent 及 fetch_form4_* / _format_form4_* 已刪除
+        # 選擇權 Call/Put 交易量排行（美股看多/看空 Top10）
+        #   → 原 self.options_tickers 及 get_options_ranking /
+        #     _format_options_section 已刪除
 
         # ── IPO 訊息監控 ────────────────────────────────────────────
         # 來源:CNBC / WSJ / Bloomberg / MarketWatch / FT / Seeking Alpha
@@ -2690,468 +2665,6 @@ class NewsMonitor:
 
 
     # ════════════════════════════════════════════════════════════════
-    # ■ 區塊 ⑦  SEC Form 4 -- 高管持股異動監控
-    # ════════════════════════════════════════════════════════════════
-
-    def fetch_form4_insiders(self) -> List[Dict]:
-        """
-        從 SEC EDGAR RSS 抓取科技七巨頭 CEO / CFO 持股異動申報(Form 4).
-        - 僅追蹤七巨頭(AAPL/MSFT/NVDA/GOOGL/AMZN/META/TSLA)的 CEO / CFO
-        - 保留 30 天內的申報,超過則跳過
-        - 快取 12 小時避免頻繁爬取
-
-        每筆回傳格式:
-        {
-          'company_zh':  str,   # 公司中文名
-          'company_en':  str,   # 公司英文名
-          'ticker':      str,
-          'name':        str,   # 申報人姓名
-          'title':       str,   # 職稱(英文原文)
-          'title_zh':    str,   # 職稱中文
-          'action':      str,   # 'buy' / 'sell' / 'other'
-          'shares':      int,   # 異動股數
-          'price':       float, # 成交價格
-          'amount_usd':  float, # 總金額 USD
-          'date':        datetime,
-          'accession_no':str,
-          'link':        str,
-        }
-        """
-        import hashlib as _hashlib
-
-        now = datetime.now()
-
-        # 快取命中
-        if (self._form4_cache_time and
-                (now - self._form4_cache_time).total_seconds() < self._form4_cache_ttl_hours * 3600 and
-                self._form4_cache):
-            logger.info("  [Form4] Using cached data")
-            return self._form4_cache
-
-        headers = {'User-Agent': 'WorkBuddy Monitor admin@workbuddy.com'}
-        results = []
-
-        # 職稱中文對照（僅白名單內職位需要翻譯）
-        title_zh_map = {
-            'ceo': '執行長 CEO', 'chief executive officer': '執行長 CEO',
-            'chief executive': '執行長 CEO',
-            'cfo': '財務長 CFO', 'chief financial officer': '財務長 CFO',
-            'chief financial': '財務長 CFO',
-        }
-
-        def _title_zh(title_raw: str) -> str:
-            tl = title_raw.lower().strip()
-            for k, v in title_zh_map.items():
-                if k in tl:
-                    return v
-            return title_raw
-
-        def _is_whitelist_title(title_raw: str) -> bool:
-            tl = title_raw.lower()
-            return any(kw in tl for kw in self.form4_titles_whitelist)
-
-        for company in self.form4_companies:
-            cik_num = company['cik'].lstrip('0')
-            # SEC EDGAR RSS:最近 40 筆 Form 4 申報
-            rss_url = (
-                f"https://www.sec.gov/cgi-bin/browse-edgar"
-                f"?action=getcompany&CIK={cik_num}&type=4&dateb=&owner=include"
-                f"&count=20&search_text=&output=atom"
-            )
-            try:
-                resp = requests.get(rss_url, headers=headers, timeout=15)
-                if not resp.ok:
-                    logger.warning(f"  [Form4] {company['name']} RSS failed: {resp.status_code}")
-                    continue
-
-                feed = feedparser.parse(resp.text)
-                for entry in feed.entries[:20]:
-                    try:
-                        # 取 accession number(entry id 末段)
-                        entry_id = entry.get('id', '')
-                        accession_no = entry_id.split('accession-number=')[-1] if 'accession-number=' in entry_id else entry_id
-
-                        # 申報日期(保留30天內的申報,超過則跳過)
-                        # SEC EDGAR Atom feed 只有 updated 欄位,無 published
-                        pub_dt = now
-                        try:
-                            if entry.get('updated_parsed'):
-                                pub_dt = datetime(*entry.updated_parsed[:6])
-                            elif entry.get('filing-date'):
-                                pub_dt = datetime.strptime(entry['filing-date'], '%Y-%m-%d')
-                        except Exception:
-                            pub_dt = now
-                        if (now - pub_dt).days > 30:
-                            continue
-
-                        # 取申報連結
-                        link = entry.get('link', '')
-
-                        # 從 EDGAR XML 取詳細欄位(申報人姓名、職稱、交易明細)
-                        # 先從索引頁取 xml 連結
-                        an_clean = accession_no.replace('-', '')
-                        index_url = (
-                            f"https://www.sec.gov/Archives/edgar/data/{cik_num}/"
-                            f"{an_clean}/{accession_no}-index.htm"
-                        )
-                        idx_resp = requests.get(index_url, headers=headers, timeout=10)
-                        if not idx_resp.ok:
-                            continue
-
-                        import re as _re4
-                        # 找 .xml 檔:優先選不含 xsl 路徑的(即原始資料 XML,非 XSLT 渲染版)
-                        xml_hrefs = _re4.findall(
-                            r'href="([^"]+\.xml)"', idx_resp.text, _re4.IGNORECASE
-                        )
-                        xml_url = None
-                        # 第一輪:選不含 xsl 的路徑
-                        for href in xml_hrefs:
-                            if '/xsl' in href.lower():
-                                continue
-                            fname = href.split('/')[-1].lower()
-                            if 'xslt' in fname or 'stylesheet' in fname:
-                                continue
-                            xml_url = href if href.startswith('http') else f"https://www.sec.gov{href}"
-                            break
-                        # 第二輪 fallback:若沒找到,取最後一個 xml(通常是原始資料)
-                        if not xml_url and xml_hrefs:
-                            href = xml_hrefs[-1]
-                            xml_url = href if href.startswith('http') else f"https://www.sec.gov{href}"
-
-                        if not xml_url:
-                            continue
-
-                        xml_resp = requests.get(xml_url, headers=headers, timeout=10)
-                        if not xml_resp.ok:
-                            continue
-
-                        # 解析 Form 4 XML
-                        try:
-                            root4 = ET.fromstring(xml_resp.content)
-                        except ET.ParseError:
-                            continue
-
-                        def _f4text(tag):
-                            el = root4.find('.//' + tag)
-                            return el.text.strip() if el is not None and el.text else ''
-
-                        # 申報人資訊
-                        reporter_name = _f4text('rptOwnerName')
-                        reporter_title = _f4text('officerTitle')
-                        # 若無 officerTitle,嘗試從 reportingOwnerRelationship 讀取
-                        if not reporter_title:
-                            is_director = _f4text('isDirector')
-                            is_officer  = _f4text('isOfficer')
-                            is_ten_pct  = _f4text('isTenPercentOwner')
-                            if is_director == '1':
-                                reporter_title = 'director'
-                            elif is_officer == '1':
-                                reporter_title = _f4text('officerTitle') or 'officer'
-                            elif is_ten_pct == '1':
-                                reporter_title = 'ten_percent_owner'
-                            # 不 fallback 到 <value>(容易誤抓交易欄位)
-
-                        if not _is_whitelist_title(reporter_title):
-                            continue
-
-                        # 交易明細(取第一筆非空)
-                        action = 'other'
-                        shares = 0
-                        price = 0.0
-                        for trans in root4.findall('.//nonDerivativeTransaction'):
-                            try:
-                                tc = trans.find('.//transactionCode')
-                                tshares_el = trans.find('.//transactionShares/value')
-                                tprice_el  = trans.find('.//transactionPricePerShare/value')
-                                taq_el     = trans.find('.//transactionAcquiredDisposedCode/value')
-                                if tc is None or tshares_el is None:
-                                    continue
-                                code = tc.text.strip() if tc.text else ''
-                                aq   = taq_el.text.strip().upper() if taq_el is not None and taq_el.text else ''
-                                s    = float(tshares_el.text.replace(',', '')) if tshares_el.text else 0
-                                p    = float(tprice_el.text.replace(',', '')) if tprice_el is not None and tprice_el.text else 0.0
-                                if code == 'P' or aq == 'A':
-                                    action = 'buy'
-                                elif code == 'S' or aq == 'D':
-                                    action = 'sell'
-                                shares += int(s)
-                                if p > 0:
-                                    price = p
-                            except Exception:
-                                continue
-
-                        if shares == 0:
-                            continue  # 無實際異動股數略過
-
-                        amount_usd = shares * price
-
-                        results.append({
-                            'company_zh':   company['zh'],
-                            'company_en':   company['name'],
-                            'ticker':       company['ticker'],
-                            'name':         reporter_name,
-                            'title':        reporter_title,
-                            'title_zh':     _title_zh(reporter_title),
-                            'action':       action,
-                            'shares':       shares,
-                            'price':        price,
-                            'amount_usd':   amount_usd,
-                            'date':         pub_dt,
-                            'accession_no': accession_no,
-                            'link':         link or index_url,
-                        })
-
-                        # 標記已處理(不管是否推播,只要解析過就記錄)
-                        self._form4_sent[accession_no] = now
-
-                    except Exception as e:
-                        logger.debug(f"  [Form4] {company['name']} entry parse error: {e}")
-                        continue
-
-            except Exception as e:
-                logger.warning(f"  [Form4] {company['name']} fetch error: {e}")
-                continue
-
-        # 按日期降序
-        results.sort(key=lambda x: x['date'], reverse=True)
-
-        self._form4_cache = results
-        self._form4_cache_time = now
-        logger.info(f"[Form4] Fetched {len(results)} insider transactions")
-        return results
-
-    def fetch_form4_media_news(self) -> List[Dict]:
-        """
-        從六大財媒 RSS 抓取 Form 4 / 高管持股異動相關的媒體報導.
-        關鍵字:form 4、insider buying、insider selling、executive trade、CEO sell、 CFO buy 等,
-        搭配科技七巨頭名稱過濾.
-
-        回傳格式:
-        {
-          'title':      str,
-          'title_zh':   str,
-          'summary':    str,
-          'summary_zh': str,
-          'source':     str,
-          'link':       str,
-          'published':  datetime,
-          'key':        str,
-          'company':    str,   # matched company ticker or None
-        }
-        """
-        import hashlib as _hs
-
-        now = datetime.now()
-
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (compatible; WorkBuddyMonitor/1.0; +https://workbuddy.com)'
-        }
-
-        results = []
-        seen_keys: set = set()
-
-        # 六大財媒 RSS
-        media_sources = [
-            {'name': 'CNBC',             'url': 'https://www.cnbc.com/id/100003114/device/rss/rss.html'},
-            {'name': 'WSJ',              'url': 'https://feeds.a.dj.com/rss/RSSMarketsMain.xml'},
-            {'name': 'Bloomberg',        'url': 'https://feeds.bloomberg.com/markets/news.rss'},
-            {'name': 'MarketWatch',      'url': 'https://feeds.marketwatch.com/marketwatch/topstories/'},
-            {'name': 'Financial Times',  'url': 'https://www.ft.com/rss/home/us'},
-            {'name': 'Seeking Alpha',    'url': 'https://seekingalpha.com/feed.xml'},
-        ]
-
-        # Form 4 / 七巨頭高管持股異動關鍵字（僅限 CEO / CFO 職銜）
-        form4_keywords = [
-            'form 4', 'form4',
-            'ceo sells', 'ceo buys', 'ceo sold', 'ceo bought',
-            'cfo sells', 'cfo buys', 'cfo sold', 'cfo bought',
-            'chief executive sells', 'chief executive buys',
-            'chief executive sold', 'chief executive bought',
-            'chief financial sells', 'chief financial buys',
-            'chief financial sold', 'chief financial bought',
-        ]
-
-        # 科技七巨頭名稱/代碼(用於匹配)
-        company_patterns = {}
-        for ticker, info in self.magnificent7.items():
-            patterns = [ticker.lower(), info['name'].lower()]
-            if info['zh']:
-                patterns.append(info['zh'].lower())
-            company_patterns[ticker] = patterns
-
-        # 使用 CEO/CFO 關鍵字匹配媒體報導
-        all_keywords = form4_keywords
-
-        for src in media_sources:
-            try:
-                resp = requests.get(src['url'], headers=headers, timeout=15)
-                feed = feedparser.parse(resp.text if resp.ok else src['url'])
-                entries = feed.entries[:50]
-                logger.debug(f"  [Form4Media] {src['name']}: fetched {len(entries)} entries")
-                for entry in entries:
-                    try:
-                        title_raw = entry.get('title', '')
-                        # ── 過濾錯誤頁標題 ──────────────────────────────
-                        if self._is_error_title(title_raw):
-                            logger.warning(f"  [Form4Media] [{src['name']}] Skipping error-page entry: {title_raw!r}")
-                            continue
-                        summary   = self._clean_html(entry.get('summary', entry.get('description', '')))
-                        link      = entry.get('link', '')
-                        combined  = (title_raw + ' ' + summary).lower()
-
-                        # 必須包含 Form 4/高管持股關鍵字 或 VIP 關鍵字
-                        if not any(kw in combined for kw in all_keywords):
-                            continue
-
-                        try:
-                            pub_dt = datetime(*entry.published_parsed[:6])
-                        except Exception:
-                            pub_dt = now
-
-                        key = _hs.sha256(title_raw.encode()).hexdigest()[:16]
-                        if key in seen_keys:
-                            continue
-                        seen_keys.add(key)
-
-                        # 匹配科技七巨頭
-                        matched_company = None
-                        for ticker, patterns in company_patterns.items():
-                            if any(p in combined for p in patterns):
-                                matched_company = ticker
-                                break
-
-                        try:
-                            title_zh   = self.translate_text(title_raw)
-                            summary_zh = self.translate_text(summary[:300]) if summary else ''
-                        except Exception:
-                            title_zh   = title_raw
-                            summary_zh = summary[:150]
-
-                        results.append({
-                            'title':      title_raw,
-                            'title_zh':   title_zh,
-                            'summary':    summary[:300],
-                            'summary_zh': summary_zh,
-                            'source':     src['name'],
-                            'link':       link,
-                            'published':  pub_dt,
-                            'key':        key,
-                            'company':    matched_company,
-                        })
-                    except Exception as e:
-                        logger.debug(f"  [Form4Media] [{src['name']}] entry error: {e}")
-            except Exception as e:
-                logger.warning(f"  [Form4Media] {src['name']} RSS error: {e}")
-
-        # 按時間降序,取前 20 筆
-        results.sort(key=lambda x: x['published'], reverse=True)
-        results = results[:20]
-
-        logger.info(f"[Form4Media] Fetched {len(results)} media articles")
-        return results
-
-    def _format_form4_media_section(self, media_news: List[Dict]) -> str:
-        """
-        格式化 Form 4 / 七巨頭 CEO/CFO 持股異動媒體報導區塊.
-        """
-        section  = f"\n{'─'*40}\n"
-        section += "📰 <b>媒體追蹤報導</b>(CNBC / WSJ / Bloomberg / MarketWatch / FT / Seeking Alpha)\n"
-        section += "(僅追蹤七巨頭 CEO / CFO 持股異動相關)\n"
-        section += f"{'─'*40}\n\n"
-
-        if not media_news:
-            section += "📭 目前無七巨頭 CEO / CFO 持股異動相關媒體報導\n"
-            return section
-
-        # 科技七巨頭優先
-        mag7_news = [n for n in media_news if n['company']]
-
-        if mag7_news:
-            section += "🌟 <b>【科技七巨頭 CEO / CFO 持股異動】</b>\n"
-            for idx, item in enumerate(mag7_news, 1):
-                pub_str    = item['published'].strftime('%m/%d %H:%M')
-                title_zh   = self._safe_title_zh(item)
-                summary_zh = self._safe_summary_zh(item)
-                company_zh = self.magnificent7.get(item['company'], {}).get('zh', item['company'])
-                src_tag    = '📊' if item['source'] == 'CNBC' else '📰'
-                section += (
-                    f"  {src_tag} <b>#{idx}</b> [{html.escape(item['source'])}] {pub_str}\n"
-                    f"     🏦 <b>{company_zh}({item['company']})</b>\n"
-                    f"     <b><a href=\"{html.escape(item['link'])}\">{html.escape(title_zh)}</a></b>\n"
-                )
-                if summary_zh:
-                    section += f"     📝 {html.escape(summary_zh[:150])}\n"
-                section += "\n"
-
-        if not mag7_news:
-            section += "📭 目前無七巨頭 CEO / CFO 持股異動相關媒體報導\n"
-
-        return section
-
-    def _format_form4_section(self, trades: List[Dict], media_news: List[Dict] = None) -> str:
-        """格式化 SEC Form 4 高管持股異動區塊"""
-        section  = f"\n{'='*40}\n"
-        section += "👔 <b>SEC Form 4 高管持股異動</b>(科技七巨頭 CEO / CFO)\n"
-        section += "(CEO / CFO 買賣持股 -- 來源:SEC EDGAR 官方申報)\n"
-        section += f"{'='*40}\n\n"
-
-        if not trades:
-            section += "📭 目前無重大高管持股異動申報\n"
-            section += f"{'='*40}\n"
-            return section
-
-        # 只追蹤科技七巨頭 CEO / CFO 持股異動
-        def _render_company_group(grouped_dict, label_emoji, label_text):
-            s = ''
-            if not grouped_dict:
-                return s
-            s += f"{label_emoji} <b>【{label_text}】</b>\n"
-            for company_zh, items in grouped_dict.items():
-                ticker = items[0]['ticker']
-                s += f"🏢 <b>{company_zh}</b>({ticker})\n"
-                for t in items:
-                    action_emoji = '🟢 買入' if t['action'] == 'buy' else '🔴 賣出' if t['action'] == 'sell' else '⚪ 異動'
-                    date_str = t['date'].strftime('%m/%d')
-                    shares_str = f"{t['shares']:,}"
-                    price_str  = f"${t['price']:,.2f}" if t['price'] > 0 else 'N/A'
-                    amount_str = f"${t['amount_usd']:,.0f}" if t['amount_usd'] > 0 else 'N/A'
-                    s += (
-                        f"  {action_emoji}  <a href=\"{html.escape(t['link'])}\">{html.escape(t['name'])}</a>  [{html.escape(t['title_zh'])}]  {date_str}\n"
-                        f"       股數: {shares_str} 股  均價: {price_str}  總額: {amount_str}\n"
-                    )
-                s += "\n"
-            return s
-
-        # 七巨頭分組並渲染
-        grouped_mag7: Dict[str, List[Dict]] = {}
-        for t in trades:
-            grouped_mag7.setdefault(t['company_zh'], []).append(t)
-        section += _render_company_group(grouped_mag7, '🌟', '科技七巨頭 CEO / CFO 持股異動')
-
-        # ── 媒體報導子區塊 ──────────────────────────────────────────────
-        if media_news is not None:
-            section += self._format_form4_media_section(media_news)
-
-        # ── 來源聲明 ───────────────────────────────────────────────────
-        section += f"{'='*40}\n"
-        section += (
-            "👔 官方數據: <a href=\"https://www.sec.gov/cgi-bin/browse-edgar"
-            "?action=getcompany&type=4&dateb=&owner=include&count=40\">"
-            "SEC EDGAR Form 4 官方申報</a>\n"
-        )
-        section += (
-            "📰 媒體報導: "
-            "<a href=\"https://www.cnbc.com\">CNBC</a> ／ "
-            "<a href=\"https://www.wsj.com\">WSJ</a> ／ "
-            "<a href=\"https://www.bloomberg.com\">Bloomberg</a> ／ "
-            "<a href=\"https://www.marketwatch.com\">MarketWatch</a> ／ "
-            "<a href=\"https://www.ft.com\">Financial Times</a> ／ "
-            "<a href=\"https://seekingalpha.com\">Seeking Alpha</a>\n"
-        )
-        section += "⚠️ 僅顯示 CEO / CFO 申報,同一筆申報不重複推播\n"
-        return section
-
-    # ════════════════════════════════════════════════════════════════
     # ■ 區塊 ⑧  IPO 重要訊息
     # ════════════════════════════════════════════════════════════════
 
@@ -3930,166 +3443,6 @@ class NewsMonitor:
             "TSMC / TESLA / NVIDIA / MSFT / AMZN / GOOGL / AVGO / SPCX 財報\n"
         )
         section += "⚠️ 財報日期為預估值，以公司公告為準\n"
-        return section
-
-    def get_options_ranking(self) -> Tuple[List[Dict], List[Dict]]:
-        """
-        抓取美股選擇權交易量,回傳 Call 前10 與 Put 前10
-        """
-        def _safe_int(val, default=0) -> int:
-            """安全轉 int,處理 NaN/None"""
-            try:
-                if val is None:
-                    return default
-                f = float(val)
-                if math.isnan(f) or math.isinf(f):
-                    return default
-                return int(f)
-            except (TypeError, ValueError):
-                return default
-
-        def _safe_float(val, default=0.0) -> float:
-            """安全轉 float,處理 NaN/None"""
-            try:
-                if val is None:
-                    return default
-                f = float(val)
-                if math.isnan(f) or math.isinf(f):
-                    return default
-                return f
-            except (TypeError, ValueError):
-                return default
-
-        logger.info("Fetching US options data from Yahoo Finance...")
-        call_records = []
-        put_records  = []
-
-        for ticker_sym in self.options_tickers:
-            try:
-                tk = yf.Ticker(ticker_sym)
-                expirations = tk.options
-                if not expirations:
-                    continue
-
-                # 只取最近兩個到期日以加快速度
-                for expiry in expirations[:2]:
-                    try:
-                        chain = tk.option_chain(expiry)
-
-                        # --- Call ---
-                        for _, row in chain.calls.iterrows():
-                            vol = _safe_int(row.get('volume'))
-                            if vol > 0:
-                                call_records.append({
-                                    'ticker':        ticker_sym,
-                                    'contract':      row.get('contractSymbol', ''),
-                                    'expiry':        expiry,
-                                    'strike':        _safe_float(row.get('strike')),
-                                    'volume':        vol,
-                                    'open_interest': _safe_int(row.get('openInterest')),
-                                    'last_price':    _safe_float(row.get('lastPrice')),
-                                    'iv':            _safe_float(row.get('impliedVolatility')),
-                                    'type':          'CALL',
-                                })
-
-                        # --- Put ---
-                        for _, row in chain.puts.iterrows():
-                            vol = _safe_int(row.get('volume'))
-                            if vol > 0:
-                                put_records.append({
-                                    'ticker':        ticker_sym,
-                                    'contract':      row.get('contractSymbol', ''),
-                                    'expiry':        expiry,
-                                    'strike':        _safe_float(row.get('strike')),
-                                    'volume':        vol,
-                                    'open_interest': _safe_int(row.get('openInterest')),
-                                    'last_price':    _safe_float(row.get('lastPrice')),
-                                    'iv':            _safe_float(row.get('impliedVolatility')),
-                                    'type':          'PUT',
-                                })
-                    except Exception as e:
-                        logger.warning(f"Options chain error {ticker_sym} {expiry}: {e}")
-                        continue
-
-            except Exception as e:
-                logger.error(f"Options fetch error {ticker_sym}: {e}")
-                continue
-
-        # 依個股聚合交易量（同一個股不同履約價合計），再取前10
-        def _aggregate_by_ticker(records):
-            agg = {}
-            for r in records:
-                t = r['ticker']
-                if t not in agg:
-                    agg[t] = {
-                        'ticker':        t,
-                        'volume':        0,
-                        'open_interest': 0,
-                        # 保留最大交易量的那筆合約資訊（履約價、到期日、IV）
-                        'top_strike':    0.0,
-                        'top_expiry':    '',
-                        'top_iv':        0.0,
-                        'top_vol':       0,
-                        'type':          r['type'],
-                    }
-                agg[t]['volume']        += r['volume']
-                agg[t]['open_interest'] += r['open_interest']
-                # 記錄該個股中交易量最大的單一合約
-                if r['volume'] > agg[t]['top_vol']:
-                    agg[t]['top_vol']    = r['volume']
-                    agg[t]['top_strike'] = r['strike']
-                    agg[t]['top_expiry'] = r['expiry']
-                    agg[t]['top_iv']     = r['iv']
-            sorted_list = sorted(agg.values(), key=lambda x: x['volume'], reverse=True)
-            for i, r in enumerate(sorted_list, 1):
-                r['rank'] = i
-            return sorted_list[:10]
-
-        top_calls = _aggregate_by_ticker(call_records)
-        top_puts  = _aggregate_by_ticker(put_records)
-
-        logger.info(f"Options ranking done -- top calls: {len(top_calls)}, top puts: {len(top_puts)}")
-        return top_calls, top_puts
-    
-    def _format_options_section(self, top_calls: List[Dict], top_puts: List[Dict]) -> str:
-        """產生 Call/Put 排行的訊息區塊"""
-        def fmt_vol(v: int) -> str:
-            if v >= 1_000_000:
-                return f"{v/1_000_000:.1f}M"
-            if v >= 1_000:
-                return f"{v/1_000:.1f}K"
-            return str(v)
-
-        section = ""
-
-        if top_calls:
-            section += f"\n{'='*35}\n"
-            section += f"📈 <b>美股看多 Call 交易量 Top10</b>\n"
-            section += f"{'='*35}\n\n"
-            for r in top_calls:
-                rank_emoji = "🥇" if r['rank'] == 1 else "🥈" if r['rank'] == 2 else "🥉" if r['rank'] == 3 else f"#{r['rank']}"
-                iv_pct = f"{r['top_iv']*100:.1f}%" if r['top_iv'] > 0 else "N/A"
-                section += (
-                    f"{rank_emoji} <b>{html.escape(r['ticker'])}</b>  "
-                    f"總交易量: {fmt_vol(r['volume'])}\n"
-                    f"   最熱合約: 履約價 ${r['top_strike']:.1f}  到期 {html.escape(r['top_expiry'])}  IV: {iv_pct}\n"
-                    f"   未平倉: {fmt_vol(r['open_interest'])}\n\n"
-                )
-
-        if top_puts:
-            section += f"{'='*35}\n"
-            section += f"📉 <b>美股看空 Put 交易量 Top10</b>\n"
-            section += f"{'='*35}\n\n"
-            for r in top_puts:
-                rank_emoji = "🥇" if r['rank'] == 1 else "🥈" if r['rank'] == 2 else "🥉" if r['rank'] == 3 else f"#{r['rank']}"
-                iv_pct = f"{r['top_iv']*100:.1f}%" if r['top_iv'] > 0 else "N/A"
-                section += (
-                    f"{rank_emoji} <b>{html.escape(r['ticker'])}</b>  "
-                    f"總交易量: {fmt_vol(r['volume'])}\n"
-                    f"   最熱合約: 履約價 ${r['top_strike']:.1f}  到期 {html.escape(r['top_expiry'])}  IV: {iv_pct}\n"
-                    f"   未平倉: {fmt_vol(r['open_interest'])}\n\n"
-                )
-
         return section
 
     # ■ 區塊 ⑪  ICT/AI 活動資訊(美/中/台,未來三個月)
@@ -4980,13 +4333,9 @@ class NewsMonitor:
 
 
     def generate_telegram_message(self, top_articles: List[Dict],
-                                  top_calls: List[Dict] = None,
-                                  top_puts: List[Dict] = None,
                                   politician_trades: List[Dict] = None,
                                   filings_13f: List[Dict] = None,
                                   media_13f: List[Dict] = None,
-                                  form4_trades: List[Dict] = None,
-                                  form4_media: List[Dict] = None,
                                   ipo_news: List[Dict] = None,
                                   earnings_news: List[Dict] = None,
                                   economic_indicators: List[Dict] = None,
@@ -5006,8 +4355,8 @@ class NewsMonitor:
         # 直接命中快取，不重複呼叫外部服務。
         try:
             _pending = []
-            for _lst in (top_articles, top_calls, top_puts, politician_trades,
-                         filings_13f, media_13f, form4_trades, form4_media,
+            for _lst in (top_articles, politician_trades,
+                         filings_13f, media_13f,
                          ipo_news, earnings_news, economic_news, mag7_events,
                          ai_momentum_news):
                 if not isinstance(_lst, list):
@@ -5032,7 +4381,7 @@ class NewsMonitor:
             _filled = 0
             for _lst in (top_articles, ipo_news, earnings_news, economic_news,
                          mag7_events, ai_momentum_news, politician_trades,
-                         filings_13f, media_13f, form4_trades, form4_media):
+                         filings_13f, media_13f):
                 if not isinstance(_lst, list):
                     continue
                 for _it in _lst:
@@ -5094,12 +4443,6 @@ class NewsMonitor:
         message += '\U0001f916 由 WorkBuddy 新聞監控系統自動生成\n'
         message += '\U0001f4f0 新聞來源: CNBC & Wall Street Journal'
 
-        # 若有 Call/Put 資料,附加在訊息末尾
-        if top_calls or top_puts:
-            message += self._format_options_section(top_calls or [], top_puts or [])
-            message += '===================================\n'
-            message += '\U0001f4ca 選擇權資料來源: Yahoo Finance'
-
         # 附加政治人物交易揭露(媒體報導來源)
         if politician_trades is not None:
             message += self._format_politician_trades_section(politician_trades)
@@ -5107,10 +4450,6 @@ class NewsMonitor:
         # 附加 SEC 官方 13F 持倉揭露 + CNBC/WSJ 媒體報導(合併在同一區塊)
         if filings_13f is not None:
             message += self._format_13f_section(filings_13f, media_news=media_13f)
-        
-        # ―― 區塊 ⑦:SEC Form 4 高管持股異動 ―――――――――――――――――――――――――
-        if form4_trades is not None:
-            message += self._format_form4_section(form4_trades, media_news=form4_media)
         
         # ―― 區塊 ⑧:IPO 重要訊息 ―――――――――――――――――――――――――――――――――
         if ipo_news is not None:
@@ -5149,9 +4488,9 @@ class NewsMonitor:
         return any(results.values())
     
     def run_news_only(self):
-        """執行一次新聞監控檢查(區塊 ①~⑫)"""
+        """執行一次新聞監控檢查(區塊 ①、④、⑧~⑩、⑫)"""
         logger.info("="*50)
-        logger.info("Starting news-only monitor check (blocks 1-10)...")
+        logger.info("Starting news-only monitor check...")
         logger.info("="*50)
 
         # 重置翻譯引擎斷路器（上一輪失效的引擎可能已恢復）
@@ -5170,14 +4509,6 @@ class NewsMonitor:
         logger.info("="*50)
         for article in top_articles:
             logger.info(f"#{article['rank']} [{article['source']}] {article['title']}")
-
-        # 抓取選擇權 Call/Put 交易量排行(獨立容錯)
-        top_calls, top_puts = [], []
-        try:
-            logger.info("Fetching options ranking...")
-            top_calls, top_puts = self.get_options_ranking()
-        except Exception as e:
-            logger.error(f"Options ranking failed, will skip: {e}")
 
         # 抓取名人交易揭露(媒體報導來源,獨立容錯)
         politician_trades = []
@@ -5202,22 +4533,6 @@ class NewsMonitor:
             media_13f = self.fetch_13f_media_news()
         except Exception as e:
             logger.error(f"13F media news fetch failed, will skip: {e}")
-
-        # ── 區塊 ⑦:SEC Form 4 高管持股異動(科技七巨頭)──────────
-        form4_trades = []
-        try:
-            logger.info("Fetching SEC Form 4 insider transactions...")
-            form4_trades = self.fetch_form4_insiders()
-        except Exception as e:
-            logger.error(f"Form 4 fetch failed, will skip: {e}")
-
-        # ── 區塊 ⑦(附):Form 4 媒體報導 ────────────────────────
-        form4_media = []
-        try:
-            logger.info("Fetching Form 4 media news (CNBC/WSJ/Bloomberg/MarketWatch/FT/Seeking Alpha)...")
-            form4_media = self.fetch_form4_media_news()
-        except Exception as e:
-            logger.error(f"Form 4 media fetch failed, will skip: {e}")
 
         # ── 區塊 ⑧:IPO 重要訊息 ─────────────────────────────────
         ipo_news = []
@@ -5262,12 +4577,12 @@ class NewsMonitor:
             logger.error(f"Financial calendar fetch failed, will skip: {e}")
 
         # 發送整合通知(不含區塊 ⑪)
-        logger.info("Sending notification report (news blocks 1-10)...")
+        logger.info("Sending notification report...")
         notification_message = self.generate_telegram_message(
-            top_articles, top_calls, top_puts, politician_trades,
-            filings_13f, media_13f,
-            form4_trades=form4_trades,
-            form4_media=form4_media,
+            top_articles,
+            politician_trades=politician_trades,
+            filings_13f=filings_13f,
+            media_13f=media_13f,
             ipo_news=ipo_news,
             earnings_news=earnings_news,
             economic_indicators=economic_indicators,

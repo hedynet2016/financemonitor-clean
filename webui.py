@@ -864,7 +864,7 @@ def tasks_view():
   <div class="card-header"><i class="bi bi-clock me-2"></i>排程</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">每日完整推播</td><td><b>{news_hour:02d}:00 台北時間</b> — 區塊①~⑫（新聞/13F/Form4/IPO/財報/經濟指標新聞/AI動能/財經行事曆）</td></tr>
+      <tr><td class="text-muted" style="width:200px">每日完整推播</td><td><b>{news_hour:02d}:00 台北時間</b> — 區塊①⑧⑨⑩⑫（新聞/13F/IPO/財報/經濟指標新聞/AI動能/財經行事曆）</td></tr>
       <tr><td class="text-muted">每日活動推播</td><td><b>{events_hour:02d}:00 台北時間</b> — 區塊⑪（ICT/AI 活動，未來90天）</td></tr>
       <tr><td class="text-muted">每日商品追蹤</td><td><b>16:00 台北時間</b> — 雅虎拍賣商品監控（9 關鍵字，價格 $2,000~$15,000，排除NG）+ PChome 24h 熱銷排行（螢幕/延長線/充電器/電腦 各 TOP 3）</td></tr>
       <tr><td class="text-muted">每半小時股市監控</td><td>美股交易時段自動執行（跌幅>3%個股+ETF）</td></tr>
@@ -874,7 +874,7 @@ def tasks_view():
   </div>
 </div>
 
-<h5 class="mb-3"><i class="bi bi-newspaper me-2"></i>新聞推播區塊（①~⑫）</h5>
+<h5 class="mb-3"><i class="bi bi-newspaper me-2"></i>新聞推播區塊</h5>
 
 <div class="block-card">
   <div class="d-flex align-items-start gap-3">
@@ -916,27 +916,6 @@ def tasks_view():
       <div class="fw-bold mb-1">13F 媒體報導</div>
       <div class="mb-2"><span class="source-tag">CNBC/WSJ/Bloomberg/MarketWatch/FT/SeekingAlpha/MacroMicro</span> <span class="filter-tag">關鍵詞過濾</span> <span class="filter-tag">1 週內</span></div>
       <div><small class="text-muted">關鍵詞：</small> 13F, quarterly filing, fund holdings, portfolio disclosure</div>
-    </div>
-  </div>
-</div>
-
-<div class="block-card">
-  <div class="d-flex align-items-start gap-3">
-    <span class="block-num">⑤-A</span>
-    <div class="flex-grow-1">
-      <div class="fw-bold mb-1">SEC Form 4 官方（高管持股異動）</div>
-      <div class="mb-2"><span class="source-tag">SEC EDGAR Atom</span> <span class="filter-tag">CEO/CFO 職位</span> <span class="filter-tag">12h 快取</span></div>
-      <div><small class="text-muted">監控公司：</small> {" &bull; ".join(mag7)}</div>
-    </div>
-  </div>
-</div>
-
-<div class="block-card">
-  <div class="d-flex align-items-start gap-3">
-    <span class="block-num">⑤-B</span>
-    <div class="flex-grow-1">
-      <div class="fw-bold mb-1">Form 4 媒體報導</div>
-      <div class="mb-2"><span class="source-tag">CNBC/WSJ/Bloomberg/MarketWatch/FT/SeekingAlpha</span> <span class="filter-tag">CEO/CFO 關鍵字</span></div>
     </div>
   </div>
 </div>
