@@ -1327,6 +1327,44 @@ def api_diagnostic():
     return jsonify(result)
 
 
+@app.route("/api/translate-test")
+def api_translate_test():
+    """翻譯引擎診斷：確認伺服器環境各翻譯引擎的可用性（無需等待排程推播）。
+
+    用法: /api/translate-test?q=自訂測試字串
+    """
+    sample = request.args.get(
+        "q", "Fed approves interest rate hike, signals one more to come this year"
+    )
+    out = {"sample": sample, "engines": {}, "final": None, "engine_chain": "gtx > clients5 > deep_translator > mymemory"}
+    try:
+        from news_monitor import NewsMonitor
+        mon = NewsMonitor(str(CONFIG_FILE))
+        engines = (
+            ("gtx", lambda t: mon._google_gtx_translate(t)),
+            ("clients5", lambda t: mon._google_clients5_translate(t)),
+            ("deep_translator", lambda t: mon.translator.translate(t)),
+            ("mymemory", lambda t: mon._fallback_translate(t)),
+        )
+        for name, fn in engines:
+            try:
+                r = fn(sample)
+                r = r or ""
+                out["engines"][name] = {
+                    "ok": bool(r and NewsMonitor._has_cjk(r)),
+                    "text": r[:150],
+                }
+            except Exception as e:
+                out["engines"][name] = {"ok": False, "error": str(e)[:200]}
+        try:
+            out["final"] = mon.translate_text(sample)
+        except Exception as e:
+            out["final"] = "ERROR: %s" % str(e)[:200]
+    except Exception as e:
+        out["error"] = str(e)[:300]
+    return jsonify(out)
+
+
 # ── CLI entry ──────────────────────────────────────────────────────
 def main():
     import argparse, os
