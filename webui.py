@@ -1336,7 +1336,36 @@ def api_translate_test():
     sample = request.args.get(
         "q", "Fed approves interest rate hike, signals one more to come this year"
     )
-    out = {"sample": sample, "engines": {}, "final": None, "engine_chain": "gtx > clients5 > deep_translator > mymemory"}
+    out = {
+        "sample": sample,
+        "engines": {},
+        "raw": {},
+        "final": None,
+        "engine_chain": "gtx > clients5 > deep_translator > mymemory",
+    }
+
+    # ── 原始 HTTP 端點測試（找出網路層失敗原因）─────────────────────
+    try:
+        import requests as _req
+        _hdr = {"User-Agent": "Mozilla/5.0 (compatible; NewsMonitor/1.0)"}
+        raw_endpoints = {
+            "gtx": ("https://translate.googleapis.com/translate_a/single",
+                    {"client": "gtx", "sl": "auto", "tl": "zh-TW", "dt": "t", "q": sample}),
+            "clients5": ("https://clients5.google.com/translate_a/t",
+                         {"client": "dict-chrome-ex", "sl": "auto", "tl": "zh-TW", "q": sample}),
+            "mymemory": ("https://api.mymemory.translated.net/get",
+                         {"q": sample, "langpair": "en|zh-TW"}),
+        }
+        for name, (url, params) in raw_endpoints.items():
+            try:
+                r = _req.get(url, params=params, headers=_hdr, timeout=15)
+                out["raw"][name] = {"status": r.status_code, "body": r.text[:200]}
+            except Exception as e:
+                out["raw"][name] = {"status": None, "error": "%s: %s" % (type(e).__name__, str(e)[:180])}
+    except Exception as e:
+        out["raw"]["error"] = str(e)[:200]
+
+    # ── 引擎層測試 ────────────────────────────────────────────────
     try:
         from news_monitor import NewsMonitor
         mon = NewsMonitor(str(CONFIG_FILE))
