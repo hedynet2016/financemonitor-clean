@@ -1344,8 +1344,9 @@ def api_translate_test():
         "api_keys": {
             "DEEPL_API_KEY": bool(os.environ.get("DEEPL_API_KEY")),
             "AZURE_TRANSLATOR_KEY": bool(os.environ.get("AZURE_TRANSLATOR_KEY")),
+            "MYMEMORY_EMAIL": bool(os.environ.get("MYMEMORY_EMAIL")),
         },
-        "engine_chain": "deepl > azure > gtx > clients5 > deep_translator > mymemory",
+        "engine_chain": "deepl > azure > bing > gtx > clients5 > deep_translator > mymemory",
     }
 
     # ── 原始 HTTP 端點測試（找出網路層失敗原因）─────────────────────
@@ -1359,6 +1360,7 @@ def api_translate_test():
                          {"client": "dict-chrome-ex", "sl": "auto", "tl": "zh-TW", "q": sample}),
             "mymemory": ("https://api.mymemory.translated.net/get",
                          {"q": sample, "langpair": "en|zh-TW"}),
+            "bing_token_page": ("https://www.bing.com/translator", {}),
         }
         for name, (url, params) in raw_endpoints.items():
             try:
@@ -1366,6 +1368,38 @@ def api_translate_test():
                 out["raw"][name] = {"status": r.status_code, "body": r.text[:200]}
             except Exception as e:
                 out["raw"][name] = {"status": None, "error": "%s: %s" % (type(e).__name__, str(e)[:180])}
+
+        # ── Bing Translator 免 key 完整流程原始測試（含 token 取得）─────
+        try:
+            import re as _r2
+            _bs = _req.Session()
+            _bs.headers.update({"User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")})
+            _tp = _bs.get("https://www.bing.com/translator", timeout=20)
+            _mm = _r2.search(r'params_AbusePreventionHelper\s*=\s*\[([^\]]+)\]', _tp.text)
+            if _tp.status_code != 200:
+                out["raw"]["bing"] = {"status": _tp.status_code,
+                                      "error": "token 頁面非 200"}
+            elif not _mm:
+                out["raw"]["bing"] = {"status": 200,
+                                      "error": "找不到 AbusePreventionHelper（頁面格式已變更）"}
+            else:
+                _p = [x.strip().strip('"') for x in _mm.group(1).split(',')]
+                _ig = _r2.search(r'IG:"([^"]+)"', _tp.text)
+                _iid = _r2.search(r'data-iid="([^"]+)"', _tp.text)
+                _tr = _bs.post(
+                    "https://www.bing.com/ttranslatev3?isVertical=1&&IG=%s&IID=%s" % (
+                        _ig.group(1) if _ig else "",
+                        _iid.group(1) if _iid else "translator.5028"),
+                    data={"fromLang": "en", "text": sample, "to": "zh-Hant",
+                          "token": _p[1], "key": _p[0]},
+                    headers={"Referer": "https://www.bing.com/translator"}, timeout=20,
+                )
+                out["raw"]["bing"] = {"status": _tr.status_code, "body": _tr.text[:250]}
+        except Exception as e:
+            out["raw"]["bing"] = {"status": None,
+                                  "error": "%s: %s" % (type(e).__name__, str(e)[:180])}
 
         # Azure Translator 原始測試（有設定 key 時）
         _az_key = os.environ.get("AZURE_TRANSLATOR_KEY", "").strip()
@@ -1402,6 +1436,7 @@ def api_translate_test():
         engines = (
             ("deepl", lambda t: mon._deepl_translate(t)),
             ("azure", lambda t: mon._azure_translate(t)),
+            ("bing", lambda t: mon._bing_translate(t)),
             ("gtx", lambda t: mon._google_gtx_translate(t)),
             ("clients5", lambda t: mon._google_clients5_translate(t)),
             ("deep_translator", lambda t: mon.translator.translate(t)),
@@ -1414,6 +1449,8 @@ def api_translate_test():
                 entry = {"ok": bool(r and NewsMonitor._has_cjk(r)), "text": r[:150]}
                 if not entry["ok"] and name == "azure" and NewsMonitor._last_azure_error:
                     entry["error"] = NewsMonitor._last_azure_error
+                if not entry["ok"] and name == "bing" and NewsMonitor._last_bing_error:
+                    entry["error"] = NewsMonitor._last_bing_error
                 out["engines"][name] = entry
             except Exception as e:
                 out["engines"][name] = {"ok": False, "error": str(e)[:200]}

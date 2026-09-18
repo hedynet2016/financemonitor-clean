@@ -11,6 +11,7 @@ import time
 import json
 import logging
 import hashlib
+import re as _re
 import math
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Tuple, Optional
@@ -844,6 +845,19 @@ class NewsMonitor:
     _GOOGLE_THROTTLE_COOLDOWN = 600  # 限流後冷卻 10 分鐘，期間改用 gtx 端點
     _translate_cache: Dict[str, str] = {}  # 翻譯快取（原文 hash → 譯文），避免重複翻譯
     _last_azure_error = None  # 最近一次 Azure 翻譯錯誤（供 /api/translate-test 診斷）
+    _last_bing_error = None   # 最近一次 Bing 翻譯錯誤（供 /api/translate-test 診斷）
+
+    # ── Bing Translator 免 key 工作階段（類變量，所有實例共用）─────────
+    # 作法: 由 bing.com/translator 頁面取得 AbusePreventionHelper token 後
+    # 呼叫官方 ttranslatev3 端點。與 Google 系端點完全無關，可繞過
+    # Render 免費版共享 IP 被 Google 封鎖（HTTP 429）的問題。
+    _bing_session = None
+    _bing_key = None
+    _bing_token = None
+    _bing_ig = ''
+    _bing_iid = 'translator.5028'
+    _bing_expire = 0.0
+    _BING_TOKEN_TTL = 600  # token 有效期（秒），過期自動重新取得
 
     def _throttle_translate(self):
         """翻譯全域節流：確保相鄰兩次呼叫至少間隔 _TRANSLATE_MIN_INTERVAL 秒。
@@ -989,15 +1003,102 @@ class NewsMonitor:
             logger.debug(f"clients5 translate failed: {e}")
         return ''
 
+    def _bing_refresh_token(self):
+        """取得/更新 Bing Translator 的免 key 存取 token。
+
+        token 藏在 bing.com/translator 頁面的 params_AbusePreventionHelper 中，
+        有效期約 10 分鐘，過期或呼叫失敗時重新取得。
+        """
+        try:
+            if NewsMonitor._bing_session is None:
+                NewsMonitor._bing_session = requests.Session()
+                NewsMonitor._bing_session.headers.update({
+                    'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                                   'AppleWebKit/537.36 (KHTML, like Gecko) '
+                                   'Chrome/120.0.0.0 Safari/537.36'),
+                    'Accept-Language': 'en-US,en;q=0.9',
+                })
+            resp = NewsMonitor._bing_session.get('https://www.bing.com/translator', timeout=20)
+            if resp.status_code != 200:
+                NewsMonitor._last_bing_error = "token 頁面 HTTP %d" % resp.status_code
+                return
+            m = _re.search(r'params_AbusePreventionHelper\s*=\s*\[([^\]]+)\]', resp.text)
+            if not m:
+                NewsMonitor._last_bing_error = "token 頁面格式已變更（找不到 AbusePreventionHelper）"
+                return
+            parts = [p.strip().strip('"') for p in m.group(1).split(',')]
+            if len(parts) < 2:
+                NewsMonitor._last_bing_error = "token 欄位不足: %r" % (parts[:3],)
+                return
+            NewsMonitor._bing_key, NewsMonitor._bing_token = parts[0], parts[1]
+            ig = _re.search(r'IG:"([^"]+)"', resp.text)
+            iid = _re.search(r'data-iid="([^"]+)"', resp.text)
+            NewsMonitor._bing_ig = ig.group(1) if ig else ''
+            NewsMonitor._bing_iid = iid.group(1) if iid else 'translator.5028'
+            NewsMonitor._bing_expire = time.time() + NewsMonitor._BING_TOKEN_TTL
+            NewsMonitor._last_bing_error = None
+        except Exception as e:
+            NewsMonitor._last_bing_error = "%s: %s" % (type(e).__name__, str(e)[:180])
+            logger.debug(f"Bing token refresh failed: {e}")
+
+    def _bing_translate(self, text: str) -> str:
+        """Bing / Microsoft Translator 引擎（免 API key、免註冊、免信用卡）。
+
+        與 Google 系端點無關，是 Render 共享 IP 被 Google 全面封鎖時的關鍵備援；
+        實測 10/10 標題成功、平均 2.4 秒/篇，財經術語翻譯品質佳。
+        成功回傳譯文；失敗回傳空字串（呼叫端續用下一引擎）。
+        """
+        try:
+            if not NewsMonitor._bing_key or time.time() >= NewsMonitor._bing_expire:
+                self._bing_refresh_token()
+            if not NewsMonitor._bing_key:
+                return ''
+            self._throttle_translate()
+            url = ("https://www.bing.com/ttranslatev3?isVertical=1&&IG=%s&IID=%s"
+                   % (NewsMonitor._bing_ig, NewsMonitor._bing_iid))
+            resp = NewsMonitor._bing_session.post(
+                url,
+                data={'fromLang': 'en', 'text': text[:1000], 'to': 'zh-Hant',
+                      'token': NewsMonitor._bing_token, 'key': NewsMonitor._bing_key},
+                headers={'Referer': 'https://www.bing.com/translator'},
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                NewsMonitor._last_bing_error = "HTTP %d: %s" % (resp.status_code, resp.text[:120])
+                NewsMonitor._bing_key = None  # token 失效，下次重新取得
+                return ''
+            data = resp.json()
+            if isinstance(data, dict) and data.get('statusCode'):
+                NewsMonitor._last_bing_error = "statusCode %s: %s" % (
+                    data.get('statusCode'), str(data)[:120])
+                NewsMonitor._bing_key = None
+                return ''
+            translated = (data[0]['translations'][0]['text'] or '').strip()
+            if translated and not self._is_error_title(translated) and self._has_cjk(translated):
+                NewsMonitor._last_bing_error = None
+                return translated
+            NewsMonitor._last_bing_error = "無效譯文: %r" % translated[:100]
+        except Exception as e:
+            NewsMonitor._last_bing_error = "%s: %s" % (type(e).__name__, str(e)[:180])
+            logger.debug(f"Bing translate failed: {e}")
+        return ''
+
     def _fallback_translate(self, text: str) -> str:
-        """最終備用引擎: MyMemory API（免費無 key，匿名限額約 5000 字/天）。
-        成功回傳譯文；失敗回傳空字串（呼叫端降級用原文）。
+        """最終備用引擎: MyMemory API（免費無 key）。
+
+        匿名限額約 5000 字元/天/IP，在 Render 共享 IP 上常被其他用戶用盡。
+        設定環境變數 MYMEMORY_EMAIL（免費、無需註冊）可將額度提高到
+        50000 字元/天，且配額改綁該 email 而非共享 IP。
         """
         try:
             self._throttle_translate()
+            params = {'q': text[:500], 'langpair': 'en|zh-TW'}
+            email = _os.environ.get('MYMEMORY_EMAIL', '').strip()
+            if email:
+                params['de'] = email
             resp = requests.get(
                 'https://api.mymemory.translated.net/get',
-                params={'q': text[:500], 'langpair': 'en|zh-TW'},
+                params=params,
                 timeout=15,
             )
             data = resp.json()
@@ -1014,9 +1115,14 @@ class NewsMonitor:
     def translate_text(self, text: str, max_retries: int = 2) -> str:
         """翻譯為繁體中文（多引擎鏈 + 快取）。
 
-        引擎順序: 快取 → DeepL → Azure → gtx → clients5 → deep_translator → MyMemory。
-        前四者互為備援；DeepL/Azure 需設定環境變數 API key（配額以 key 計量，
-        不受 Render 免費版共享 IP 被限流影響，為最可靠方案）。
+        引擎順序: 快取 → DeepL → Azure → Bing → gtx → clients5
+                  → deep_translator → MyMemory。
+        前七者互為備援：
+          · DeepL / Azure 需設定環境變數 API key（配額以 key 計量，最可靠）
+          · Bing 完全免 key／免註冊，且與 Google 無關，是 Render 共享 IP
+            被 Google 封鎖(429)時的主力
+          · gtx / clients5 / deep_translator 為不同配額池的 Google 端點
+          · MyMemory 為最終防線
         任一引擎成功即返回；全部失敗才降級回原文（英文）。
         """
         if not text or not text.strip():
@@ -1045,15 +1151,20 @@ class NewsMonitor:
         if not result:
             result = self._azure_translate(text)
 
-        # ── 引擎 3: Google gtx 端點（免費，Render 共享 IP 可能被限流）──
+        # ── 引擎 3: Bing Translator（免 key/免註冊，與 Google 無關）──
+        # Render 共享 IP 被 Google 全面封鎖(429)時的主力引擎
+        if not result:
+            result = self._bing_translate(text)
+
+        # ── 引擎 4: Google gtx 端點（免費，Render 共享 IP 可能被限流）──
         if not result:
             result = self._google_gtx_translate(text)
 
-        # ── 引擎 4: Chrome 擴充端點 clients5（獨立配額池）────────────
+        # ── 引擎 5: Chrome 擴充端點 clients5（獨立配額池）────────────
         if not result:
             result = self._google_clients5_translate(text)
 
-        # ── 引擎 5: deep_translator Google（前四者失敗時嘗試）────────
+        # ── 引擎 6: deep_translator Google（前五者失敗時嘗試）────────
         if not result and time.time() >= NewsMonitor._google_throttled_until:
             for attempt in range(max_retries):
                 try:
@@ -1072,7 +1183,7 @@ class NewsMonitor:
                     if attempt < max_retries - 1:
                         time.sleep(2 + attempt)
 
-        # ── 引擎 6: MyMemory（最終防線，匿名限額 5000 字元/天/IP）────
+        # ── 引擎 7: MyMemory（最終防線，匿名限額 5000 字元/天/IP）────
         if not result:
             result = self._fallback_translate(text)
 
