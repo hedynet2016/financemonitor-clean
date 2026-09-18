@@ -1117,6 +1117,7 @@ class NewsMonitor:
     # Yandex(403) / Reverso(403) 全面封鎖後，實測唯一可用的免 key 途徑。
     _POLLI_URL = 'https://text.pollinations.ai/openai'
     _POLLI_MODEL = 'openai'
+    _POLLI_FALLBACK_MODELS = ('mistral',)  # 主模型失敗時改用（同一服務、不同後端）
     _POLLI_MIN_INTERVAL = 3.0   # 匿名端點限流：請求間隔至少 3 秒
     _last_polli_ts = 0.0
     _last_polli_error = None
@@ -1169,21 +1170,8 @@ class NewsMonitor:
             "- Do NOT add explanations, notes, headers or extra lines\n"
             "- Keep ticker symbols and company names accurate\n\n" + numbered
         )
-        try:
-            self._throttle_polli()
-            resp = requests.post(
-                NewsMonitor._POLLI_URL,
-                json={'model': NewsMonitor._POLLI_MODEL,
-                      'messages': [{'role': 'user', 'content': prompt}],
-                      'temperature': 0.2},
-                timeout=90,
-            )
-            if resp.status_code != 200:
-                NewsMonitor._last_polli_error = 'batch HTTP %d: %s' % (resp.status_code, resp.text[:150])
-                return {}
-            content = (resp.json().get('choices') or [{}])[0].get('message', {}).get('content', '') or ''
-        except Exception as e:
-            NewsMonitor._last_polli_error = 'batch %s: %s' % (type(e).__name__, str(e)[:150])
+        content = self._polli_raw_request(prompt, timeout=90, tag='batch')
+        if not content:
             return {}
 
         mapping = {}
@@ -1202,37 +1190,57 @@ class NewsMonitor:
             NewsMonitor._last_polli_error = None
         return mapping
 
+    def _polli_raw_request(self, prompt: str, timeout: int = 60, tag: str = '') -> str:
+        """呼叫 Pollinations 文字端點，回傳模型原始輸出（失敗回空字串）。
+
+        依序嘗試主模型與備援模型（同一服務、不同後端），提高可用性。
+        """
+        for model in (NewsMonitor._POLLI_MODEL,) + tuple(NewsMonitor._POLLI_FALLBACK_MODELS):
+            try:
+                self._throttle_polli()
+                resp = requests.post(
+                    NewsMonitor._POLLI_URL,
+                    json={'model': model,
+                          'messages': [{'role': 'user', 'content': prompt}],
+                          'temperature': 0.2},
+                    timeout=timeout,
+                )
+                if resp.status_code != 200:
+                    NewsMonitor._last_polli_error = '%s [%s] HTTP %d: %s' % (
+                        tag, model, resp.status_code, resp.text[:130])
+                    continue
+                content = (resp.json().get('choices') or [{}])[0].get(
+                    'message', {}).get('content', '') or ''
+                if content.strip():
+                    return content
+                NewsMonitor._last_polli_error = '%s [%s] 空回應' % (tag, model)
+            except Exception as e:
+                NewsMonitor._last_polli_error = '%s [%s] %s: %s' % (
+                    tag, model, type(e).__name__, str(e)[:130])
+                logger.debug(f"Pollinations request failed ({model}): {e}")
+        return ''
+
     def _pollinations_translate(self, text: str) -> str:
         """單筆免 key LLM 翻譯（Pollinations 文字端點）。
 
         成功回傳譯文；失敗回傳空字串（呼叫端續用下一引擎）。
         """
-        try:
-            prompt = (
-                "Translate the following English financial headline into Traditional "
-                "Chinese (Taiwan financial media style). Output ONLY the translation, "
-                "with no quotes, notes or explanations:\n\n" + text[:600]
-            )
-            self._throttle_polli()
-            resp = requests.post(
-                NewsMonitor._POLLI_URL,
-                json={'model': NewsMonitor._POLLI_MODEL,
-                      'messages': [{'role': 'user', 'content': prompt}],
-                      'temperature': 0.2},
-                timeout=60,
-            )
-            if resp.status_code != 200:
-                NewsMonitor._last_polli_error = 'HTTP %d: %s' % (resp.status_code, resp.text[:150])
-                return ''
-            content = (resp.json().get('choices') or [{}])[0].get('message', {}).get('content', '') or ''
-            cleaned = self._clean_llm_output(content)
-            if cleaned and self._has_cjk(cleaned) and not self._is_error_title(cleaned):
-                NewsMonitor._last_polli_error = None
-                return cleaned
-            NewsMonitor._last_polli_error = '無效輸出: %r' % content[:150]
-        except Exception as e:
-            NewsMonitor._last_polli_error = '%s: %s' % (type(e).__name__, str(e)[:150])
-            logger.debug(f"Pollinations translate failed: {e}")
+        prompt = (
+            "You are a professional financial translator for a Taiwanese audience. "
+            "Translate the following English financial headline into Traditional "
+            "Chinese using Taiwan financial media terminology (use 聯準會, 台積電, "
+            "那斯達克, 自由現金流 etc.; do NOT use Simplified-Chinese wording such as "
+            "美聯儲). Output ONLY the translation, with no quotes, notes or "
+            "explanations:\n\n" + text[:600]
+        )
+        content = self._polli_raw_request(prompt, timeout=60, tag='single')
+        if not content:
+            return ''
+        cleaned = self._clean_llm_output(content)
+        if cleaned and self._has_cjk(cleaned) and not self._is_error_title(cleaned):
+            NewsMonitor._last_polli_error = None
+            return cleaned
+        NewsMonitor._last_polli_error = '無效輸出: %r' % content[:150]
         return ''
 
     @staticmethod
