@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import time
 import json
 import logging
+import hashlib
 import math
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Tuple, Optional
@@ -838,23 +839,81 @@ class NewsMonitor:
 
     # 全域翻譯節流時間戳（類變量，所有實例共用）
     _last_translate_ts = 0.0
-    _TRANSLATE_MIN_INTERVAL = 0.4  # 每次翻譯呼叫最小間隔（秒），Google 免費端限 5 req/s
-    _google_throttled_until = 0.0  # Google 限流冷卻期截止時間（time.time()）
-    _GOOGLE_THROTTLE_COOLDOWN = 600  # 限流後冷卻 10 分鐘，期間直接走 MyMemory 備援
+    _TRANSLATE_MIN_INTERVAL = 0.25  # 每次翻譯呼叫最小間隔（秒），降低自傷式限流風險
+    _google_throttled_until = 0.0  # deep_translator 端點限流冷卻期截止時間（time.time()）
+    _GOOGLE_THROTTLE_COOLDOWN = 600  # 限流後冷卻 10 分鐘，期間改用 gtx 端點
+    _translate_cache: Dict[str, str] = {}  # 翻譯快取（原文 hash → 譯文），避免重複翻譯
 
     def _throttle_translate(self):
         """翻譯全域節流：確保相鄰兩次呼叫至少間隔 _TRANSLATE_MIN_INTERVAL 秒。
         修正: 早上八點推播多區塊連續翻譯爆量觸發 Google 限流(5 req/s)。
         """
-        import time as _time
-        now = _time.monotonic()
+        now = time.monotonic()
         wait = NewsMonitor._TRANSLATE_MIN_INTERVAL - (now - NewsMonitor._last_translate_ts)
         if wait > 0:
-            _time.sleep(wait)
-        NewsMonitor._last_translate_ts = _time.monotonic()
+            time.sleep(wait)
+        NewsMonitor._last_translate_ts = time.monotonic()
+
+    def _google_gtx_translate(self, text: str) -> str:
+        """主力翻譯引擎: Google translate_a/single (gtx client)。
+
+        與 deep_translator 使用的端點不同，屬獨立配額池——實測 deep_translator
+        被限流（TooManyRequests）時此端點仍可正常翻譯，故作為第一順位引擎。
+        成功回傳譯文；失敗回傳空字串。
+        """
+        try:
+            self._throttle_translate()
+            resp = requests.get(
+                'https://translate.googleapis.com/translate_a/single',
+                params={'client': 'gtx', 'sl': 'auto', 'tl': 'zh-TW', 'dt': 't', 'q': text[:1800]},
+                headers={'User-Agent': 'Mozilla/5.0 (compatible; NewsMonitor/1.0)'},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                logger.debug(f"gtx endpoint HTTP {resp.status_code}")
+                return ''
+            data = resp.json()
+            translated = ''.join(seg[0] for seg in data[0] if seg and seg[0])
+            translated = (translated or '').strip()
+            if translated and not self._is_error_title(translated) and self._has_cjk(translated):
+                return translated
+            logger.debug(f"gtx result invalid: {translated[:60]!r}")
+        except Exception as e:
+            logger.debug(f"gtx translate failed: {e}")
+        return ''
+
+    def _google_clients5_translate(self, text: str) -> str:
+        """第二翻譯引擎: Chrome 擴充端點 clients5.google.com（獨立配額池）。
+        與 gtx 端點互為備援，成功回傳譯文；失敗回傳空字串。
+        """
+        try:
+            self._throttle_translate()
+            resp = requests.get(
+                'https://clients5.google.com/translate_a/t',
+                params={'client': 'dict-chrome-ex', 'sl': 'auto', 'tl': 'zh-TW', 'q': text[:1800]},
+                headers={'User-Agent': 'Mozilla/5.0 (compatible; NewsMonitor/1.0)'},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                logger.debug(f"clients5 endpoint HTTP {resp.status_code}")
+                return ''
+            data = resp.json()
+            # 回應格式: ["譯文"] 或 [["譯文","原文"]]
+            if isinstance(data, list) and data:
+                first = data[0]
+                translated = first[0] if isinstance(first, list) and first else (first if isinstance(first, str) else '')
+            else:
+                translated = ''
+            translated = (translated or '').strip()
+            if translated and not self._is_error_title(translated) and self._has_cjk(translated):
+                return translated
+            logger.debug(f"clients5 result invalid: {translated[:60]!r}")
+        except Exception as e:
+            logger.debug(f"clients5 translate failed: {e}")
+        return ''
 
     def _fallback_translate(self, text: str) -> str:
-        """Google Translate 失敗時的備用引擎: MyMemory API（免費無 key）。
+        """最終備用引擎: MyMemory API（免費無 key，匿名限額約 5000 字/天）。
         成功回傳譯文；失敗回傳空字串（呼叫端降級用原文）。
         """
         try:
@@ -875,7 +934,13 @@ class NewsMonitor:
             logger.warning(f"MyMemory fallback failed: {e}")
         return ""
 
-    def translate_text(self, text: str, max_retries: int = 3) -> str:
+    def translate_text(self, text: str, max_retries: int = 2) -> str:
+        """翻譯為繁體中文（多引擎鏈 + 快取）。
+
+        引擎順序: 快取 → Google gtx → clients5 → deep_translator → MyMemory。
+        前三者為不同配額池的 Google 端點，彼此互為備援；MyMemory 為最終防線。
+        任一引擎成功即返回；全部失敗才降級回原文（英文）。
+        """
         if not text or not text.strip():
             return ""
 
@@ -883,54 +948,55 @@ class NewsMonitor:
         if len(text) > 1000:
             text = text[:1000] + "..."
 
-        for attempt in range(max_retries):
-            # Google 限流冷卻期內直接走 MyMemory 備援，避免每篇浪費 ~30 秒無效重試
-            if time.time() < NewsMonitor._google_throttled_until:
-                fallback = self._fallback_translate(text)
-                if fallback:
-                    return fallback
-                return text
+        # 已是純中文（無英文字母）→ 無需翻譯
+        if not any(c.isascii() and c.isalpha() for c in text):
+            return text
 
-            try:
-                self._throttle_translate()
-                result = self.translator.translate(text)
+        # 快取命中（同一標題可能跨區塊重複出現）
+        cache_key = hashlib.md5(text.encode('utf-8')).hexdigest()
+        cached = NewsMonitor._translate_cache.get(cache_key)
+        if cached:
+            return cached
 
-                # 防護 1：翻譯結果若為伺服器錯誤頁面文字（如 Google Translate 500 回傳），直接回傳原文
-                if not result:
-                    logger.debug("Translation returned empty, using original")
-                    return text
-                if self._is_error_title(result):
-                    logger.warning(f"Translation returned error-page text, using original: {result[:80]!r}")
-                    return text
+        result = ''
 
-                # 防護 2：若原文主要為英文但翻譯結果完全無 CJK 字元，可能是翻譯失敗
-                if self._is_mostly_ascii(text) and not self._has_cjk(result):
-                    logger.debug(f"Translation returned non-CJK result, using original: {result[:60]!r}")
-                    return text
+        # ── 引擎 1: Google gtx 端點（主力，獨立配額池）──────────────
+        result = self._google_gtx_translate(text)
 
-                return result
-            except Exception as e:
-                is_rate_limited = 'TooManyRequests' in type(e).__name__ or 'too many requests' in str(e).lower()
-                logger.warning(f"Translation attempt {attempt + 1} failed: {e}")
-                if is_rate_limited:
-                    # 進入 Google 限流冷卻期（10 分鐘），後續呼叫直接走 MyMemory
-                    NewsMonitor._google_throttled_until = time.time() + NewsMonitor._GOOGLE_THROTTLE_COOLDOWN
-                    fallback = self._fallback_translate(text)
-                    if fallback:
-                        logger.info("Translation succeeded via MyMemory fallback (rate-limited)")
-                        return fallback
-                    return text
-                if attempt < max_retries - 1:
-                    time.sleep(2 + attempt)
-                else:
-                    # Google 全部失敗 → 嘗試 MyMemory 備用引擎
-                    fallback = self._fallback_translate(text)
-                    if fallback:
-                        logger.info("Translation succeeded via MyMemory fallback")
-                        return fallback
-                    return text  # 備用引擎也失敗，返回原文
+        # ── 引擎 2: Chrome 擴充端點 clients5（獨立配額池）────────────
+        if not result:
+            result = self._google_clients5_translate(text)
 
-        return text
+        # ── 引擎 3: deep_translator Google（前兩者失敗時嘗試）────────
+        if not result and time.time() >= NewsMonitor._google_throttled_until:
+            for attempt in range(max_retries):
+                try:
+                    self._throttle_translate()
+                    r = self.translator.translate(text)
+                    if r and not self._is_error_title(r) and (not self._is_mostly_ascii(text) or self._has_cjk(r)):
+                        result = r
+                        break
+                except Exception as e:
+                    is_rate_limited = 'TooManyRequests' in type(e).__name__ or 'too many requests' in str(e).lower()
+                    logger.warning(f"deep_translator attempt {attempt + 1} failed: {e}")
+                    if is_rate_limited:
+                        # 進入冷卻期，後續直接跳過此引擎
+                        NewsMonitor._google_throttled_until = time.time() + NewsMonitor._GOOGLE_THROTTLE_COOLDOWN
+                        break
+                    if attempt < max_retries - 1:
+                        time.sleep(2 + attempt)
+
+        # ── 引擎 4: MyMemory（前三者皆失敗時的備援，匿名限額約 5000 字/天）──
+        if not result:
+            result = self._fallback_translate(text)
+
+        # 全部失敗 → 降級回原文，但不寫入快取（下次仍可重試）
+        if not result:
+            logger.warning(f"All translation engines failed, using original: {text[:60]!r}")
+            return text
+
+        NewsMonitor._translate_cache[cache_key] = result
+        return result
     
     # ════════════════════════════════════════════════════════════════
     # ■ 美國勞工部(BLS) 官方經濟指標
@@ -2464,7 +2530,7 @@ class NewsMonitor:
                                 break
 
                         try:
-                            title_zh   = self.translate_text(title_raw)    if len(title_raw)   < 200 else title_raw
+                            title_zh   = self.translate_text(title_raw)
                             summary_zh = self.translate_text(summary[:300]) if summary else ''
                         except Exception:
                             title_zh   = title_raw
@@ -2720,7 +2786,7 @@ class NewsMonitor:
                             continue
                         seen_keys.add(key)
                         try:
-                            title_zh   = self.translate_text(title_raw)    if len(title_raw)   < 200 else title_raw
+                            title_zh   = self.translate_text(title_raw)
                             summary_zh = self.translate_text(summary[:300]) if summary else ''
                         except Exception:
                             title_zh   = title_raw
@@ -2757,7 +2823,7 @@ class NewsMonitor:
                     continue
                 seen_keys.add(key)
                 try:
-                    title_zh = self.translate_text(title_raw) if len(title_raw) < 200 else title_raw
+                    title_zh = self.translate_text(title_raw)
                 except Exception:
                     title_zh = title_raw
                 pub_dt = now
@@ -2976,7 +3042,7 @@ class NewsMonitor:
                         seen_keys.add(key)
 
                         try:
-                            title_zh   = self.translate_text(title_raw)    if len(title_raw)   < 200 else title_raw
+                            title_zh   = self.translate_text(title_raw)
                             summary_zh = self.translate_text(summary[:300]) if summary else ''
                         except Exception:
                             title_zh   = title_raw
@@ -3022,7 +3088,7 @@ class NewsMonitor:
                     continue
                 seen_keys.add(key)
                 try:
-                    title_zh = self.translate_text(title_raw) if len(title_raw) < 200 else title_raw
+                    title_zh = self.translate_text(title_raw)
                 except Exception:
                     title_zh = title_raw
                 pub_dt = now
