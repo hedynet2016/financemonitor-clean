@@ -1341,7 +1341,11 @@ def api_translate_test():
         "engines": {},
         "raw": {},
         "final": None,
-        "engine_chain": "gtx > clients5 > deep_translator > mymemory",
+        "api_keys": {
+            "DEEPL_API_KEY": bool(os.environ.get("DEEPL_API_KEY")),
+            "AZURE_TRANSLATOR_KEY": bool(os.environ.get("AZURE_TRANSLATOR_KEY")),
+        },
+        "engine_chain": "deepl > azure > gtx > clients5 > deep_translator > mymemory",
     }
 
     # ── 原始 HTTP 端點測試（找出網路層失敗原因）─────────────────────
@@ -1370,6 +1374,8 @@ def api_translate_test():
         from news_monitor import NewsMonitor
         mon = NewsMonitor(str(CONFIG_FILE))
         engines = (
+            ("deepl", lambda t: mon._deepl_translate(t)),
+            ("azure", lambda t: mon._azure_translate(t)),
             ("gtx", lambda t: mon._google_gtx_translate(t)),
             ("clients5", lambda t: mon._google_clients5_translate(t)),
             ("deep_translator", lambda t: mon.translator.translate(t)),

@@ -854,6 +854,76 @@ class NewsMonitor:
             time.sleep(wait)
         NewsMonitor._last_translate_ts = time.monotonic()
 
+    def _deepl_translate(self, text: str) -> str:
+        """DeepL API 引擎（需環境變數 DEEPL_API_KEY）。
+
+        DeepL Free 每月 50 萬字元免費，以 API key 計量（不受共享 IP 影響），
+        品質對財經文本最佳。key 以 ':fx' 結尾者使用免費端點。
+        """
+        key = _os.environ.get('DEEPL_API_KEY', '').strip()
+        if not key:
+            return ''
+        try:
+            self._throttle_translate()
+            url = ('https://api-free.deepl.com/v2/translate' if key.endswith(':fx')
+                   else 'https://api.deepl.com/v2/translate')
+            resp = requests.post(
+                url,
+                headers={'Authorization': f'DeepL-Auth-Key {key}'},
+                data={'text': text[:2500], 'target_lang': 'ZH-HANT'},
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                logger.warning(f"DeepL HTTP {resp.status_code}: {resp.text[:120]}")
+                return ''
+            data = resp.json()
+            arr = data.get('translations') or []
+            translated = (arr[0].get('text') if arr else '') or ''
+            translated = translated.strip()
+            if translated and not self._is_error_title(translated) and self._has_cjk(translated):
+                return translated
+        except Exception as e:
+            logger.warning(f"DeepL translate failed: {e}")
+        return ''
+
+    def _azure_translate(self, text: str) -> str:
+        """Microsoft Azure Translator 引擎（需環境變數 AZURE_TRANSLATOR_KEY）。
+
+        Azure 免費層 (F0) 每月 200 萬字元，以 API key 計量（不受共享 IP 影響）。
+        選用區域以 AZURE_TRANSLATOR_REGION 指定（預設 global）。
+        """
+        key = _os.environ.get('AZURE_TRANSLATOR_KEY', '').strip()
+        if not key:
+            return ''
+        try:
+            self._throttle_translate()
+            region = _os.environ.get('AZURE_TRANSLATOR_REGION', 'global').strip() or 'global'
+            resp = requests.post(
+                'https://api.cognitive.microsofttranslator.com/translate',
+                params={'api-version': '3.0', 'from': 'en', 'to': 'zh-Hant'},
+                headers={
+                    'Ocp-Apim-Subscription-Key': key,
+                    'Ocp-Apim-Subscription-Region': region,
+                    'Content-Type': 'application/json',
+                },
+                json=[{'Text': text[:2500]}],
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                logger.warning(f"Azure Translator HTTP {resp.status_code}: {resp.text[:120]}")
+                return ''
+            data = resp.json()
+            translated = ''
+            if isinstance(data, list) and data:
+                trs = data[0].get('translations') or []
+                translated = (trs[0].get('text') if trs else '') or ''
+            translated = translated.strip()
+            if translated and not self._is_error_title(translated) and self._has_cjk(translated):
+                return translated
+        except Exception as e:
+            logger.warning(f"Azure translate failed: {e}")
+        return ''
+
     def _google_gtx_translate(self, text: str) -> str:
         """主力翻譯引擎: Google translate_a/single (gtx client)。
 
@@ -937,8 +1007,9 @@ class NewsMonitor:
     def translate_text(self, text: str, max_retries: int = 2) -> str:
         """翻譯為繁體中文（多引擎鏈 + 快取）。
 
-        引擎順序: 快取 → Google gtx → clients5 → deep_translator → MyMemory。
-        前三者為不同配額池的 Google 端點，彼此互為備援；MyMemory 為最終防線。
+        引擎順序: 快取 → DeepL → Azure → gtx → clients5 → deep_translator → MyMemory。
+        前四者互為備援；DeepL/Azure 需設定環境變數 API key（配額以 key 計量，
+        不受 Render 免費版共享 IP 被限流影響，為最可靠方案）。
         任一引擎成功即返回；全部失敗才降級回原文（英文）。
         """
         if not text or not text.strip():
@@ -960,14 +1031,22 @@ class NewsMonitor:
 
         result = ''
 
-        # ── 引擎 1: Google gtx 端點（主力，獨立配額池）──────────────
-        result = self._google_gtx_translate(text)
+        # ── 引擎 1: DeepL（需 DEEPL_API_KEY，配額以 key 計量不受共享 IP 影響）──
+        result = self._deepl_translate(text)
 
-        # ── 引擎 2: Chrome 擴充端點 clients5（獨立配額池）────────────
+        # ── 引擎 2: Azure Translator（需 AZURE_TRANSLATOR_KEY）────────
+        if not result:
+            result = self._azure_translate(text)
+
+        # ── 引擎 3: Google gtx 端點（免費，Render 共享 IP 可能被限流）──
+        if not result:
+            result = self._google_gtx_translate(text)
+
+        # ── 引擎 4: Chrome 擴充端點 clients5（獨立配額池）────────────
         if not result:
             result = self._google_clients5_translate(text)
 
-        # ── 引擎 3: deep_translator Google（前兩者失敗時嘗試）────────
+        # ── 引擎 5: deep_translator Google（前四者失敗時嘗試）────────
         if not result and time.time() >= NewsMonitor._google_throttled_until:
             for attempt in range(max_retries):
                 try:
@@ -986,7 +1065,7 @@ class NewsMonitor:
                     if attempt < max_retries - 1:
                         time.sleep(2 + attempt)
 
-        # ── 引擎 4: MyMemory（前三者皆失敗時的備援，匿名限額約 5000 字/天）──
+        # ── 引擎 6: MyMemory（最終防線，匿名限額 5000 字元/天/IP）────
         if not result:
             result = self._fallback_translate(text)
 
