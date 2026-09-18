@@ -1407,18 +1407,23 @@ def api_translate_test():
         # ══════════════════════════════════════════════════════════════
         import time as _t2
         import urllib.parse as _up
-        _deadline = _t2.time() + 42  # 總時間預算，避免端點逾時
+        _deadline = _t2.time() + 48  # 總時間預算，避免端點逾時
         probe = {}
+        # ?skip=a,b,c 可跳過指定項目（時間預算不足時分批探測）
+        _skip = set(x.strip() for x in request.args.get("skip", "").split(",") if x.strip())
         _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
         def _digest(r):
             """把回應壓成短摘要，方便一眼判斷成敗。"""
-            body = (r.text or "").strip().replace("\n", " ")[:110]
+            body = (r.text or "").strip().replace("\n", " ")[:200]
             ok = any('\u4e00' <= c <= '\u9fff' for c in body)
             return {"status": r.status_code, "zh": ok, "body": body}
 
         def _probe(name, fn):
+            if name in _skip:
+                probe[name] = {"status": None, "error": "已指定跳過"}
+                return
             if _t2.time() > _deadline:
                 probe[name] = {"status": None, "error": "跳過（時間預算用盡）"}
                 return
@@ -1426,6 +1431,15 @@ def api_translate_test():
                 probe[name] = _digest(fn())
             except Exception as e:
                 probe[name] = {"status": None, "error": "%s: %s" % (type(e).__name__, str(e)[:110])}
+
+        # ── 出口 IP 穩定性（判斷 token 綁 IP 類服務是否可行）────────
+        _ips = []
+        for _i in range(2):
+            try:
+                _ips.append(_req.get("https://api.ipify.org", timeout=10).text.strip())
+            except Exception as _e:
+                _ips.append("ERR:%s" % type(_e).__name__)
+        probe["egress_ip"] = {"calls": _ips, "stable": len(set(_ips)) == 1}
 
         # ── Bing 變體 1: 完整 token 流程 + 齊全 headers ────────────
         def bing_full():
