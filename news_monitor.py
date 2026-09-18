@@ -553,10 +553,12 @@ class NewsMonitor:
             if key.startswith(en_key) or en_key.startswith(key[:min(len(key), 12)]):
                 return zh_val
 
-        # 3. Google Translate fallback(限短名稱以節省時間)
+        # 3. 走統一翻譯引擎鏈 fallback(限短名稱以節省時間)
+        #    修正: 原本直接呼叫 self.translator.translate()（Google 單一端點），
+        #    在 Render 共享 IP 上必定 429，導致 13F 持倉中文名全部消失。
         if len(english_name) <= 60:
             try:
-                translated = self.translator.translate(english_name)
+                translated = self.translate_text(english_name)
                 # 防護：翻譯結果若為錯誤頁文字或無 CJK，回傳原文
                 if (translated and
                     translated.lower() != english_name.lower() and
@@ -1286,23 +1288,32 @@ class NewsMonitor:
         return ''
 
     @staticmethod
-    def _is_translatable(text: str) -> bool:
-        """判斷字串是否值得送翻譯（過濾 URL、代碼、純數字、已含中文者）。"""
-        if not text or len(text.strip()) < 8:
+    def _is_translatable(text: str, require_sentence: bool = True) -> bool:
+        """判斷字串是否值得送翻譯（過濾 URL、代碼、純數字、已含中文者）。
+
+        require_sentence=False 時放寬為「含英文字母的短名稱也可翻譯」，
+        用於 13F 持倉公司名（如 "APPLE INC"、"STATE STR SPDR S&P 500 ETF T"）。
+        """
+        if not text or len(text.strip()) < 4:
             return False
         s = text.strip()
         if s.startswith('http') or '://' in s:
             return False
         if any('\u4e00' <= c <= '\u9fff' for c in s):
             return False
+        ascii_letters = sum(1 for c in s if c.isascii() and c.isalpha())
+        if ascii_letters < 3:
+            return False
+        if ascii_letters / max(len(s), 1) <= 0.5:
+            return False
+        if not require_sentence:
+            return True
         # 至少 3 個英文字母開頭的單字才視為句子（避免翻譯代碼/代號）
         words = [w for w in _re.split(r'\s+', s) if len(w) >= 2 and w[0].isalpha()]
-        if len(words) < 3:
-            return False
-        ascii_letters = sum(1 for c in s if c.isascii() and c.isalpha())
-        return ascii_letters / max(len(s), 1) > 0.5
+        return len(words) >= 3
 
-    def prefetch_translations(self, texts, batch_size: int = 8, max_items: int = 200) -> int:
+    def prefetch_translations(self, texts, batch_size: int = 8, max_items: int = 200,
+                              require_sentence: bool = True) -> int:
         """批次預翻譯並寫入快取（供 LLM 引擎使用，避免逐筆翻譯過慢）。
 
         回傳實際新增至快取的筆數。已快取、非英文、或不可翻譯者一律跳過。
@@ -1314,7 +1325,7 @@ class NewsMonitor:
             key = hashlib.md5(t.encode('utf-8')).hexdigest()
             if key in NewsMonitor._translate_cache or key in seen:
                 continue
-            if not self._is_translatable(t):
+            if not self._is_translatable(t, require_sentence=require_sentence):
                 continue
             seen.add(key)
             pending.append(t)
@@ -2489,8 +2500,8 @@ class NewsMonitor:
                 top5 = holdings[:5]
                 for i, h in enumerate(top5, 1):
                     h['rank'] = i
-                    # 翻譯公司名稱為中文(優先查對照表,fallback GoogleTranslate)
-                    h['ticker_name_zh'] = self._translate_company_name(h['ticker_name'])
+                    # 翻譯延後到機構迴圈結束後批次處理（見下方），
+                    # 避免在 Render 上逐筆翻譯拖慢整體抓取。
 
                 # 計算申報距今天數(供顯示用,不再作為跳過依據)
                 filing_age_days = None
@@ -2533,6 +2544,21 @@ class NewsMonitor:
             except Exception as e:
                 logger.error(f"  [13F] Error processing {name}: {e}")
                 continue
+
+        # 批次翻譯所有持倉公司名稱（先填快取，再逐筆取用即命中快取）
+        _all_names = [h.get('ticker_name', '') for r in results
+                      for h in r.get('top_holdings', [])]
+        if _all_names:
+            try:
+                self.prefetch_translations(_all_names, require_sentence=False)
+            except Exception as e:
+                logger.warning(f"[13F] holdings prefetch failed: {e}")
+        for r in results:
+            for h in r.get('top_holdings', []):
+                try:
+                    h['ticker_name_zh'] = self._translate_company_name(h.get('ticker_name', ''))
+                except Exception:
+                    h['ticker_name_zh'] = h.get('ticker_name', '')
 
         # 更新快取
         self._13f_cache = {r['cik']: r for r in results}
@@ -4998,6 +5024,40 @@ class NewsMonitor:
                 self.prefetch_translations(_pending)
         except Exception as e:
             logger.warning(f"Translation prefetch skipped: {e}")
+
+        # ── 回填 *_zh 欄位（預翻譯完成後執行，命中快取幾乎零成本）──────
+        # 修正: 抓取階段若翻譯失敗，title_zh/summary_zh 會殘留空值或英文，
+        # 格式化時便降級顯示英文原文。此處在快取已填好後統一回填。
+        try:
+            _filled = 0
+            for _lst in (top_articles, ipo_news, earnings_news, economic_news,
+                         mag7_events, ai_momentum_news, politician_trades,
+                         filings_13f, media_13f, form4_trades, form4_media):
+                if not isinstance(_lst, list):
+                    continue
+                for _it in _lst:
+                    if not isinstance(_it, dict):
+                        continue
+                    for _src_k, _zh_k in (('title', 'title_zh'), ('summary', 'summary_zh')):
+                        _src = _it.get(_src_k)
+                        _zh = _it.get(_zh_k)
+                        if not isinstance(_src, str) or not _src.strip():
+                            continue
+                        if isinstance(_zh, str) and NewsMonitor._has_cjk(_zh) \
+                                and not self._is_error_title(_zh):
+                            continue
+                        if _filled >= 60:
+                            break
+                        if not self._is_translatable(_src):
+                            continue
+                        _new = self.translate_text(_src)
+                        if _new and NewsMonitor._has_cjk(_new) and not self._is_error_title(_new):
+                            _it[_zh_k] = _new
+                            _filled += 1
+            if _filled:
+                logger.info(f"[translate] 回填 {_filled} 個 *_zh 欄位")
+        except Exception as e:
+            logger.warning(f"Translation backfill skipped: {e}")
 
         message = '\n\U0001f4f0 <b>七巨頭 + OpenAI/SpaceX/Anthropic 熱門新聞 Top10</b>\n'
         message += '\U0001f4c5 ' + date_str + ' EST\n'
