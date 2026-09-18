@@ -843,6 +843,7 @@ class NewsMonitor:
     _google_throttled_until = 0.0  # deep_translator 端點限流冷卻期截止時間（time.time()）
     _GOOGLE_THROTTLE_COOLDOWN = 600  # 限流後冷卻 10 分鐘，期間改用 gtx 端點
     _translate_cache: Dict[str, str] = {}  # 翻譯快取（原文 hash → 譯文），避免重複翻譯
+    _last_azure_error = None  # 最近一次 Azure 翻譯錯誤（供 /api/translate-test 診斷）
 
     def _throttle_translate(self):
         """翻譯全域節流：確保相鄰兩次呼叫至少間隔 _TRANSLATE_MIN_INTERVAL 秒。
@@ -900,7 +901,8 @@ class NewsMonitor:
             region = _os.environ.get('AZURE_TRANSLATOR_REGION', 'global').strip() or 'global'
             resp = requests.post(
                 'https://api.cognitive.microsofttranslator.com/translate',
-                params={'api-version': '3.0', 'from': 'en', 'to': 'zh-Hant'},
+                # 不指定 from，讓 Azure 自動偵測語言（標題可能為英/中混合）
+                params={'api-version': '3.0', 'to': 'zh-Hant'},
                 headers={
                     'Ocp-Apim-Subscription-Key': key,
                     'Ocp-Apim-Subscription-Region': region,
@@ -910,7 +912,9 @@ class NewsMonitor:
                 timeout=20,
             )
             if resp.status_code != 200:
-                logger.warning(f"Azure Translator HTTP {resp.status_code}: {resp.text[:120]}")
+                err = resp.text[:200]
+                NewsMonitor._last_azure_error = f"HTTP {resp.status_code}: {err}"
+                logger.warning(f"Azure Translator HTTP {resp.status_code}: {err}")
                 return ''
             data = resp.json()
             translated = ''
@@ -919,8 +923,11 @@ class NewsMonitor:
                 translated = (trs[0].get('text') if trs else '') or ''
             translated = translated.strip()
             if translated and not self._is_error_title(translated) and self._has_cjk(translated):
+                NewsMonitor._last_azure_error = None
                 return translated
+            NewsMonitor._last_azure_error = f"無效譯文: {translated[:120]!r}"
         except Exception as e:
+            NewsMonitor._last_azure_error = f"{type(e).__name__}: {str(e)[:180]}"
             logger.warning(f"Azure translate failed: {e}")
         return ''
 

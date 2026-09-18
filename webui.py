@@ -1366,6 +1366,32 @@ def api_translate_test():
                 out["raw"][name] = {"status": r.status_code, "body": r.text[:200]}
             except Exception as e:
                 out["raw"][name] = {"status": None, "error": "%s: %s" % (type(e).__name__, str(e)[:180])}
+
+        # Azure Translator 原始測試（有設定 key 時）
+        _az_key = os.environ.get("AZURE_TRANSLATOR_KEY", "").strip()
+        if _az_key:
+            try:
+                _az_region = os.environ.get("AZURE_TRANSLATOR_REGION", "global").strip() or "global"
+                r = _req.post(
+                    "https://api.cognitive.microsofttranslator.com/translate",
+                    params={"api-version": "3.0", "to": "zh-Hant"},
+                    headers={
+                        "Ocp-Apim-Subscription-Key": _az_key,
+                        "Ocp-Apim-Subscription-Region": _az_region,
+                        "Content-Type": "application/json",
+                    },
+                    json=[{"Text": sample}], timeout=20,
+                )
+                out["raw"]["azure"] = {
+                    "status": r.status_code,
+                    "region": _az_region,
+                    "key_suffix": _az_key[-4:],
+                    "body": r.text[:250],
+                }
+            except Exception as e:
+                out["raw"]["azure"] = {"status": None, "error": "%s: %s" % (type(e).__name__, str(e)[:180])}
+        else:
+            out["raw"]["azure"] = {"status": None, "error": "未設定 AZURE_TRANSLATOR_KEY"}
     except Exception as e:
         out["raw"]["error"] = str(e)[:200]
 
@@ -1385,10 +1411,10 @@ def api_translate_test():
             try:
                 r = fn(sample)
                 r = r or ""
-                out["engines"][name] = {
-                    "ok": bool(r and NewsMonitor._has_cjk(r)),
-                    "text": r[:150],
-                }
+                entry = {"ok": bool(r and NewsMonitor._has_cjk(r)), "text": r[:150]}
+                if not entry["ok"] and name == "azure" and NewsMonitor._last_azure_error:
+                    entry["error"] = NewsMonitor._last_azure_error
+                out["engines"][name] = entry
             except Exception as e:
                 out["engines"][name] = {"ok": False, "error": str(e)[:200]}
         try:
