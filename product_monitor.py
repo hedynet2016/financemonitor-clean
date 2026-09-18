@@ -1,17 +1,30 @@
 #!/usr/bin/env python3
 """
 雅虎拍賣商品追蹤監控模組
-監控三個賣場（樺仔/點子3C/US3C）的九大關鍵字商品
-價格 $2000 ~ $15000 元，排除標題含「NG」商品
-- 刊登超過 7 天的商品自動排除
-- 同一商品 7 天內不重複推播
+
+監控範圍（兩部分合併推播）：
+  1. 三個固定賣場：樺仔二手電腦 / 點子3C 板橋店 / US3C
+  2. 雙北地區（台北市・新北市）「與點子3C同類」的 3C 店鋪型賣家
+     ─ 以相同 9 大關鍵字搜尋雅虎拍賣全站，篩選條件與固定賣場完全相同
+
+共同過濾條件：
+  - 價格 $2000 ~ $15000 元
+  - 排除標題含「NG」商品
+  - 刊登超過 7 天的商品自動排除
+  - 同一商品 7 天內不重複推播
+  - 推播上限 30 筆（依刊登日期新→舊排序）
 
 使用方法：
   python product_monitor.py              # 一般模式
   python product_monitor.py --once      # 執行一次即結束（測試用）
 
-技術方案：直接呼叫雅虎拍賣 GraphQL API（persisted query），無需瀏覽器
-刊登日期透過商品頁面的 isoredux-data 中的 startTime 欄位取得
+技術方案：
+  固定賣場 → 雅虎拍賣 GraphQL API（persisted query），無需瀏覽器；
+             刊登日期由商品頁 isoredux-data 的 startTime 取得。
+  雙北搜尋 → 雅虎拍賣搜尋頁（伺服器渲染），單次回應即含
+             ec_location（地區）、ec_starttime（刊登時間）、
+             ec_is_store_item（是否店鋪型）、ec_cat0（大分類）、
+             ec_listprice（價格）、ec_auid（店鋪 ID），無需逐筆抓商品頁。
 """
 
 import html
@@ -38,12 +51,21 @@ MAX_PRICE = 15000
 MIN_PRICE = 2000
 DEDUP_DAYS = 7          # 同一商品 7 天內不重複推播
 MAX_LISTING_DAYS = 7    # 刊登超過 7 天的商品自動排除
+MAX_PUSH_ITEMS = 30     # 推播筆數上限（固定賣場 + 雙北同類店家）
 STATE_FILE = "yahoo_state.json"
 
-# ── PChome 24h 熱銷排行設定 ──────────────────────────────────────────
-PCHOME_SEARCH_URL = "https://ecshweb.pchome.com.tw/search/v3.3/all/results"
-PCHOME_KEYWORDS = ["螢幕", "延長線", "充電器", "電腦"]
-PCHOME_TOP_N = 3        # 每個關鍵字取前 N 名
+# ── 雙北地區「與點子3C同類」店家搜尋設定 ──────────────────────────────
+# 以 9 大關鍵字搜尋雅虎拍賣全站，再依下列條件篩出雙北 3C 店鋪
+AREA_SEARCH_URL = "https://tw.bid.yahoo.com/search/auction/product"
+AREA_LOCATIONS = {"台北市", "新北市"}
+# 雅虎拍賣 3C 相關大分類（ec_cat0）：只有這些分類才算「同類店家」
+C3_CAT0_IDS = {
+    "23336",       # 電腦、平板與周邊
+    "2092042954",  # 手機、配件與通訊
+    "2092101502",  # 家電與影音視聽
+    "2092077887",  # 相機、攝影與周邊
+    "2092107360",  # 電玩遊戲與主機
+}
 
 # ── GraphQL API 設定 ──────────────────────────────────────────────────
 GQL_URL = "https://graphql.ec.yahoo.com/graphql"
@@ -235,104 +257,154 @@ class ProductMonitor:
 
         return products
 
-    # ── PChome 24h 熱銷排行 ────────────────────────────────────────
-    def _fetch_pchome_top_products(self, keyword, top_n=PCHOME_TOP_N):
+    # ── 雙北地區同類店家（與點子3C同類的 3C 店鋪）───────────────────
+    @staticmethod
+    def _extract_isoredux(html_text):
         """
-        查詢 PChome 24h 購物的熱銷排行商品。
-        使用 sort=sale/dc 依銷量降序排列，取前 top_n 名。
-        免認證、純 requests。
+        從雅虎拍賣頁面取出 isoredux-data 的 JSON（伺服器端渲染的狀態資料）。
+        取不到時回傳 None。
+        """
+        m = re.search(
+            r'id="isoredux-data"[^>]*>(.*?)</script>',
+            html_text,
+            re.S,
+        )
+        if not m:
+            return None
+        try:
+            return json.loads(m.group(1))
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _hit_price(hit):
+        """從搜尋結果取價格：ec_listprice > ec_price > ec_buyprice。"""
+        for key in ("ec_listprice", "ec_price", "ec_buyprice"):
+            try:
+                val = float(hit.get(key))
+            except (TypeError, ValueError):
+                continue
+            if val > 0:
+                return int(val)
+        return 0
+
+    def _search_area_stores(self, keyword):
+        """
+        以關鍵字搜尋雅虎拍賣全站，篩出「雙北地區 3C 店鋪型賣家」的商品。
+
+        篩選條件（與固定賣場完全相同，另加地區／店鋪／分類限制）：
+          - 商品所在地為台北市或新北市（ec_location）
+          - 店鋪型賣家（ec_is_store_item == True），排除個人賣家
+          - 商品大分類屬 3C（ec_cat0 在 C3_CAT0_IDS）
+          - 賣家非既有三個固定賣場（避免重複）
+          - 價格 MIN_PRICE ~ MAX_PRICE、標題不含 NG
+          - 刊登於 MAX_LISTING_DAYS 天內（ec_starttime）
+          - 同一商品 DEDUP_DAYS 天內不重複推播
+
+        搜尋結果本身即含刊登時間，無需逐筆抓商品頁。
         """
         products = []
+        known_booths = {s["booth_id"] for s in SHOPS}
+
         try:
             import requests
 
-            params = {
-                "q": keyword,
-                "page": 1,
-                "sort": "sale/dc",
-            }
             headers = {
                 "User-Agent": USER_AGENT,
-                "Accept": "application/json",
                 "Accept-Language": "zh-TW,zh;q=0.9",
+                "Accept": "text/html,application/xhtml+xml",
             }
+            # sort=new 讓最新上架的物件排在前面，提高抓到 7 天內新品的機率
+            params = {"p": keyword, "sort": "new"}
 
-            logger.info("[PChome] 搜尋熱銷排行：%s（取前 %d 名）", keyword, top_n)
+            logger.info("[雙北搜尋] %s", keyword)
             resp = requests.get(
-                PCHOME_SEARCH_URL, params=params, headers=headers, timeout=15
+                AREA_SEARCH_URL, params=params, headers=headers, timeout=30
             )
-
             if resp.status_code != 200:
-                logger.warning("[PChome] API 回傳 %d", resp.status_code)
+                logger.warning("[雙北搜尋] %s：HTTP %d", keyword, resp.status_code)
                 return products
 
-            data = resp.json()
-            raw_prods = data.get("prods") or []
+            state = self._extract_isoredux(resp.text)
+            if not state:
+                logger.warning("[雙北搜尋] %s：找不到 isoredux-data", keyword)
+                return products
 
-            for p in raw_prods[:top_n]:
-                prod_id = p.get("Id", "")
-                name = (p.get("name") or "").strip()
-                if not name:
+            hits = (
+                state.get("search", {})
+                .get("ecsearch", {})
+                .get("hits", []) or []
+            )
+            logger.info("[雙北搜尋] %s：取得 %d 筆候選", keyword, len(hits))
+
+            now_utc = datetime.utcnow()
+            for hit in hits:
+                # 1. 店鋪型賣家
+                if str(hit.get("ec_is_store_item")) != "True":
                     continue
-                price = p.get("price", 0)
+                # 2. 雙北地區
+                location = (hit.get("ec_location") or "").strip()
+                if location not in AREA_LOCATIONS:
+                    continue
+                # 3. 3C 大分類
+                if str(hit.get("ec_cat0")) not in C3_CAT0_IDS:
+                    continue
+                # 4. 排除既有固定賣場
+                auid = (hit.get("ec_auid") or "").strip()
+                if auid in known_booths:
+                    continue
+
+                title = (hit.get("ec_title") or "").strip()
+                if not title or len(title) < 3:
+                    continue
+
+                # 5. 價格區間 + 排除 NG
+                price = self._hit_price(hit)
+                if price < MIN_PRICE or price > MAX_PRICE:
+                    continue
+                if "NG" in title:
+                    continue
+
+                # 6. 刊登日期（ec_starttime 等同商品頁 startTime）
+                listing_date = None
                 try:
-                    price = int(price)
+                    ts = int(hit.get("ec_starttime") or 0)
+                    if ts > 0:
+                        listing_date = datetime.utcfromtimestamp(ts)
                 except (ValueError, TypeError):
-                    price = 0
-                url = "https://24h.pchome.com.tw/prod/%s" % prod_id
+                    listing_date = None
+
+                if listing_date is not None:
+                    age_days = (now_utc - listing_date).days
+                    if age_days > MAX_LISTING_DAYS:
+                        continue
+
+                # 7. 7 天內去重
+                if self._is_duplicate(title, price):
+                    continue
+
+                url = hit.get("ec_item_url") or ""
+                item_id = url.rstrip("/").split("/")[-1] if url else ""
 
                 products.append({
-                    "keyword": keyword,
-                    "name": name[:100],
+                    "shop": (hit.get("ec_storename") or "雙北店家").strip(),
+                    "name": title[:100],
                     "price": price,
-                    "url": url,
-                    "rank": len(products) + 1,
+                    "url": url or ("https://tw.bid.yahoo.com/item/" + item_id),
+                    "keyword": keyword,
+                    "item_id": item_id,
+                    "location": location,
+                    "listing_date": (
+                        listing_date.strftime("%Y-%m-%d")
+                        if listing_date else "?"
+                    ),
+                    "source": "雙北同類店家",
                 })
 
-            logger.info("[PChome] %s：取得 %d 筆熱銷商品", keyword, len(products))
-
         except Exception as e:
-            logger.warning("[PChome] 查詢失敗 [%s]：%s", keyword, e)
+            logger.warning("[雙北搜尋] %s 失敗：%s", keyword, e)
 
         return products
-
-    def _build_pchome_section(self):
-        """
-        查詢所有 PChome 關鍵字的熱銷排行，組成 HTML 推播段落。
-        回傳 HTML 字串，失敗時回傳空字串。
-        """
-        all_products = []
-        for kw in PCHOME_KEYWORDS:
-            items = self._fetch_pchome_top_products(kw)
-            all_products.extend(items)
-            time.sleep(0.5)  # 避免過快請求
-
-        if not all_products:
-            return ""
-
-        lines = [
-            "",
-            "─" * 30,
-            "🏆 <b>PChome 24h 熱銷排行</b>",
-            "（共 %d 筆，依銷量排序）" % len(all_products),
-        ]
-
-        current_kw = None
-        for p in all_products:
-            if p["keyword"] != current_kw:
-                current_kw = p["keyword"]
-                lines.append("")
-                lines.append("📱 <b>%s 熱銷 TOP %d</b>" % (current_kw, PCHOME_TOP_N))
-
-            safe_title = html.escape(p["name"][:60])
-            safe_url = html.escape(p["url"])
-            price_str = format(p["price"], ",") if p["price"] else "?"
-            lines.append(
-                '  %d. <a href="%s">%s</a>  💰 $%s'
-                % (p["rank"], safe_url, safe_title, price_str)
-            )
-
-        return "\n".join(lines)
 
     # ── 主流程 ────────────────────────────────────────────────────
     def run(self):
@@ -356,6 +428,7 @@ class ProductMonitor:
                             and "NG" not in p["name"]
                             and not self._is_duplicate(p["name"], p["price"])):
                         p["keyword"] = keyword
+                        p["source"] = "固定賣場"
                         shop_products.append(p)
                 time.sleep(1.5)
 
@@ -366,15 +439,44 @@ class ProductMonitor:
             )
             all_products.extend(shop_products)
 
+        # ── 雙北地區同類店家（與點子3C同類的 3C 店鋪）───────────────
+        # 以相同 9 大關鍵字搜尋全站，篩出雙北店鋪型 3C 賣家。
+        # 搜尋結果已含刊登日期，無需逐筆抓商品頁。
+        area_products = []
+        seen_ids = set()
+        for keyword in KEYWORDS:
+            items = self._search_area_stores(keyword)
+            for p in items:
+                # 同一商品可能命中多個關鍵字，以 item_id 去重
+                iid = p.get("item_id") or p["name"]
+                if iid in seen_ids:
+                    continue
+                seen_ids.add(iid)
+                area_products.append(p)
+            time.sleep(1.0)
+
+        if area_products:
+            logger.info("雙北同類店家：找到 %d 筆符合條件的商品", len(area_products))
+        else:
+            logger.info("雙北同類店家：無符合條件的商品")
+
+        all_products.extend(area_products)
+
         # 過濾刊登日期：排除刊登超過 MAX_LISTING_DAYS 天的商品
-        # 商品已依 item ID 排序（新→舊），找到 20 筆近期商品即停止
+        # 固定賣場商品已依 item ID 排序（新→舊），找到足量近期商品即停止；
+        # 雙北商品已在搜尋階段帶入 listing_date，不需再抓商品頁。
         filtered_products = []
         skipped_old = 0
         max_fetch = 60  # 最多查詢 60 個商品頁面，避免過多請求
         fetch_count = 0
         for p in all_products:
-            if len(filtered_products) >= 20 or fetch_count >= max_fetch:
+            if len(filtered_products) >= MAX_PUSH_ITEMS or fetch_count >= max_fetch:
                 break
+
+            # 雙北搜尋已直接取得刊登日期，不重複抓商品頁
+            if p.get("listing_date"):
+                filtered_products.append(p)
+                continue
 
             fetch_count += 1
             listing_dt = self._fetch_listing_date(p["item_id"])
@@ -398,62 +500,69 @@ class ProductMonitor:
 
             time.sleep(0.3)  # 避免過快請求
 
-        all_products = filtered_products
+        # 依刊登日期新→舊排序（日期不明者排最後），同日再依 item ID 新→舊
+        def _sort_key(x):
+            d = x.get("listing_date", "?")
+            has_date = 1 if d and d != "?" else 0
+            return (
+                has_date,
+                d if has_date else "",
+                int(x.get("item_id", 0) or 0) if str(x.get("item_id", "")).isdigit() else 0,
+            )
+
+        all_products = sorted(filtered_products, key=_sort_key, reverse=True)
 
         if skipped_old > 0:
             logger.info("已排除 %d 筆刊登超過 %d 天的舊商品", skipped_old, MAX_LISTING_DAYS)
 
         if not all_products:
-            logger.info("沒有符合條件的雅虎拍賣新商品")
-
-        # ── PChome 24h 熱銷排行 ──
-        pchome_section = self._build_pchome_section()
-
-        # 若雅虎拍賣和 PChome 都沒有結果，則不推播
-        if not all_products and not pchome_section:
             self._save_state()
             logger.info("========== 商品追蹤結束（無任何商品）==========")
             return 0
 
         # 產生推播訊息（HTML 格式，標題使用超連結）
+        fixed_count = sum(1 for p in all_products if p.get("source") == "固定賣場")
+        area_count = len(all_products) - fixed_count
+
         lines = [
             "🔍 <b>商品追蹤（%s）</b>" % now_str,
         ]
 
-        if all_products:
+        lines.append(
+            "共找到 %d 筆符合條件的商品（價格 $%s ~ $%s，刊登 %d 天內）"
+            % (len(all_products), format(MIN_PRICE, ","),
+               format(MAX_PRICE, ","), MAX_LISTING_DAYS)
+        )
+        lines.append(
+            "　固定賣場 %d 筆 ｜ 雙北同類店家 %d 筆" % (fixed_count, area_count)
+        )
+        lines.append("─" * 30)
+
+        for i, p in enumerate(all_products[:MAX_PUSH_ITEMS], 1):
+            safe_title = html.escape(p["name"][:50])
+            safe_url = html.escape(p["url"])
+            location = (p.get("location") or "").strip()
+            loc_part = "  |  📍 %s" % html.escape(location) if location else ""
             lines.append(
-                "共找到 %d 筆符合條件的商品（價格 $%s ~ $%s，刊登 %d 天內）"
-                % (len(all_products), format(MIN_PRICE, ","),
-                   format(MAX_PRICE, ","), MAX_LISTING_DAYS)
-            )
-            lines.append("─" * 30)
-
-            for i, p in enumerate(all_products[:20], 1):
-                safe_title = html.escape(p["name"][:50])
-                safe_url = html.escape(p["url"])
-                lines.append(
-                    '%d. <b><a href="%s">[%s] %s</a></b>\n'
-                    "   💰 $%s  |  📅 %s  |  關鍵字：%s"
-                    % (
-                        i,
-                        safe_url,
-                        html.escape(p["shop"]),
-                        safe_title,
-                        format(p["price"], ",") if p["price"] else "?",
-                        html.escape(p.get("listing_date", "?")),
-                        html.escape(p["keyword"]),
-                    )
+                '%d. <b><a href="%s">[%s] %s</a></b>\n'
+                "   💰 $%s  |  📅 %s%s  |  關鍵字：%s"
+                % (
+                    i,
+                    safe_url,
+                    html.escape(p["shop"]),
+                    safe_title,
+                    format(p["price"], ",") if p["price"] else "?",
+                    html.escape(p.get("listing_date", "?")),
+                    loc_part,
+                    html.escape(p["keyword"]),
                 )
-                self._mark_sent(p["name"], p["price"])
-
-        # 附加 PChome 熱銷排行段落
-        if pchome_section:
-            lines.append(pchome_section)
+            )
+            self._mark_sent(p["name"], p["price"])
 
         message = "\n".join(lines)
-        logger.info("準備推播：雅虎拍賣 %d 筆 + PChome %d 筆",
-                    min(len(all_products), 20) if all_products else 0,
-                    len(PCHOME_KEYWORDS) * PCHOME_TOP_N)
+        logger.info("準備推播：雅虎拍賣 %d 筆（固定賣場 %d + 雙北同類店家 %d）",
+                    min(len(all_products), MAX_PUSH_ITEMS),
+                    fixed_count, area_count)
 
         # 推播到 Telegram + Discord（使用 events_webhook）
         sent = 0

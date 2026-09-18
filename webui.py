@@ -508,7 +508,7 @@ def dashboard():
   <div class="card-header"><i class="bi bi-info-circle me-2"></i>系統資訊</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控 + 08:00 新聞（含 AI 動能觀察 + 財經行事曆）+ 14:00 活動 + 16:00 商品追蹤（雅虎拍賣+PChome熱銷）+ 09:00 自動備份 + 18:00 每日報告</td></tr>
+      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控 + 08:00 新聞（含 AI 動能觀察 + 財經行事曆）+ 14:00 活動 + 16:00 商品追蹤（雅虎拍賣 固定賣場＋雙北同類店家）+ 09:00 自動備份 + 18:00 每日報告</td></tr>
       <tr><td class="text-muted">推送管道</td><td>Telegram Bot + Discord Webhook</td></tr>
       <tr><td class="text-muted">Python</td><td>{{py_version}}</td></tr>
       <tr><td class="text-muted">工作目錄</td><td>{{work_dir}}</td></tr>
@@ -635,7 +635,7 @@ def settings():
           <tr><td><b>每半小時</b></td><td>股市監控（美股交易時段，跌幅 &gt;3% 個股 + ETF）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>{{'%02d:00' % dc.news_hour}}</b></td><td>新聞 + 經濟指標 + AI 動能觀察 + 財經行事曆推播（區塊 ①~⑫）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>{{'%02d:00' % dc.events_hour}}</b></td><td>活動推播（區塊 ⑪，ICT/AI 活動）</td><td><span class="badge bg-secondary">監控</span></td></tr>
-          <tr><td><b>16:00</b></td><td>商品追蹤（雅虎拍賣 9 關鍵字 + PChome 24h 熱銷排行 4 品類）</td><td><span class="badge bg-secondary">監控</span></td></tr>
+          <tr><td><b>16:00</b></td><td>商品追蹤（雅虎拍賣 9 關鍵字：固定 3 賣場 + 雙北地區同類 3C 店家）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>09:00</b></td><td>自動備份 logs → GitHub</td><td><span class="badge bg-info">排程器</span></td></tr>
           <tr><td><b>18:00</b></td><td>生成每日報告（Web UI /report 頁面）</td><td><span class="badge bg-info">排程器</span></td></tr>
         </tbody>
@@ -866,7 +866,7 @@ def tasks_view():
     <table class="table table-dark table-borderless mb-0">
       <tr><td class="text-muted" style="width:200px">每日完整推播</td><td><b>{news_hour:02d}:00 台北時間</b> — 區塊①⑧⑨⑩⑫（新聞/13F/IPO/財報/經濟指標新聞/AI動能/財經行事曆）</td></tr>
       <tr><td class="text-muted">每日活動推播</td><td><b>{events_hour:02d}:00 台北時間</b> — 區塊⑪（ICT/AI 活動，未來90天）</td></tr>
-      <tr><td class="text-muted">每日商品追蹤</td><td><b>16:00 台北時間</b> — 雅虎拍賣商品監控（9 關鍵字，價格 $2,000~$15,000，排除NG）+ PChome 24h 熱銷排行（螢幕/延長線/充電器/電腦 各 TOP 3）</td></tr>
+      <tr><td class="text-muted">每日商品追蹤</td><td><b>16:00 台北時間</b> — 雅虎拍賣商品監控（9 關鍵字，價格 $2,000~$15,000，排除NG，刊登 7 天內，上限 30 筆）<br>　① 固定賣場 3 家：樺仔二手電腦 / 點子3C 板橋店 / US3C<br>　② 雙北地區同類店家：台北市・新北市「店鋪型 3C 賣家」（與點子3C同類），條件與固定賣場完全相同，自動納入新店家</td></tr>
       <tr><td class="text-muted">每半小時股市監控</td><td>美股交易時段自動執行（跌幅>3%個股+ETF）</td></tr>
       <tr><td class="text-muted">每日自動備份</td><td><b>09:00 台北時間</b> — 推送 logs 到 GitHub（render_scheduler.py）</td></tr>
       <tr><td class="text-muted">每日報告生成</td><td><b>18:00 台北時間</b> — 生成每日報告 HTML（render_scheduler.py）</td></tr>
