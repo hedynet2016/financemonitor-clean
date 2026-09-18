@@ -1401,6 +1401,168 @@ def api_translate_test():
             out["raw"]["bing"] = {"status": None,
                                   "error": "%s: %s" % (type(e).__name__, str(e)[:180])}
 
+        # ══════════════════════════════════════════════════════════════
+        # 免 key 翻譯候選矩陣（在伺服器實際網路上逐一實測）
+        # 目的: 找出 Render 共享 IP 可用的免 key 翻譯途徑
+        # ══════════════════════════════════════════════════════════════
+        import time as _t2
+        import urllib.parse as _up
+        _deadline = _t2.time() + 42  # 總時間預算，避免端點逾時
+        probe = {}
+        _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+        def _digest(r):
+            """把回應壓成短摘要，方便一眼判斷成敗。"""
+            body = (r.text or "").strip().replace("\n", " ")[:110]
+            ok = any('\u4e00' <= c <= '\u9fff' for c in body)
+            return {"status": r.status_code, "zh": ok, "body": body}
+
+        def _probe(name, fn):
+            if _t2.time() > _deadline:
+                probe[name] = {"status": None, "error": "跳過（時間預算用盡）"}
+                return
+            try:
+                probe[name] = _digest(fn())
+            except Exception as e:
+                probe[name] = {"status": None, "error": "%s: %s" % (type(e).__name__, str(e)[:110])}
+
+        # ── Bing 變體 1: 完整 token 流程 + 齊全 headers ────────────
+        def bing_full():
+            s = _req.Session()
+            s.headers.update({"User-Agent": _UA, "Accept-Language": "en-US,en;q=0.9"})
+            tp = s.get("https://www.bing.com/translator", timeout=15)
+            m = _r2.search(r'params_AbusePreventionHelper\s*=\s*\[([^\]]+)\]', tp.text)
+            if not m:
+                raise RuntimeError("找不到 AbusePreventionHelper（頁面長度 %d）" % len(tp.text))
+            p = [x.strip().strip('"') for x in m.group(1).split(',')]
+            ig = _r2.search(r'IG:"([^"]+)"', tp.text)
+            iid = _r2.search(r'data-iid="([^"]+)"', tp.text)
+            probe["bing_meta"] = {
+                "page_len": len(tp.text),
+                "ig": (ig.group(1) if ig else "(無)")[:20],
+                "iid": (iid.group(1) if iid else "(無)"),
+                "key_len": len(p[0]), "token_len": len(p[1]),
+                "cookies": len(s.cookies),
+            }
+            return s.post(
+                "https://www.bing.com/ttranslatev3?isVertical=1&&IG=%s&IID=%s" % (
+                    ig.group(1) if ig else "", iid.group(1) if iid else "translator.5028"),
+                data={"fromLang": "en", "text": sample, "to": "zh-Hant",
+                      "token": p[1], "key": p[0]},
+                headers={"Referer": "https://www.bing.com/translator",
+                         "Origin": "https://www.bing.com",
+                         "Accept": "*/*",
+                         "X-Requested-With": "XMLHttpRequest"},
+                timeout=20)
+
+        _probe("bing_full_headers", bing_full)
+
+        # ── Bing 變體 2: 無 IG/IID ─────────────────────────────────
+        def bing_noig():
+            s = _req.Session()
+            s.headers.update({"User-Agent": _UA, "Accept-Language": "en-US,en;q=0.9"})
+            tp = s.get("https://www.bing.com/translator", timeout=15)
+            m = _r2.search(r'params_AbusePreventionHelper\s*=\s*\[([^\]]+)\]', tp.text)
+            p = [x.strip().strip('"') for x in m.group(1).split(',')]
+            return s.post("https://www.bing.com/ttranslatev3?isVertical=1",
+                          data={"fromLang": "en", "text": sample, "to": "zh-Hant",
+                                "token": p[1], "key": p[0]},
+                          headers={"Referer": "https://www.bing.com/translator"}, timeout=20)
+
+        _probe("bing_no_ig_iid", bing_noig)
+
+        # ── Bing 變體 3: cn.bing.com ───────────────────────────────
+        def bing_cn():
+            s = _req.Session()
+            s.headers.update({"User-Agent": _UA, "Accept-Language": "en-US,en;q=0.9"})
+            tp = s.get("https://cn.bing.com/translator", timeout=15)
+            m = _r2.search(r'params_AbusePreventionHelper\s*=\s*\[([^\]]+)\]', tp.text)
+            if not m:
+                raise RuntimeError("cn.bing 無 token（HTTP %d）" % tp.status_code)
+            p = [x.strip().strip('"') for x in m.group(1).split(',')]
+            return s.post("https://cn.bing.com/ttranslatev3?isVertical=1",
+                          data={"fromLang": "en", "text": sample, "to": "zh-Hant",
+                                "token": p[1], "key": p[0]},
+                          headers={"Referer": "https://cn.bing.com/translator"}, timeout=20)
+
+        _probe("bing_cn_host", bing_cn)
+
+        # ── Google 行動版頁面（與 translate_a/single 不同路徑）─────
+        def g_mobile():
+            return _req.get("https://translate.google.com/m",
+                            params={"sl": "en", "tl": "zh-TW", "q": sample},
+                            headers={"User-Agent": _UA}, timeout=15)
+
+        _probe("google_mobile_page", g_mobile)
+
+        # ── 免 key CORS 代理 → Google ──────────────────────────────
+        _gturl = ("https://translate.google.com/translate_a/single?client=gtx"
+                  "&sl=en&tl=zh-TW&dt=t&q=" + _up.quote(sample, safe=""))
+
+        def ao_proxy():
+            return _req.get("https://api.allorigins.win/raw", params={"url": _gturl},
+                            headers={"User-Agent": _UA}, timeout=25)
+
+        _probe("allorigins_proxy", ao_proxy)
+
+        def ct_proxy():
+            return _req.get("https://api.codetabs.com/v1/proxy", params={"quest": _gturl},
+                            headers={"User-Agent": _UA}, timeout=25)
+
+        _probe("codetabs_proxy", ct_proxy)
+
+        # ── 免 key LLM 端點（LLM 翻譯）────────────────────────────
+        def pollinations():
+            pr = ("Translate this English financial headline into Traditional Chinese. "
+                  "Output ONLY the translation:\n\n" + sample)
+            return _req.get("https://text.pollinations.ai/" + _up.quote(pr),
+                            headers={"User-Agent": _UA}, timeout=30)
+
+        _probe("pollinations_llm", pollinations)
+
+        # ── Yandex 行動端（免 key）────────────────────────────────
+        def yandex():
+            return _req.get("https://translate.yandex.net/api/v1/tr.json/translate",
+                            params={"srv": "android", "format": "text",
+                                    "lang": "en-zh", "text": sample},
+                            headers={"User-Agent": _UA}, timeout=15)
+
+        _probe("yandex_mobile", yandex)
+
+        # ── Reverso（免 key）──────────────────────────────────────
+        def reverso():
+            return _req.post("https://api.reverso.net/translate/v1/translation",
+                             json={"input": sample, "from": "eng", "to": "chi",
+                                   "format": "text",
+                                   "options": {"contextResults": False,
+                                               "languageDetection": False,
+                                               "sentenceSplitter": True}},
+                             headers={"User-Agent": _UA,
+                                      "Origin": "https://www.reverso.net",
+                                      "Referer": "https://www.reverso.net/"}, timeout=15)
+
+        _probe("reverso_api", reverso)
+
+        # ── LibreTranslate 官方站（免 key 額度）────────────────────
+        def libre_official():
+            return _req.post("https://libretranslate.com/translate",
+                             json={"q": sample, "source": "en", "target": "zh", "format": "text"},
+                             headers={"User-Agent": _UA}, timeout=15)
+
+        _probe("libretranslate_official", libre_official)
+
+        # ── MyMemory 附 email 提額（配額綁 email 而非共享 IP）──────
+        def mymemory_email():
+            return _req.get("https://api.mymemory.translated.net/get",
+                            params={"q": sample, "langpair": "en|zh-TW",
+                                    "de": os.environ.get("MYMEMORY_EMAIL", "probe@example.com")},
+                            headers={"User-Agent": _UA}, timeout=15)
+
+        _probe("mymemory_with_email", mymemory_email)
+
+        out["probe"] = probe
+
         # Azure Translator 原始測試（有設定 key 時）
         _az_key = os.environ.get("AZURE_TRANSLATOR_KEY", "").strip()
         if _az_key:
