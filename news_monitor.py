@@ -2665,7 +2665,7 @@ class NewsMonitor:
 
 
     # ════════════════════════════════════════════════════════════════
-    # ■ 區塊 ⑧  IPO 重要訊息
+    # ■ [2026-06-25] IPO  IPO 重要訊息
     # ════════════════════════════════════════════════════════════════
 
     def fetch_ipo_news(self) -> List[Dict]:
@@ -2894,7 +2894,7 @@ class NewsMonitor:
         section += "⚠️ 同一 IPO 訊息不重複推播\n"
         return section
 
-    # ■ 區塊 ⑨  美股財報公布(科技七巨頭)
+    # ■ [2026-06-25] 美股財報  美股財報公布(科技七巨頭)
     # ════════════════════════════════════════════════════════════════
 
     def fetch_earnings_news(self) -> List[Dict]:
@@ -3445,7 +3445,7 @@ class NewsMonitor:
         section += "⚠️ 財報日期為預估值，以公司公告為準\n"
         return section
 
-    # ■ 區塊 ⑬  ELON & JENSEN Interview(YouTube 熱門訪談)
+    # ■ [2026-09-21] ELON & JENSEN Interview  ELON & JENSEN Interview(YouTube 熱門訪談)
     # ════════════════════════════════════════════════════════════════
     def _format_youtube_interviews_section(self, videos: List[Dict]) -> str:
         """格式化 ELON & JENSEN Interview 區塊(YouTube 前 3 名)"""
@@ -3499,7 +3499,7 @@ class NewsMonitor:
         )
         return section
 
-    # ■ 區塊 ⑪  ICT/AI 活動資訊(美/中/台,未來三個月)
+    # ■ [2026-06-25] ICT/AI 活動  ICT/AI 活動資訊(美/中/台,未來三個月)
     # ════════════════════════════════════════════════════════════════
     def _scrape_accupass_events(self, keywords: List[str] = None) -> List[Dict]:
         """
@@ -4506,31 +4506,31 @@ class NewsMonitor:
         if filings_13f is not None:
             message += self._format_13f_section(filings_13f, media_news=media_13f)
         
-        # ―― 區塊 ⑧:IPO 重要訊息 ―――――――――――――――――――――――――――――――――
+        # ―― [2026-06-25] IPO:IPO 重要訊息 ―――――――――――――――――――――――――――――――――
         if ipo_news is not None:
             message += self._format_ipo_section(ipo_news)
         
-        # ―― 區塊 ⑨:美股財報公布(科技七巨頭)――――――――――――――――――――――
+        # ―― [2026-06-25] 美股財報:美股財報公布(科技七巨頭)――――――――――――――――――――――
         if earnings_news is not None:
             message += self._format_earnings_section(earnings_news)
         
-        # ―― 區塊 ⑨-AI:AI 動能觀察(資本支出 & Token 需求)―――――――
+        # ―― [2026-08-17] AI 動能:AI 動能觀察(資本支出 & Token 需求)―――――――
         if ai_momentum_news is not None:
             message += self._format_ai_momentum_section(ai_momentum_news)
         
-        # ―― 區塊 ⑩:美國勞工部(BLS) 官方經濟指標 ―――――――――――――――
+        # ―― [2026-06-27] 經濟指標:美國勞工部(BLS) 官方經濟指標 ―――――――――――――――
         if economic_indicators is not None or economic_news:
             message += self._format_economic_section(economic_indicators, economic_news=economic_news)
 
-        # ―― 區塊 ⑪:ICT/AI 活動資訊(美/中/台,未來三個月) ――――――
+        # ―― [2026-06-25] ICT/AI 活動:ICT/AI 活動資訊(美/中/台,未來三個月) ――――――
         if ict_ai_events is not None:
             message += self._format_ict_ai_events_section(ict_ai_events)
         
-        # ―― 區塊 ⑫:財經行事曆(未來 30 天) ―――――――――――――――
+        # ―― [2026-09-01] 財經行事曆:財經行事曆(未來 30 天) ―――――――――――――――
         if financial_calendar is not None:
             message += self._format_financial_calendar_section(financial_calendar)
 
-        # ―― 區塊 ⑬:ELON & JENSEN Interview(YouTube 熱門訪談)―――――――
+        # ―― [2026-09-21] ELON & JENSEN Interview:ELON & JENSEN Interview(YouTube 熱門訪談)―――――――
         if youtube_interviews is not None:
             message += self._format_youtube_interviews_section(youtube_interviews)
 
@@ -4547,7 +4547,7 @@ class NewsMonitor:
         return any(results.values())
     
     def run_news_only(self):
-        """執行一次新聞監控檢查(區塊 ①、④、⑧~⑩、⑫、⑬)"""
+        """執行一次新聞監控檢查(熱門財經/VIP/13F/IPO/財報/AI動能/經濟指標/財經行事曆/YouTube)"""
         logger.info("="*50)
         logger.info("Starting news-only monitor check...")
         logger.info("="*50)
@@ -4593,7 +4593,7 @@ class NewsMonitor:
         except Exception as e:
             logger.error(f"13F media news fetch failed, will skip: {e}")
 
-        # ── 區塊 ⑧:IPO 重要訊息 ─────────────────────────────────
+        # ── [2026-06-25] IPO:IPO 重要訊息 ─────────────────────────────────
         ipo_news = []
         try:
             logger.info("Fetching IPO news...")
@@ -4601,7 +4601,7 @@ class NewsMonitor:
         except Exception as e:
             logger.error(f"IPO news fetch failed, will skip: {e}")
 
-        # ── 區塊 ⑨:美股財報公布(科技七巨頭)────────────────────
+        # ── [2026-06-25] 美股財報:美股財報公布(科技七巨頭)────────────────────
         earnings_news = []
         try:
             logger.info("Fetching US earnings news (Magnificent 7)...")
@@ -4609,7 +4609,7 @@ class NewsMonitor:
         except Exception as e:
             logger.error(f"Earnings news fetch failed, will skip: {e}")
 
-        # ── 區塊 ⑨-AI:AI 動能觀察(資本支出 & Token 需求)─────
+        # ── [2026-08-17] AI 動能:AI 動能觀察(資本支出 & Token 需求)─────
         ai_momentum_news = []
         try:
             logger.info("Fetching AI momentum news (capex & token demand)...")
@@ -4617,7 +4617,7 @@ class NewsMonitor:
         except Exception as e:
             logger.error(f"AI momentum news fetch failed, will skip: {e}")
 
-        # ── 區塊 ⑩:經濟指標相關新聞 ─────────────
+        # ── [2026-06-27] 經濟指標:經濟指標相關新聞 ─────────────
         # 改採與熱門財經新聞相同媒體來源，不再使用官方 BLS API
         economic_indicators = []
         economic_news = []
@@ -4627,7 +4627,7 @@ class NewsMonitor:
         except Exception as e:
             logger.error(f"BLS news fetch failed, will skip: {e}")
 
-        # ── 區塊 ⑫:財經行事曆(未來 30 天)──────────────
+        # ── [2026-09-01] 財經行事曆:財經行事曆(未來 30 天)──────────────
         financial_calendar = []
         try:
             logger.info("Fetching financial calendar (next 30 days)...")
@@ -4635,7 +4635,7 @@ class NewsMonitor:
         except Exception as e:
             logger.error(f"Financial calendar fetch failed, will skip: {e}")
 
-        # ── 區塊 ⑬:ELON & JENSEN Interview(YouTube)──────────────
+        # ── [2026-09-21] ELON & JENSEN Interview:ELON & JENSEN Interview(YouTube)──────────────
         youtube_interviews = []
         try:
             logger.info("Fetching YouTube interviews (Elon Musk / Jensen Huang)...")
@@ -4644,7 +4644,7 @@ class NewsMonitor:
         except Exception as e:
             logger.error(f"YouTube interviews fetch failed, will skip: {e}")
 
-        # 發送整合通知(不含區塊 ⑪)
+        # 發送整合通知(不含[2026-06-25] ICT/AI 活動)
         logger.info("Sending notification report...")
         notification_message = self.generate_telegram_message(
             top_articles,
@@ -4655,7 +4655,7 @@ class NewsMonitor:
             earnings_news=earnings_news,
             economic_indicators=economic_indicators,
             economic_news=economic_news,
-            ict_ai_events=None,  # 區塊 ⑪ 獨立發送
+            ict_ai_events=None,  # [2026-06-25] ICT/AI 活動 獨立發送
             ai_momentum_news=ai_momentum_news,
             financial_calendar=financial_calendar,
             youtube_interviews=youtube_interviews,
@@ -4666,12 +4666,12 @@ class NewsMonitor:
         logger.info("="*50 + "\n")
 
     def run_events_only(self):
-        """執行一次活動監控檢查(區塊 ⑪ 獨立)"""
+        """執行一次活動監控檢查([2026-06-25] ICT/AI 活動 獨立)"""
         logger.info("="*50)
         logger.info("Starting events-only monitor check (block 11)...")
         logger.info("="*50)
 
-        # ── 區塊 ⑪:ICT/AI 活動資訊(美/中/台,未來三個月) ─────
+        # ── [2026-06-25] ICT/AI 活動:ICT/AI 活動資訊(美/中/台,未來三個月) ─────
         ict_ai_events = []
         try:
             logger.info("Fetching ICT/AI events (US/China/Taiwan, next 3 months)...")
@@ -4685,7 +4685,7 @@ class NewsMonitor:
             logger.info("="*50 + "\n")
             return
 
-        # 發送活動通知(僅區塊 ⑪)
+        # 發送活動通知(僅[2026-06-25] ICT/AI 活動)
         logger.info("Sending events notification (block 11 only)...")
         events_message = self._format_ict_ai_events_section(ict_ai_events)
         events_discord_webhook = self.config.get('discord', {}).get('events_webhook_url')
@@ -4700,10 +4700,10 @@ class NewsMonitor:
         logger.info("Starting full monitor check (news + events)...")
         logger.info("="*50)
 
-        # 執行新聞區塊 ①~⑫
+        # 執行新聞推播各區塊
         self.run_news_only()
 
-        # 執行活動區塊 ⑪
+        # 執行 ICT/AI 活動推播
         self.run_events_only()
 
     def run_daily(self, target_hour: int = 6):

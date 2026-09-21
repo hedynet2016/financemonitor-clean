@@ -275,6 +275,7 @@ BASE_LAYOUT = r"""<!DOCTYPE html>
   small { color: var(--muted); }
   td, th, label, .form-label, .card-body, .card-header, .navbar-brand, .nav-link, p, span, div { color: var(--text); }
   .block-num { font-size: 1.5rem; font-weight: 700; color: var(--accent); }
+  .block-date { font-size: 0.85rem; font-weight: 700; color: var(--accent); white-space: nowrap; }
   .source-tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; background: rgba(59,130,246,0.15); color: var(--accent); margin: 1px; }
   .filter-tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; background: rgba(245,158,11,0.15); color: #f59e0b; margin: 1px; }
 </style>
@@ -633,8 +634,8 @@ def settings():
         </thead>
         <tbody>
           <tr><td><b>每半小時</b></td><td>股市監控（美股交易時段，跌幅 &gt;3% 個股 + ETF）</td><td><span class="badge bg-secondary">監控</span></td></tr>
-          <tr><td><b>{{'%02d:00' % dc.news_hour}}</b></td><td>新聞 + 經濟指標 + AI 動能觀察 + 財經行事曆 + ELON &amp; JENSEN Interview 推播（區塊 ①~⑬）</td><td><span class="badge bg-secondary">監控</span></td></tr>
-          <tr><td><b>{{'%02d:00' % dc.events_hour}}</b></td><td>活動推播（區塊 ⑪，ICT/AI 活動）</td><td><span class="badge bg-secondary">監控</span></td></tr>
+          <tr><td><b>{{'%02d:00' % dc.news_hour}}</b></td><td>新聞 + 經濟指標 + AI 動能觀察 + 財經行事曆 + ELON &amp; JENSEN Interview 推播</td><td><span class="badge bg-secondary">監控</span></td></tr>
+          <tr><td><b>{{'%02d:00' % dc.events_hour}}</b></td><td>活動推播（ICT/AI 活動，2026-06-25 啟用）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>16:00</b></td><td>商品追蹤（雅虎拍賣 9 關鍵字：固定 3 賣場 + 雙北地區同類 3C 店家）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>09:00</b></td><td>自動備份 logs → GitHub</td><td><span class="badge bg-info">排程器</span></td></tr>
           <tr><td><b>18:00</b></td><td>生成每日報告（Web UI /report 頁面）</td><td><span class="badge bg-info">排程器</span></td></tr>
@@ -864,8 +865,8 @@ def tasks_view():
   <div class="card-header"><i class="bi bi-clock me-2"></i>排程</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">每日完整推播</td><td><b>{news_hour:02d}:00 台北時間</b> — 區塊①⑧⑨⑩⑫⑬（新聞/13F/IPO/財報/經濟指標新聞/AI動能/財經行事曆/ELON &amp; JENSEN Interview）</td></tr>
-      <tr><td class="text-muted">每日活動推播</td><td><b>{events_hour:02d}:00 台北時間</b> — 區塊⑪（ICT/AI 活動，未來90天）</td></tr>
+      <tr><td class="text-muted" style="width:200px">每日完整推播</td><td><b>{news_hour:02d}:00 台北時間</b> — 熱門財經/VIP交易/13F/IPO/財報/AI動能/經濟指標/財經行事曆/ELON &amp; JENSEN Interview（卡片左側為各區塊啟用日期）</td></tr>
+      <tr><td class="text-muted">每日活動推播</td><td><b>{events_hour:02d}:00 台北時間</b> — ICT/AI 活動（2026-06-25 啟用，未來90天）</td></tr>
       <tr><td class="text-muted">每日商品追蹤</td><td><b>16:00 台北時間</b> — 雅虎拍賣商品監控（9 關鍵字，價格 $2,000~$15,000，排除NG，刊登 7 天內，上限 30 筆）<br>　① 固定賣場 3 家：樺仔二手電腦 / 點子3C 板橋店 / US3C<br>　② 雙北地區同類店家：台北市・新北市「店鋪型 3C 賣家」（與點子3C同類），條件與固定賣場完全相同，自動納入新店家</td></tr>
       <tr><td class="text-muted">每半小時股市監控</td><td>美股交易時段自動執行（跌幅>3%個股+ETF）</td></tr>
       <tr><td class="text-muted">每日自動備份</td><td><b>09:00 台北時間</b> — 推送 logs 到 GitHub（render_scheduler.py）</td></tr>
@@ -878,7 +879,7 @@ def tasks_view():
 
 <div class="block-card">
   <div class="d-flex align-items-start gap-3">
-    <span class="block-num">①</span>
+    <span class="block-date">📅 2026-06-25</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">熱門財經新聞（七巨頭 + OpenAI/SpaceX/Anthropic）</div>
       <div class="mb-2"><span class="source-tag">10 來源</span> <span class="filter-tag">僅限七巨頭 + OpenAI/SpaceX/Anthropic</span> <span class="filter-tag">1 週內</span> <span class="filter-tag">每來源最多 5 篇</span></div>
@@ -889,7 +890,7 @@ def tasks_view():
 
 <div class="block-card">
   <div class="d-flex align-items-start gap-3">
-    <span class="block-num">③</span>
+    <span class="block-date">📅 2026-06-25</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">VIP 交易揭露</div>
       <div class="mb-2"><span class="source-tag">同上 10 來源</span> <span class="filter-tag">關鍵字過濾</span> <span class="filter-tag">1 週內</span></div>
@@ -900,7 +901,7 @@ def tasks_view():
 
 <div class="block-card">
   <div class="d-flex align-items-start gap-3">
-    <span class="block-num">④-A</span>
+    <span class="block-date">📅 2026-06-25</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">13F 官方（SEC EDGAR API）</div>
       <div class="mb-2"><span class="source-tag">SEC API</span> <span class="filter-tag">每季申報</span></div>
@@ -911,7 +912,7 @@ def tasks_view():
 
 <div class="block-card">
   <div class="d-flex align-items-start gap-3">
-    <span class="block-num">④-B</span>
+    <span class="block-date">📅 2026-06-25</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">13F 媒體報導</div>
       <div class="mb-2"><span class="source-tag">CNBC/WSJ/Bloomberg/MarketWatch/FT/SeekingAlpha/MacroMicro</span> <span class="filter-tag">關鍵詞過濾</span> <span class="filter-tag">1 週內</span></div>
@@ -922,7 +923,7 @@ def tasks_view():
 
 <div class="block-card">
   <div class="d-flex align-items-start gap-3">
-    <span class="block-num">⑧</span>
+    <span class="block-date">📅 2026-06-25</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">IPO 重要訊息</div>
       <div class="mb-2"><span class="source-tag">10 來源</span> <span class="filter-tag">關鍵字過濾</span> <span class="filter-tag">7 天去重</span> <span class="filter-tag">12h 快取</span></div>
@@ -933,7 +934,7 @@ def tasks_view():
 
 <div class="block-card">
   <div class="d-flex align-items-start gap-3">
-    <span class="block-num">⑨</span>
+    <span class="block-date">📅 2026-06-25</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">美股財報公布（科技七巨頭）</div>
       <div class="mb-2"><span class="source-tag">10 來源</span> <span class="filter-tag">Mag 7 公司名</span> <span class="filter-tag">1 週內</span> <span class="filter-tag">12h 快取</span></div>
@@ -944,7 +945,7 @@ def tasks_view():
 
 <div class="block-card">
   <div class="d-flex align-items-start gap-3">
-    <span class="block-num">🤖</span>
+    <span class="block-date">📅 2026-08-17</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">AI 動能觀察（資本支出 &amp; Token 需求）</div>
       <div class="mb-2"><span class="source-tag">10 來源</span> <span class="filter-tag">AI capex / token demand 關鍵字</span> <span class="filter-tag">1 週內</span> <span class="filter-tag">7 日去重</span></div>
@@ -955,7 +956,7 @@ def tasks_view():
 
 <div class="block-card">
   <div class="d-flex align-items-start gap-3">
-    <span class="block-num">⑩</span>
+    <span class="block-date">📅 2026-06-27</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">經濟指標相關新聞</div>
       <div class="mb-2"><span class="source-tag">10 媒體</span> <span class="filter-tag">CPI / PPI / 失業率 / 非農就業 / Fed 利率</span> <span class="filter-tag">一週內</span></div>
@@ -966,7 +967,7 @@ def tasks_view():
 
 <div class="block-card">
   <div class="d-flex align-items-start gap-3">
-    <span class="block-num">⑪</span>
+    <span class="block-date">📅 2026-06-25</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">ICT/AI 活動資訊（美/中/台，未來 90 天）</div>
       <div class="mb-2"><span class="source-tag">14 來源</span> <span class="filter-tag">未來 90 天</span> <span class="filter-tag">14 天連續推送後去重</span></div>
@@ -977,7 +978,7 @@ def tasks_view():
 
 <div class="block-card">
   <div class="d-flex align-items-start gap-3">
-    <span class="block-num">⑫</span>
+    <span class="block-date">📅 2026-09-01</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">財經行事曆（未來 30 天，由近到遠）</div>
       <div class="mb-2"><span class="source-tag">Fed / BLS 官方日程</span> <span class="filter-tag">財報為預估日</span> <span class="filter-tag">未來 30 天</span></div>
@@ -989,7 +990,7 @@ def tasks_view():
 
 <div class="block-card">
   <div class="d-flex align-items-start gap-3">
-    <span class="block-num">⑬</span>
+    <span class="block-date">📅 2026-09-21</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">ELON &amp; JENSEN Interview（YouTube 熱門訪談）</div>
       <div class="mb-2"><span class="source-tag">yt-dlp（免 API key）</span> <span class="filter-tag">片長 &gt;20 分鐘</span> <span class="filter-tag">有中文字幕</span> <span class="filter-tag">24h 觀看成長前 3 名</span></div>
