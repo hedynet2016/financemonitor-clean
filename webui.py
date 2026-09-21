@@ -508,7 +508,7 @@ def dashboard():
   <div class="card-header"><i class="bi bi-info-circle me-2"></i>系統資訊</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控 + 08:00 新聞（含 AI 動能觀察 + 財經行事曆）+ 14:00 活動 + 16:00 商品追蹤（雅虎拍賣 固定賣場＋雙北同類店家）+ 09:00 自動備份 + 18:00 每日報告</td></tr>
+      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控 + 08:00 新聞（含 AI 動能觀察 + 財經行事曆 + ELON &amp; JENSEN Interview）+ 14:00 活動 + 16:00 商品追蹤（雅虎拍賣 固定賣場＋雙北同類店家）+ 09:00 自動備份 + 18:00 每日報告</td></tr>
       <tr><td class="text-muted">推送管道</td><td>Telegram Bot + Discord Webhook</td></tr>
       <tr><td class="text-muted">Python</td><td>{{py_version}}</td></tr>
       <tr><td class="text-muted">工作目錄</td><td>{{work_dir}}</td></tr>
@@ -633,7 +633,7 @@ def settings():
         </thead>
         <tbody>
           <tr><td><b>每半小時</b></td><td>股市監控（美股交易時段，跌幅 &gt;3% 個股 + ETF）</td><td><span class="badge bg-secondary">監控</span></td></tr>
-          <tr><td><b>{{'%02d:00' % dc.news_hour}}</b></td><td>新聞 + 經濟指標 + AI 動能觀察 + 財經行事曆推播（區塊 ①~⑫）</td><td><span class="badge bg-secondary">監控</span></td></tr>
+          <tr><td><b>{{'%02d:00' % dc.news_hour}}</b></td><td>新聞 + 經濟指標 + AI 動能觀察 + 財經行事曆 + ELON &amp; JENSEN Interview 推播（區塊 ①~⑬）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>{{'%02d:00' % dc.events_hour}}</b></td><td>活動推播（區塊 ⑪，ICT/AI 活動）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>16:00</b></td><td>商品追蹤（雅虎拍賣 9 關鍵字：固定 3 賣場 + 雙北地區同類 3C 店家）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>09:00</b></td><td>自動備份 logs → GitHub</td><td><span class="badge bg-info">排程器</span></td></tr>
@@ -864,7 +864,7 @@ def tasks_view():
   <div class="card-header"><i class="bi bi-clock me-2"></i>排程</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">每日完整推播</td><td><b>{news_hour:02d}:00 台北時間</b> — 區塊①⑧⑨⑩⑫（新聞/13F/IPO/財報/經濟指標新聞/AI動能/財經行事曆）</td></tr>
+      <tr><td class="text-muted" style="width:200px">每日完整推播</td><td><b>{news_hour:02d}:00 台北時間</b> — 區塊①⑧⑨⑩⑫⑬（新聞/13F/IPO/財報/經濟指標新聞/AI動能/財經行事曆/ELON &amp; JENSEN Interview）</td></tr>
       <tr><td class="text-muted">每日活動推播</td><td><b>{events_hour:02d}:00 台北時間</b> — 區塊⑪（ICT/AI 活動，未來90天）</td></tr>
       <tr><td class="text-muted">每日商品追蹤</td><td><b>16:00 台北時間</b> — 雅虎拍賣商品監控（9 關鍵字，價格 $2,000~$15,000，排除NG，刊登 7 天內，上限 30 筆）<br>　① 固定賣場 3 家：樺仔二手電腦 / 點子3C 板橋店 / US3C<br>　② 雙北地區同類店家：台北市・新北市「店鋪型 3C 賣家」（與點子3C同類），條件與固定賣場完全相同，自動納入新店家</td></tr>
       <tr><td class="text-muted">每半小時股市監控</td><td>美股交易時段自動執行（跌幅>3%個股+ETF）</td></tr>
@@ -983,6 +983,18 @@ def tasks_view():
       <div class="mb-2"><span class="source-tag">Fed / BLS 官方日程</span> <span class="filter-tag">財報為預估日</span> <span class="filter-tag">未來 30 天</span></div>
       <div><small class="text-muted">追蹤：</small> FOMC 利率決議 &bull; CPI 物價指數 &bull; 非農就業報告</div>
       <div><small class="text-muted">財報：</small> TSMC &bull; TESLA &bull; NVIDIA &bull; MSFT &bull; AMZN &bull; GOOGL &bull; AVGO &bull; SPACEX(SPCX)（預估日，以公司公告為準）</div>
+    </div>
+  </div>
+</div>
+
+<div class="block-card">
+  <div class="d-flex align-items-start gap-3">
+    <span class="block-num">⑬</span>
+    <div class="flex-grow-1">
+      <div class="fw-bold mb-1">ELON &amp; JENSEN Interview（YouTube 熱門訪談）</div>
+      <div class="mb-2"><span class="source-tag">yt-dlp（免 API key）</span> <span class="filter-tag">片長 &gt;20 分鐘</span> <span class="filter-tag">有中文字幕</span> <span class="filter-tag">24h 觀看成長前 3 名</span></div>
+      <div><small class="text-muted">關鍵字：</small> &quot;Elon Musk interview&quot; &bull; &quot;Jensen Huang interview&quot;</div>
+      <div><small class="text-muted">排名：</small> 以每日快照計算觀看數成長率（首次執行以觀看數/上架時數替代）</div>
     </div>
   </div>
 </div>
@@ -1645,6 +1657,38 @@ def api_translate_test():
             }
     except Exception as e:
         out["error"] = str(e)[:300]
+    return jsonify(out)
+
+
+@app.route("/api/youtube-test")
+def api_youtube_test():
+    """YouTube 訪談區塊診斷：確認伺服器環境 yt-dlp 對 YouTube 的連線能力。
+
+    用法:
+      /api/youtube-test          → quick 模式(僅平面搜尋,約 10 秒)
+      /api/youtube-test?full=1   → 完整模式(抓字幕,每關鍵字限 4 筆候選)
+    """
+    from youtube_monitor import fetch_top_interviews, SEARCH_QUERIES
+    full = request.args.get("full") == "1"
+    out = {"mode": "full(每關鍵字 4 筆)" if full else "quick(僅平面搜尋)",
+           "queries": SEARCH_QUERIES, "results": [], "error": None}
+    try:
+        vids = fetch_top_interviews(
+            quick=not full, per_query_limit=4, top_n=3)
+        for v in vids:
+            out["results"].append({
+                "title": v.get("title"),
+                "url": v.get("url"),
+                "channel": v.get("channel"),
+                "duration_min": v.get("duration_min"),
+                "view_count": v.get("view_count"),
+                "subtitle_type": v.get("subtitle_type"),
+                "growth": v.get("growth"),
+            })
+        if not vids:
+            out["error"] = "搜尋成功但無符合條件影片"
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"
     return jsonify(out)
 
 

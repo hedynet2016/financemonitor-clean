@@ -44,6 +44,9 @@ pytz>=2023.3
 # Translation (news/economic monitor - translate EN to zh-TW)
 deep-translator>=1.11.0
 
+# YouTube interview tracking (block 13 - Elon & Jensen, no API key needed)
+yt-dlp>=2025.1.1
+
 # Platform-specific cache directories (yfinance cache patch)
 appdirs>=1.4.4
 
