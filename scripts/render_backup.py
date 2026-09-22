@@ -26,10 +26,8 @@ LOG_FILES = [
     BASE_DIR / "webui_stdout.log",
 ]
 
-# 狀態檔（daily_report 產生的報告副本等）
-EXTRA_FILES = [
-    BASE_DIR / "scripts" / f"report_{datetime.date.today().strftime('%Y-%m-%d')}.html",
-]
+# 狀態檔（額外納入備份的檔案；每日報告功能已於 2026-09-23 移除）
+EXTRA_FILES = []
 
 # ── GitHub 設定 ──
 TOKEN = os.environ.get("GITHUB_PAT", "")

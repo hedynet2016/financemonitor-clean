@@ -298,7 +298,6 @@ BASE_LAYOUT = r"""<!DOCTYPE html>
     <div class="col-md-2 mb-3">
       <ul class="nav nav-pills flex-column gap-1">
         <li class="nav-item"><a class="nav-link {{'active' if page=='dashboard'}}" href="/"><i class="bi bi-speedometer2 me-2"></i>儀表板</a></li>
-        <li class="nav-item"><a class="nav-link {{'active' if page=='report'}}" href="/report"><i class="bi bi-file-earmark-bar-graph me-2"></i>每日報告</a></li>
         <li class="nav-item"><a class="nav-link {{'active' if page=='settings'}}" href="/settings"><i class="bi bi-gear me-2"></i>設定</a></li>
         <li class="nav-item"><a class="nav-link {{'active' if page=='tasks'}}" href="/tasks"><i class="bi bi-list-check me-2"></i>任務</a></li>
         <li class="nav-item"><a class="nav-link {{'active' if page=='history'}}" href="/history"><i class="bi bi-broadcast me-2"></i>推播歷史</a></li>
@@ -509,7 +508,7 @@ def dashboard():
   <div class="card-header"><i class="bi bi-info-circle me-2"></i>系統資訊</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控 + 08:00 新聞（含 AI 動能觀察 + 財經行事曆 + ELON &amp; JENSEN Interview）+ 14:00 活動 + 16:00 商品追蹤（雅虎拍賣 固定賣場＋雙北同類店家）+ 09:00 自動備份 + 18:00 每日報告</td></tr>
+      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控 + 08:00 新聞（含 AI 動能觀察 + 財經行事曆 + ELON &amp; JENSEN Interview）+ 14:00 活動 + 16:00 商品追蹤（雅虎拍賣 固定賣場＋雙北同類店家）+ 09:00 自動備份</td></tr>
       <tr><td class="text-muted">推送管道</td><td>Telegram Bot + Discord Webhook</td></tr>
       <tr><td class="text-muted">Python</td><td>{{py_version}}</td></tr>
       <tr><td class="text-muted">工作目錄</td><td>{{work_dir}}</td></tr>
@@ -638,7 +637,6 @@ def settings():
           <tr><td><b>{{'%02d:00' % dc.events_hour}}</b></td><td>活動推播（ICT/AI 活動，2026-06-25 啟用）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>16:00</b></td><td>商品追蹤（雅虎拍賣 9 關鍵字：固定 3 賣場 + 雙北地區同類 3C 店家）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>09:00</b></td><td>自動備份 logs → GitHub</td><td><span class="badge bg-info">排程器</span></td></tr>
-          <tr><td><b>18:00</b></td><td>生成每日報告（Web UI /report 頁面）</td><td><span class="badge bg-info">排程器</span></td></tr>
         </tbody>
       </table>
       <div class="row g-3">
@@ -661,7 +659,7 @@ def settings():
           <small class="text-muted">目前：{{'%02d:00' % dc.events_hour}} 台北時間</small>
         </div>
         <div class="col-sm-4 d-flex align-items-end">
-          <small class="text-muted">16:00 商品追蹤 / 09:00 備份 / 18:00 報告 為固定排程</small>
+          <small class="text-muted">16:00 商品追蹤 / 09:00 備份 為固定排程</small>
         </div>
       </div>
     </div>
@@ -870,7 +868,6 @@ def tasks_view():
       <tr><td class="text-muted">每日商品追蹤</td><td><b>16:00 台北時間</b> — 雅虎拍賣商品監控（9 關鍵字，價格 $2,000~$15,000，排除NG，刊登 7 天內，上限 30 筆）<br>　① 固定賣場 3 家：樺仔二手電腦 / 點子3C 板橋店 / US3C<br>　② 雙北地區同類店家：台北市・新北市「店鋪型 3C 賣家」（與點子3C同類），條件與固定賣場完全相同，自動納入新店家</td></tr>
       <tr><td class="text-muted">每半小時股市監控</td><td>美股交易時段自動執行（跌幅>3%個股+ETF）</td></tr>
       <tr><td class="text-muted">每日自動備份</td><td><b>09:00 台北時間</b> — 推送 logs 到 GitHub（render_scheduler.py）</td></tr>
-      <tr><td class="text-muted">每日報告生成</td><td><b>18:00 台北時間</b> — 生成每日報告 HTML（render_scheduler.py）</td></tr>
     </table>
   </div>
 </div>
@@ -1053,174 +1050,7 @@ def tasks_view():
     return page("tasks", body)
 
 
-# ── Report route ────────────────────────────────────────────────────
-@app.route("/report")
-def report_view():
-    """Display the latest daily report."""
-    import glob
-    
-    # Find the latest report file
-    report_pattern = str(SCRIPT_DIR / "scripts" / "report_*.html")
-    report_files = glob.glob(report_pattern)
-    
-    if not report_files:
-        body = """\
-<h4 class="mb-3"><i class="bi bi-file-earmark-bar-graph me-2"></i>每日報告</h4>
-<div class="alert alert-warning">
-  <i class="bi bi-exclamation-triangle me-2"></i>
-  尚未生成任何報告。請先執行每日報告生成任務。
-</div>
-<button class="btn btn-primary" onclick="generateReport()">
-  <i class="bi bi-play-fill me-1"></i>立即生成報告
-</button>
-<script>
-function generateReport() {
-  const btn = event.target;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>生成中...';
-  fetch('/api/generate-report', {method:'POST'})
-    .then(r=>r.json()).then(d=>{
-      if(d.ok){ 
-        showToast('報告生成中,請稍候...', 'success');
-        setTimeout(()=>location.reload(), 5000);
-      } else {
-        showToast(d.error||'生成失敗', 'error');
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>立即生成報告';
-      }
-    }).catch(e=>{
-      showToast('Error: '+e, 'error');
-      btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>立即生成報告';
-    });
-}
-</script>
-"""
-        return page("report", body)
-    
-    # Sort by filename (contains ISO date YYYY-MM-DD, so alphabetical = chronological)
-    # Note: Can't use os.path.getmtime because Docker build sets all files to same mtime
-    report_files.sort(reverse=True)
-    latest_report = report_files[0]
-
-    # Extract the report date from filename
-    report_date = os.path.basename(latest_report).replace("report_", "").replace(".html", "")
-
-    # Check if the latest report is today's; if not, auto-generate in background
-    from datetime import date as _date
-    today_str = _date.today().strftime("%Y-%m-%d")
-    is_stale = report_date != today_str
-    if is_stale:
-        # Trigger background generation (non-blocking)
-        try:
-            import threading as _th
-            def _gen():
-                try:
-                    py = shutil.which("python3") or shutil.which("python") or sys.executable
-                    subprocess.run(
-                        [py, str(SCRIPT_DIR / "scripts" / "daily_report.py")],
-                        capture_output=True, text=True,
-                        cwd=str(SCRIPT_DIR), timeout=300
-                    )
-                except Exception:
-                    pass
-            _th.Thread(target=_gen, daemon=True).start()
-        except Exception:
-            pass
-    
-    # Read the report HTML
-    try:
-        with open(latest_report, "r", encoding="utf-8") as f:
-            report_html = f.read()
-        
-        # Process report_html to escape backticks for JavaScript
-        report_html_js = report_html.replace('`', '\\`').replace('${', '\\${')
-        
-        # Build date badge (show warning if stale)
-        if is_stale:
-            date_badge = f'<span class="badge bg-warning me-2">報告日期: {report_date}（非今日，正在背景更新）</span>'
-            auto_reload = '<script>setTimeout(()=>location.reload(),15000);</script>'
-        else:
-            date_badge = f'<span class="badge bg-info me-2">報告日期: {report_date}</span>'
-            auto_reload = ''
-        
-        # Display the report in an iframe
-        body = f"""\
-<h4 class="mb-3 d-flex justify-content-between align-items-center">
-  <span><i class="bi bi-file-earmark-bar-graph me-2"></i>每日報告</span>
-  <div>
-    {date_badge}
-    <button class="btn btn-sm btn-outline-light me-2" onclick="location.reload()">
-      <i class="bi bi-arrow-clockwise me-1"></i>重新整理
-    </button>
-    <button class="btn btn-sm btn-primary" onclick="generateReport()">
-      <i class="bi bi-play-fill me-1"></i>重新生成
-    </button>
-  </div>
-</h4>
-<div class="card">
-  <div class="card-body p-3">
-    <iframe id="reportFrame" style="width:100%; height:800px; border:1px solid var(--border); border-radius:8px;"></iframe>
-  </div>
-</div>
-<script>
-document.getElementById('reportFrame').srcdoc = `{report_html_js}`;
-
-function generateReport() {{
-  const btn = event.target;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>生成中...';
-  fetch('/api/generate-report', {{method:'POST'}})
-    .then(r=>r.json()).then(d=>{{
-      if(d.ok){{ 
-        showToast('報告生成中,請稍候...', 'success');
-        setTimeout(()=>location.reload(), 5000);
-      }} else {{
-        showToast(d.error||'生成失敗', 'error');
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>重新生成';
-      }}
-    }}).catch(e=>{{
-      showToast('Error: '+e, 'error');
-      btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>重新生成';
-    }});
-}}
-</script>
-{auto_reload}
-"""
-        return page("report", body)
-    except Exception as e:
-        body = f"""\
-<h4 class="mb-3"><i class="bi bi-file-earmark-bar-graph me-2"></i>每日報告</h4>
-<div class="alert alert-danger">
-  <i class="bi bi-exclamation-triangle me-2"></i>
-  讀取報告失敗: {str(e)}
-</div>
-"""
-        return page("report", body)
-
-
 # ── API ────────────────────────────────────────────────────────────
-@app.route("/api/generate-report", methods=["POST"])
-def api_generate_report():
-    """Trigger daily report generation."""
-    def run_report():
-        try:
-            python = shutil.which("python3") or shutil.which("python") or sys.executable
-            cmd = [python, str(SCRIPT_DIR / "scripts" / "daily_report.py")]
-            result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(SCRIPT_DIR), timeout=300)
-            return result.returncode == 0
-        except Exception as e:
-            print(f"Report generation failed: {e}")
-            return False
-    
-    t = threading.Thread(target=run_report, daemon=True)
-    t.start()
-    return jsonify({"ok": True, "message": "Report generation started"})
-
-
-
 @app.route("/api/run", methods=["POST"])
 def api_run():
     data = request.get_json() or {}
@@ -1796,7 +1626,7 @@ def start_scheduler():
 
     Launches two background processes:
       1. telegram_bot.py --no-bot  (monitor scheduling)
-      2. scripts/render_scheduler.py (daily report + backup)
+      2. scripts/render_scheduler.py (backup)
     """
     global SCHEDULER_PROCS
     python = shutil.which("python3") or shutil.which("python") or sys.executable
@@ -1815,7 +1645,7 @@ def start_scheduler():
     except Exception as e:
         logger.error(f"Failed to start monitor scheduler: {e}")
 
-    # 2. Daily report + backup scheduler (render_scheduler.py)
+    # 2. Backup scheduler (render_scheduler.py)
     render_sched = SCRIPT_DIR / "scripts" / "render_scheduler.py"
     if render_sched.exists():
         try:

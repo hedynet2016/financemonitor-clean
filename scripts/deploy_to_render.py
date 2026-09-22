@@ -71,7 +71,6 @@ DEPLOY_FILES = [
     "scripts/render_start.sh",
     "scripts/render_scheduler.py",
     "scripts/render_backup.py",
-    "scripts/daily_report.py",
     "scripts/deploy_to_render.py",
     # 文件
     "README.md",

@@ -4,7 +4,6 @@
 
 ## 功能
 
-- **每日報告**: 生成並發送每日工作報告到指定郵箱
 - **GitHub 備份**: 自動備份工作目錄到 GitHub
 - **經濟監控**: 監控經濟指標變化
 - **新聞監控**: 監控相關新聞
@@ -39,7 +38,6 @@ python all_tasks.py --once
 
 ### 執行單個任務
 ```bash
-python all_tasks.py --task daily_report
 python all_tasks.py --task github_backup
 python all_tasks.py --task economic_monitor
 ```

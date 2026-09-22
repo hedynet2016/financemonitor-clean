@@ -24,7 +24,6 @@ $Files = @(
     "render.yaml",
     "README.md",
     "scripts\create_test_logs.py",
-    "scripts\daily_report.py",
     "scripts\deploy_to_render.py",
     "scripts\economic_news_push.py",
     "scripts\generate_config.py",

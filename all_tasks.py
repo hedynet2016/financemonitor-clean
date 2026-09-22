@@ -4,7 +4,7 @@ all_tasks.py - WorkBuddy 自動化任務整合版
 所有敏感信息都從環境變數讀取
 使用方法：
   python all_tasks.py --once    # 執行一次所有任務
-  python all_tasks.py --task daily_report  # 執行單個任務
+  python all_tasks.py --task github_backup # 執行單個任務
 """
 import os
 import sys
@@ -146,24 +146,6 @@ class TaskExecutor:
             return False
 
 # ==================== 任務定義 ====================
-def task_daily_report() -> bool:
-    """生成並發送每日報告"""
-    logger.info("執行每日報告任務...")
-    
-    try:
-        # 導入並執行 daily_report
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        from scripts.daily_report import main as daily_report_main
-        daily_report_main()
-        return True
-    except ImportError as e:
-        logger.warning(f"無法導入 daily_report: {e}")
-        logger.info("模擬執行每日報告...")
-        # 模擬執行
-        return True
-    except Exception as e:
-        raise e
-
 def task_github_backup() -> bool:
     """備份到 GitHub"""
     logger.info("執行 GitHub 備份任務...")
@@ -286,7 +268,7 @@ def main():
         epilog="""
 示例:
   python all_tasks.py --once              # 執行一次所有任務
-  python all_tasks.py --task daily_report # 執行單個任務
+  python all_tasks.py --task github_backup # 執行單個任務
   python all_tasks.py --list              # 列出所有任務
   python all_tasks.py --check-config      # 檢查配置
         """
@@ -295,7 +277,6 @@ def main():
     parser.add_argument("--once", action="store_true", help="執行一次所有任務")
     parser.add_argument("--monitor-only", action="store_true", help="只執行監控任務（不啟動 Web UI）")
     parser.add_argument("--task", choices=[
-        "daily_report",
         "github_backup",
         "economic_monitor",
         "news_monitor",
@@ -312,8 +293,6 @@ def main():
         Config.print_config()
         missing = Config.validate([
             "TELEGRAM_BOT_TOKEN",
-            "GMAIL_SENDER",
-            "GMAIL_APP_PASSWORD",
             "GITHUB_PAT"
         ])
         if missing:
@@ -328,7 +307,6 @@ def main():
         print("\n可用任務:")
         print("=" * 60)
         tasks = [
-            ("daily_report", "生成並發送每日報告"),
             ("github_backup", "備份到 GitHub"),
             ("economic_monitor", "經濟指標監控"),
             ("news_monitor", "新聞監控"),
@@ -356,11 +334,6 @@ def main():
     
     # 創建任務執行器
     executors = {
-        "daily_report": TaskExecutor(
-            "每日報告",
-            task_daily_report,
-            required_env_vars=["GMAIL_SENDER", "GMAIL_APP_PASSWORD", "REPORT_RECIPIENT"]
-        ),
         "github_backup": TaskExecutor(
             "GitHub 備份",
             task_github_backup,
