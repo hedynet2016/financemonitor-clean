@@ -53,6 +53,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ── 台指期監控設定（2026-09-23 新增）─────────────────────────────────
+# 期交所 MIS API（免 key）：POST getQuoteList，取成交量最大的近月契約
+TAIFEX_QUOTE_URL = "https://mis.taifex.com.tw/futures/api/getQuoteList"
+FUT_CIDS = ["TXF", "MXF", "TMF"]            # 大台／小台／微台
+FUT_CONTRACT_SIZE = {"TXF": 200, "MXF": 50, "TMF": 10}  # 每點新台幣（期交所規格）
+FUT_PNL_QTY = 1                              # 小台與微台各一口
+# 09:00 下單（進場價 = 當日 09:00 後第一次抓到的報價）
+FUT_ENTRY_MINUTES = 9 * 60
+# 損益試算顯示時段：09:30 ~ 11:30（以半小時 block 計：block = hour*2 + minute//30）
+# block 19=09:30, 20=10:00, 21=10:30, 22=11:00, 23=11:30
+FUT_PNL_BLOCKS = range(19, 24)
+FUT_STATE_FILE = "taiex_state.json"
+
 
 class StockMonitor:
     """股票監控類"""
@@ -905,8 +918,151 @@ class StockMonitor:
         
         return message
     
-    def generate_tw_drop_message(self, drop_data: Dict[str, List[Dict]]) -> str:
-        """生成台股個股和 ETF 跌幅排行 Telegram 訊息"""
+    # ── 台指期報價與損益試算 ──────────────────────────────────────
+    def get_taiex_quotes(self) -> Dict[str, Dict]:
+        """從期交所 MIS API 取得台指期報價（各商品取成交量最大的近月契約）
+
+        回傳 {CID: {symbol,name,last,diff,diff_rate,ref,volume,date,time}}；
+        失敗的商品直接略過（容錯）。
+        """
+        result: Dict[str, Dict] = {}
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Accept-Language": "zh-TW,zh;q=0.9",
+        })
+        for cid in FUT_CIDS:
+            payload = {
+                "MarketType": "0", "SymbolType": "F", "KindID": "1",
+                "CID": cid, "ExpireMonth": "", "RowSize": "全部",
+                "PageNo": "", "SortColumn": "", "AscDesc": "A",
+            }
+            try:
+                r = session.post(TAIFEX_QUOTE_URL, json=payload, timeout=15)
+                if r.status_code != 200:
+                    logger.warning("[TAIFEX] %s HTTP %d", cid, r.status_code)
+                    continue
+                ql = (r.json().get("RtData") or {}).get("QuoteList") or []
+                fut = [x for x in ql if str(x.get("SymbolID", "")).endswith("-F")]
+                if not fut:
+                    logger.warning("[TAIFEX] %s 查無期貨契約", cid)
+                    continue
+                top = max(fut, key=lambda x: int(x.get("CTotalVolume") or 0))
+                last = float(top.get("CLastPrice") or 0)
+                if last <= 0:
+                    logger.warning("[TAIFEX] %s 無有效報價", cid)
+                    continue
+                result[cid] = {
+                    "symbol": top.get("SymbolID", ""),
+                    "name": top.get("DispCName", ""),
+                    "last": last,
+                    "diff": float(top.get("CDiff") or 0),          # 漲跌點數(對昨結算)
+                    "diff_rate": float(top.get("CDiffRate") or 0), # 漲跌%
+                    "ref": float(top.get("CRefPrice") or 0),       # 昨結算價
+                    "volume": int(top.get("CTotalVolume") or 0),
+                    "date": top.get("CDate", ""),
+                    "time": top.get("CTime", ""),
+                }
+                logger.info("[TAIFEX] %s %s last=%s diff=%s",
+                            cid, top.get("DispCName"), last, top.get("CDiff"))
+            except Exception as e:
+                logger.warning("[TAIFEX] %s 查詢失敗：%s", cid, e)
+            time.sleep(0.3)
+        return result
+
+    def _load_fut_state(self) -> Dict:
+        try:
+            with open(FUT_STATE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _save_fut_state(self, state: Dict) -> None:
+        try:
+            with open(FUT_STATE_FILE, "w", encoding="utf-8", newline="") as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning("[TAIFEX] 狀態檔寫入失敗：%s", e)
+
+    def _update_fut_baseline(self, quotes: Dict[str, Dict],
+                             now: datetime) -> Dict:
+        """確保當日 09:00 後有進場基準價（假設 09:00 下單買進）。
+
+        當日第一次抓到報價時記錄各商品進場價；若監控 09:00 才啟動或
+        Render 重啟（狀態檔消失），則以當時報價為進場價並註明實際時間。
+        """
+        state = self._load_fut_state()
+        today_key = now.strftime("%Y-%m-%d")
+        if today_key in state:
+            return state[today_key]
+        if now.hour * 60 + now.minute < FUT_ENTRY_MINUTES:
+            return None  # 尚未到 09:00
+        entry = {}
+        for cid in ("MXF", "TMF"):
+            q = quotes.get(cid)
+            if q and q.get("last"):
+                entry[cid] = q["last"]
+        if not entry:
+            return None
+        rec = {"entry_time": now.strftime("%H:%M"), "entry": entry}
+        state[today_key] = rec
+        self._save_fut_state(state)
+        logger.info("[TAIFEX] 建立當日進場基準（%s）：%s",
+                    rec["entry_time"], entry)
+        return rec
+
+    def _format_fut_section(self, quotes: Dict[str, Dict],
+                            now: datetime) -> str:
+        """組出台指期區塊：漲跌點數（一律顯示）＋ 09:30-11:30 損益試算"""
+        if not quotes:
+            return ""
+        txf = quotes.get("TXF")
+        lines = ["", "=" * 35, "📌 <b>台指期</b>"]
+        if txf:
+            d = txf["diff"]
+            sign = "+" if d >= 0 else ""
+            emoji = "📈" if d >= 0 else "📉"
+            lines.append(
+                f"{emoji} {txf['name']}：<b>{txf['last']:,.0f}</b>"
+                f"（{sign}{d:,.0f} 點 / {sign}{txf['diff_rate']:.2f}%）"
+            )
+        # 損益試算：09:30 ~ 11:30，小台+微台各一口（假設 09:00 買進）
+        block = now.hour * 2 + now.minute // 30
+        if block in FUT_PNL_BLOCKS:
+            state = self._load_fut_state()
+            rec = state.get(now.strftime("%Y-%m-%d"))
+            if rec and rec.get("entry"):
+                lines.append("")
+                lines.append(
+                    f"💰 <b>損益試算</b>（假設 {rec.get('entry_time', '09:00')} 買進，"
+                    f"小台×1 + 微台×1，每點 50/10 元）"
+                )
+                total = 0
+                for cid, label in (("MXF", "小台"), ("TMF", "微台")):
+                    q = quotes.get(cid)
+                    ep = rec["entry"].get(cid)
+                    if not q or not ep:
+                        continue
+                    pts = q["last"] - float(ep)
+                    pnl = pts * FUT_CONTRACT_SIZE[cid] * FUT_PNL_QTY
+                    total += pnl
+                    sign = "+" if pts >= 0 else ""
+                    lines.append(
+                        f"　{label} 1口：{float(ep):,.0f} → {q['last']:,.0f}"
+                        f"（{sign}{pts:,.0f} 點）→ "
+                        f"<b>{'+' if pnl >= 0 else '−'}{abs(pnl):,.0f} 元</b>"
+                    )
+                sign = "+" if total >= 0 else "−"
+                lines.append(f"　🧾 合計損益：<b>{sign}{abs(total):,.0f} 新台幣</b>")
+            else:
+                lines.append("（今日尚無進場基準價）")
+        return "\n".join(lines) + "\n\n"
+
+    def generate_tw_drop_message(self, drop_data: Dict[str, List[Dict]],
+                                 fut_quotes: Dict[str, Dict] = None) -> str:
+        """生成台股個股和 ETF 跌幅排行 Telegram 訊息（含台指期區塊）"""
         taipei_tz = pytz.timezone('Asia/Taipei')
         current_time = datetime.now(taipei_tz)
         
@@ -969,9 +1125,17 @@ class StockMonitor:
             message += f"{'='*35}\n\n"
             message += f"✅ 今日無符合條件的 ETF（交易量前10名中無跌幅超過3%的 ETF）\n\n"
         
+        # 台指期區塊（漲跌點數；09:30-11:30 加損益試算）
+        if fut_quotes:
+            taipei_tz = pytz.timezone('Asia/Taipei')
+            try:
+                message += self._format_fut_section(fut_quotes, datetime.now(taipei_tz))
+            except Exception as e:
+                logger.warning(f"Futures section skipped: {e}")
+
         message += f"{'='*35}\n"
         message += f"🤖 由 WorkBuddy 股票監控系統自動生成\n"
-        message += f"📊 數據來源: {getattr(self, '_tw_data_source', 'Yahoo Finance')}"
+        message += f"📊 數據來源: {getattr(self, '_tw_data_source', 'Yahoo Finance')} / 期交所 MIS"
 
         return message
     def send_telegram_message(self, message: str) -> bool:
@@ -1051,23 +1215,32 @@ class StockMonitor:
             
             # 計算跌幅排行（復用同一個函數）
             drop_data = self.calculate_drop_rankings(tw_stock_data, tw_etf_data)
-            
+
+            # 台指期報價＋09:00 進場基準（獨立容錯）
+            fut_quotes = {}
+            try:
+                taipei_tz = pytz.timezone('Asia/Taipei')
+                fut_quotes = self.get_taiex_quotes()
+                self._update_fut_baseline(fut_quotes, datetime.now(taipei_tz))
+            except Exception as e:
+                logger.warning(f"TAIFEX quotes failed, skip futures section: {e}")
+
             # 顯示結果
             logger.info("\n" + "="*50)
             logger.info("TW Stocks Drop Rankings (top20 by volume, drop >3%):")
             logger.info("="*50)
             for i, stock in enumerate(drop_data['stocks'], 1):
                 logger.info(f"{i}. {stock['ticker']:>12} - Volume: {self.format_volume(stock['volume']):>10} - Drop: {stock['change_percent']:.2f}%")
-            
+
             logger.info("\n" + "="*50)
             logger.info("TW ETFs Drop Rankings (top10 by volume, drop >3%):")
             logger.info("="*50)
             for i, etf in enumerate(drop_data['etfs'], 1):
                 logger.info(f"{i}. {etf['ticker']:>12} - Volume: {self.format_volume(etf['volume']):>10} - Drop: {etf['change_percent']:.2f}%")
-            
+
             # 發送通知訊息
             logger.info("\nSending notification report...")
-            notification_message = self.generate_tw_drop_message(drop_data)
+            notification_message = self.generate_tw_drop_message(drop_data, fut_quotes=fut_quotes)
             self.send_telegram_message(notification_message)
             
             logger.info("\nTW drop rankings monitor check completed!")
