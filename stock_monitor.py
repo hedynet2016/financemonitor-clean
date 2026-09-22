@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 TAIFEX_QUOTE_URL = "https://mis.taifex.com.tw/futures/api/getQuoteList"
 FUT_CIDS = ["TXF", "MXF", "TMF"]            # 大台／小台／微台
 FUT_CONTRACT_SIZE = {"TXF": 200, "MXF": 50, "TMF": 10}  # 每點新台幣（期交所規格）
-FUT_PNL_QTY = 1                              # 小台與微台各一口
+FUT_PNL_QTY = 5                              # 小台與微台各五口
 # 09:00 下單（進場價 = 當日 09:00 後第一次抓到的報價）
 FUT_ENTRY_MINUTES = 9 * 60
 # 損益試算顯示時段：09:30 ~ 11:30（以半小時 block 計：block = hour*2 + minute//30）
@@ -1028,7 +1028,7 @@ class StockMonitor:
                 f"{emoji} {txf['name']}：<b>{txf['last']:,.0f}</b>"
                 f"（{sign}{d:,.0f} 點 / {sign}{txf['diff_rate']:.2f}%）"
             )
-        # 損益試算：09:30 ~ 11:30，小台+微台各一口（假設 09:00 買進）
+        # 損益試算：09:30 ~ 11:30，小台與微台分開計算（假設 09:00 買進各五口）
         block = now.hour * 2 + now.minute // 30
         if block in FUT_PNL_BLOCKS:
             state = self._load_fut_state()
@@ -1037,9 +1037,8 @@ class StockMonitor:
                 lines.append("")
                 lines.append(
                     f"💰 <b>損益試算</b>（假設 {rec.get('entry_time', '09:00')} 買進，"
-                    f"小台×1 + 微台×1，每點 50/10 元）"
+                    f"小台×{FUT_PNL_QTY}、微台×{FUT_PNL_QTY}，每點 50/10 元）"
                 )
-                total = 0
                 for cid, label in (("MXF", "小台"), ("TMF", "微台")):
                     q = quotes.get(cid)
                     ep = rec["entry"].get(cid)
@@ -1047,15 +1046,12 @@ class StockMonitor:
                         continue
                     pts = q["last"] - float(ep)
                     pnl = pts * FUT_CONTRACT_SIZE[cid] * FUT_PNL_QTY
-                    total += pnl
                     sign = "+" if pts >= 0 else ""
                     lines.append(
-                        f"　{label} 1口：{float(ep):,.0f} → {q['last']:,.0f}"
+                        f"　{label} {FUT_PNL_QTY}口：{float(ep):,.0f} → {q['last']:,.0f}"
                         f"（{sign}{pts:,.0f} 點）→ "
                         f"<b>{'+' if pnl >= 0 else '−'}{abs(pnl):,.0f} 元</b>"
                     )
-                sign = "+" if total >= 0 else "−"
-                lines.append(f"　🧾 合計損益：<b>{sign}{abs(total):,.0f} 新台幣</b>")
             else:
                 lines.append("（今日尚無進場基準價）")
         return "\n".join(lines) + "\n\n"

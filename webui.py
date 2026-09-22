@@ -866,7 +866,7 @@ def tasks_view():
       <tr><td class="text-muted" style="width:200px">每日完整推播</td><td><b>{news_hour:02d}:00 台北時間</b> — 熱門財經/VIP交易/13F/IPO/財報/AI動能/經濟指標/財經行事曆/ELON &amp; JENSEN Interview（卡片左側為各區塊啟用日期）</td></tr>
       <tr><td class="text-muted">每日活動推播</td><td><b>{events_hour:02d}:00 台北時間</b> — ICT/AI 活動（2026-06-25 啟用，未來90天）</td></tr>
       <tr><td class="text-muted">每日商品追蹤</td><td><b>16:00 台北時間</b> — 雅虎拍賣商品監控（9 關鍵字，價格 $2,000~$15,000，排除NG，刊登 7 天內，上限 30 筆）<br>　① 固定賣場 3 家：樺仔二手電腦 / 點子3C 板橋店 / US3C<br>　② 雙北地區同類店家：台北市・新北市「店鋪型 3C 賣家」（與點子3C同類），條件與固定賣場完全相同，自動納入新店家</td></tr>
-      <tr><td class="text-muted">每半小時股市監控</td><td>美股交易時段自動執行（跌幅&gt;3%個股+ETF）；台股時段附台指期漲跌與 09:30-11:30 小台+微台損益試算（假設 09:00 買進各一口）</td></tr>
+      <tr><td class="text-muted">每半小時股市監控</td><td>美股交易時段自動執行（跌幅&gt;3%個股+ETF）；台股時段附台指期漲跌與 09:30-11:30 小台、微台各自損益試算（假設 09:00 買進各五口）</td></tr>
       <tr><td class="text-muted">每日自動備份</td><td><b>09:00 台北時間</b> — 推送 logs 到 GitHub（render_scheduler.py）</td></tr>
     </table>
   </div>
