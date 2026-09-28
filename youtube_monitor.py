@@ -92,11 +92,31 @@ def _flat_search(query, n=SEARCH_RESULTS):
 
 
 def _full_info(video_id):
-    """第二階段:抓單一影片完整資訊(字幕/觀看數)"""
+    """第二階段:抓單一影片完整資訊(字幕/觀看數)
+
+    資料中心 IP 常被 YouTube 以 bot 驗證擋下(Sign in to confirm...),
+    遇 bot 驗證錯誤時依序改用 android_vr / tv_embedded client 重試
+    (實測可繞過匿名 bot 驗證);其他錯誤直接上拋。
+    """
     import yt_dlp
     url = "https://www.youtube.com/watch?v=%s" % video_id
-    with yt_dlp.YoutubeDL(_yt_opts()) as ydl:
-        return ydl.extract_info(url, download=False)
+    last_err = None
+    for client in (None, "android_vr", "tv_embedded"):
+        opts = _yt_opts()
+        if client:
+            opts["extractor_args"] = {"youtube": {"player_client": [client]}}
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=False)
+        except Exception as e:
+            last_err = e
+            msg = str(e)
+            if "confirm you" not in msg and "not a bot" not in msg:
+                raise  # 非 bot 驗證錯誤(如年齡限制)不重試
+            logger.info("[YT] bot 驗證擋下,改用 %s client 重試 %s",
+                        client or "default", video_id)
+        time.sleep(1)
+    raise last_err
 
 
 def _load_growth():
@@ -239,7 +259,13 @@ def fetch_top_interviews(queries=None, top_n=TOP_N,
         try:
             info = _full_info(vid)
         except Exception as e:
-            logger.warning("[YT] 完整資訊失敗 %s:%s", vid, e)
+            # 降級:完整資訊抓不到時保留平面搜尋資料(勿丟棄候選,
+            # 否則 Render 資料中心 IP 會全數被 bot 驗證吃掉)
+            logger.warning("[YT] 完整資訊失敗 %s,保留平面資料:%s",
+                           vid, str(e)[:100])
+            c.setdefault("subtitle_type", None)
+            c.setdefault("upload_date", None)
+            passed.append(c)
             continue
         full_dur = info.get("duration") or 0
         if full_dur and full_dur <= MIN_DURATION_SEC:
