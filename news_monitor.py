@@ -3454,7 +3454,7 @@ class NewsMonitor:
         section += f"{'='*40}\n\n"
 
         if not videos:
-            section += "📭 目前無符合條件的影片(片長>20分鐘且有中文字幕)\n"
+            section += "📭 目前無符合條件的影片(片長>20分鐘)\n"
             section += f"{'='*40}\n"
             return section
 
@@ -3488,14 +3488,16 @@ class NewsMonitor:
                     "    ⚡ 首次執行:依觀看速度"
                     f" {v.get('rate') or 0:,.0f} 次/小時 排名\n"
                 )
-            sub_label = ('CC 中文字幕' if v.get('subtitle_type') == 'CC'
-                         else '自動中文字幕')
-            section += f"    🀄 {sub_label} · 📅 上架 {v.get('upload_date') or '?'}\n\n"
+            if v.get('subtitle_type'):
+                sub_label = ('CC 中文字幕' if v.get('subtitle_type') == 'CC'
+                             else '自動中文字幕')
+                section += f"    🀄 {sub_label}"
+            section += f"    📅 上架 {v.get('upload_date') or '?'}\n\n"
 
         section += f"{'='*40}\n"
         section += (
             "📋 來源: YouTube 搜尋「Elon Musk interview」/「Jensen Huang interview」"
-            "（片長>20分鐘、有中文字幕、24h 觀看成長最快前 3 名）\n"
+            "（片長>20分鐘、24h 觀看成長最快前 3 名）\n"
         )
         return section
 

@@ -3,16 +3,15 @@
 YouTube 訪談影片追蹤模組（區塊 ⑬:ELON & JENSEN Interview）
 
 搜尋 YouTube 關鍵字「Elon Musk interview」/「Jensen Huang interview」，
-篩選條件：
-  - 片長超過 20 分鐘
-  - 有中文字幕可選（手動 CC 或自動字幕皆可）
+篩選條件（2026-09-28 起不限字幕）：
+  - 片長超過 20 分鐘（平面搜尋缺 duration 時不排除，留待第二階段驗證）
   - 觀賞人次成長最快（以前次執行快照計算成長率；首次執行改用
     觀看數/上架時數 作為替代排名，並於推播中註明）
 
 技術方案：yt-dlp（免 API key）
   - 第一階段:ytsearch 平面搜尋(含 duration/view_count/timestamp)預篩
-  - 第二階段:對候選影片抓完整資訊,取得 subtitles/automatic_captions
-    檢查中文字幕(zh 開頭語系,含 zh-Hant/zh-Hans/zh-TW)
+  - 第二階段:對候選影片抓完整資訊,驗證片長並取得字幕資訊
+    (subtitle_type 僅供標註,不做排除條件)
   - 觀看數快照存於 youtube_growth.json,供跨日成長率計算
 
 使用方法:
@@ -32,7 +31,7 @@ logger = logging.getLogger(__name__)
 SEARCH_QUERIES = ["Elon Musk interview", "Jensen Huang interview"]
 MIN_DURATION_SEC = 1200        # 片長須超過 20 分鐘
 SEARCH_RESULTS = 40            # 每個關鍵字平面搜尋筆數
-FULL_FETCH_LIMIT = 12          # 每個關鍵字進入第二階段(完整資訊)的候選上限
+FULL_FETCH_LIMIT = 15          # 每個關鍵字進入第二階段(完整資訊)的候選上限
 TOP_N = 3                      # 推播前 N 名
 GROWTH_FILE = "youtube_growth.json"
 SNAPSHOT_MAX_AGE_DAYS = 21     # 快照保留天數
@@ -146,10 +145,12 @@ def fetch_top_interviews(queries=None, top_n=TOP_N,
         logger.info("[YT] %s:平面搜尋 %d 筆", q, len(entries))
 
         # 預篩:片長 > 20 分鐘,依 觀看數/上架時數 排序取候選
+        # (duration 缺漏時不排除,留待第二階段以完整資訊驗證;
+        #  Render 上 yt-dlp 平面搜尋可能缺 duration/timestamp 欄位)
         pool = []
         for e in entries:
             dur = e.get("duration") or 0
-            if dur <= MIN_DURATION_SEC:
+            if dur and dur <= MIN_DURATION_SEC:
                 continue
             views = e.get("view_count") or 0
             ts = e.get("timestamp") or 0
@@ -194,7 +195,7 @@ def fetch_top_interviews(queries=None, top_n=TOP_N,
         logger.info("[YT] quick 模式:共 %d 筆候選(未抓字幕)", len(candidates))
         return list(candidates.values())
 
-    # ── 第二階段:完整資訊(字幕檢查) ─────────────────────────────
+    # ── 第二階段:完整資訊(驗證片長/補齊欄位;字幕僅標註不排除) ──
     passed = []
     for vid, c in candidates.items():
         if not c.pop("_need_full", False):
@@ -205,10 +206,16 @@ def fetch_top_interviews(queries=None, top_n=TOP_N,
         except Exception as e:
             logger.warning("[YT] 完整資訊失敗 %s:%s", vid, e)
             continue
+        full_dur = info.get("duration") or 0
+        if full_dur and full_dur <= MIN_DURATION_SEC:
+            logger.info("[YT] 排除(實際片長 %d 秒 <= %d 秒):%s",
+                        full_dur, MIN_DURATION_SEC,
+                        (info.get("title") or "")[:40])
+            continue
         zh = _zh_subtitle_type(info)
         if not zh:
-            logger.info("[YT] 排除(無中文字幕):%s", (info.get("title") or "")[:40])
-            continue
+            logger.info("[YT] 無中文字幕(仍保留,不限字幕):%s",
+                        (info.get("title") or "")[:40])
         c.update({
             "title": info.get("title") or c["title"],
             "channel": info.get("channel") or info.get("uploader") or c["channel"],
@@ -221,7 +228,7 @@ def fetch_top_interviews(queries=None, top_n=TOP_N,
         passed.append(c)
         time.sleep(0.5)  # 禮貌性間隔
 
-    logger.info("[YT] 中文字幕篩選後:%d 筆", len(passed))
+    logger.info("[YT] 第二階段(不限字幕)後:%d 筆", len(passed))
 
     # ── 成長率計算(以前次快照為基準) ────────────────────────────
     for c in passed:
@@ -278,8 +285,9 @@ if __name__ == "__main__":
                         format="%(asctime)s %(levelname)s %(message)s")
     for i, v in enumerate(fetch_top_interviews(), 1):
         print("\n#%d %s" % (i, v["title"]))
-        print("   %s | %s | %d 分鐘 | 字幕:%s" % (
-            v["channel"], v["url"], v["duration_min"], v["subtitle_type"]))
+        sub = " | 字幕:%s" % v["subtitle_type"] if v.get("subtitle_type") else ""
+        print("   %s | %s | %d 分鐘%s" % (
+            v["channel"], v["url"], v["duration_min"], sub))
         print("   觀看 %s | growth %s (前次快照 %.1f 小時前) | rate %.0f/h" % (
             format(v["view_count"], ","),
             format(v["growth"], ",") if v["growth"] is not None else "N/A",
