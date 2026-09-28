@@ -2,7 +2,6 @@
 .env
 config.json
 push_history.json
-youtube_growth.json
 *.log
 *.txt.bak
 

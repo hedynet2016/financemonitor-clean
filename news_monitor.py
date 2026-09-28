@@ -3445,62 +3445,6 @@ class NewsMonitor:
         section += "⚠️ 財報日期為預估值，以公司公告為準\n"
         return section
 
-    # ■ [2026-09-21] ELON & JENSEN Interview  ELON & JENSEN Interview(YouTube 熱門訪談)
-    # ════════════════════════════════════════════════════════════════
-    def _format_youtube_interviews_section(self, videos: List[Dict]) -> str:
-        """格式化 ELON & JENSEN Interview 區塊(YouTube 前 3 名)"""
-        section  = f"\n{'='*40}\n"
-        section += "🎥 <b>ELON &amp; JENSEN Interview</b>\n"
-        section += f"{'='*40}\n\n"
-
-        if not videos:
-            section += "📭 目前無符合條件的影片(片長>20分鐘)\n"
-            section += f"{'='*40}\n"
-            return section
-
-        for idx, v in enumerate(videos, 1):
-            # 標題:優先中文譯名,無譯名時即時翻譯(多半命中快取)
-            zh = v.get('title_zh')
-            if not zh:
-                try:
-                    zh = self.translate_text(v.get('title') or '')
-                except Exception:
-                    zh = ''
-            display = html.escape(zh or v.get('title') or '(無標題)')
-
-            section += (
-                f"{idx}. <a href=\"{html.escape(v.get('url') or '')}\">{display}</a>\n"
-            )
-            section += (
-                f"    📺 {html.escape(v.get('channel') or '?')}"
-                f" · ⏱ {v.get('duration_min', '?')} 分鐘"
-                f" · 👁 {format(v.get('view_count') or 0, ',')} 次\n"
-            )
-            if v.get('rate_is_growth'):
-                gh = v.get('growth_hours') or 24
-                section += (
-                    f"    📈 24h 成長 +{format(v.get('growth') or 0, ',')} 次"
-                    f"（近 {gh:.0f} 小時快照）"
-                    f" · ⚡ {v.get('rate') or 0:,.0f} 次/小時\n"
-                )
-            else:
-                section += (
-                    "    ⚡ 首次執行:依觀看速度"
-                    f" {v.get('rate') or 0:,.0f} 次/小時 排名\n"
-                )
-            if v.get('subtitle_type'):
-                sub_label = ('CC 中文字幕' if v.get('subtitle_type') == 'CC'
-                             else '自動中文字幕')
-                section += f"    🀄 {sub_label}"
-            section += f"    📅 上架 {v.get('upload_date') or '?'}\n\n"
-
-        section += f"{'='*40}\n"
-        section += (
-            "📋 來源: YouTube 搜尋「Elon Musk interview」/「Jensen Huang interview」"
-            "（片長>20分鐘、24h 觀看成長最快前 3 名）\n"
-        )
-        return section
-
     # ■ [2026-06-25] ICT/AI 活動  ICT/AI 活動資訊(美/中/台,未來三個月)
     # ════════════════════════════════════════════════════════════════
     def _scrape_accupass_events(self, keywords: List[str] = None) -> List[Dict]:
@@ -4399,8 +4343,7 @@ class NewsMonitor:
                                   ict_ai_events: List[Dict] = None,
                                   mag7_events: List[Dict] = None,
                                   ai_momentum_news: List[Dict] = None,
-                                  financial_calendar: List[Dict] = None,
-                                  youtube_interviews: List[Dict] = None) -> str:
+                                  financial_calendar: List[Dict] = None) -> str:
         """生成Telegram消息"""
         current_time = datetime.now()
         date_str = current_time.strftime('%Y年%m月%d日')
@@ -4415,7 +4358,7 @@ class NewsMonitor:
             for _lst in (top_articles, politician_trades,
                          filings_13f, media_13f,
                          ipo_news, earnings_news, economic_news, mag7_events,
-                         ai_momentum_news, youtube_interviews):
+                         ai_momentum_news):
                 if not isinstance(_lst, list):
                     continue
                 for _it in _lst:
@@ -4438,7 +4381,7 @@ class NewsMonitor:
             _filled = 0
             for _lst in (top_articles, ipo_news, earnings_news, economic_news,
                          mag7_events, ai_momentum_news, politician_trades,
-                         filings_13f, media_13f, youtube_interviews):
+                         filings_13f, media_13f):
                 if not isinstance(_lst, list):
                     continue
                 for _it in _lst:
@@ -4532,10 +4475,6 @@ class NewsMonitor:
         if financial_calendar is not None:
             message += self._format_financial_calendar_section(financial_calendar)
 
-        # ―― [2026-09-21] ELON & JENSEN Interview:ELON & JENSEN Interview(YouTube 熱門訪談)―――――――
-        if youtube_interviews is not None:
-            message += self._format_youtube_interviews_section(youtube_interviews)
-
         return message
 
     def send_telegram_message(self, message: str, discord_webhook: str = None) -> bool:
@@ -4549,7 +4488,7 @@ class NewsMonitor:
         return any(results.values())
     
     def run_news_only(self):
-        """執行一次新聞監控檢查(熱門財經/VIP/13F/IPO/財報/AI動能/經濟指標/財經行事曆/YouTube)"""
+        """執行一次新聞監控檢查(熱門財經/VIP/13F/IPO/財報/AI動能/經濟指標/財經行事曆)"""
         logger.info("="*50)
         logger.info("Starting news-only monitor check...")
         logger.info("="*50)
@@ -4637,15 +4576,6 @@ class NewsMonitor:
         except Exception as e:
             logger.error(f"Financial calendar fetch failed, will skip: {e}")
 
-        # ── [2026-09-21] ELON & JENSEN Interview:ELON & JENSEN Interview(YouTube)──────────────
-        youtube_interviews = []
-        try:
-            logger.info("Fetching YouTube interviews (Elon Musk / Jensen Huang)...")
-            from youtube_monitor import fetch_top_interviews
-            youtube_interviews = fetch_top_interviews()
-        except Exception as e:
-            logger.error(f"YouTube interviews fetch failed, will skip: {e}")
-
         # 發送整合通知(不含[2026-06-25] ICT/AI 活動)
         logger.info("Sending notification report...")
         notification_message = self.generate_telegram_message(
@@ -4660,7 +4590,6 @@ class NewsMonitor:
             ict_ai_events=None,  # [2026-06-25] ICT/AI 活動 獨立發送
             ai_momentum_news=ai_momentum_news,
             financial_calendar=financial_calendar,
-            youtube_interviews=youtube_interviews,
         )
         self.send_telegram_message(notification_message)
 
