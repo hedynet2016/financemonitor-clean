@@ -37,6 +37,13 @@ GROWTH_FILE = "youtube_growth.json"
 SNAPSHOT_MAX_AGE_DAYS = 21     # 快照保留天數
 SNAPSHOT_MIN_HOURS = 4         # 計算成長率的最小快照間隔
 
+# 手動觀察名單(2026-09-28):YouTube 搜尋結果會因 IP 位置/一致性漏片
+# (Render 資料中心 IP 實測漏掉 CBS 專訪),名單內影片一律抓完整資訊注入
+# 候選池並參與成長率排名,不受搜尋結果與預篩影響(仍須片長>20分鐘)
+MANUAL_VIDEO_IDS = [
+    "xCUala5j7aQ",   # CBS Sunday Morning - Extended interview: Nvidia CEO (2026-09-20)
+]
+
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 
@@ -190,6 +197,34 @@ def fetch_top_interviews(queries=None, top_n=TOP_N,
             if picked >= per_query_limit:
                 break
         logger.info("[YT] %s:片長>20min 候選 %d 筆", q, picked)
+
+    # ── 手動觀察名單:一律注入候選(quick/full 模式皆適用) ─────────
+    for vid in MANUAL_VIDEO_IDS:
+        if not vid or vid in candidates:
+            continue
+        try:
+            info = _full_info(vid)
+        except Exception as e:
+            logger.warning("[YT] 手動名單抓取失敗 %s:%s", vid, e)
+            continue
+        full_dur = info.get("duration") or 0
+        if full_dur and full_dur <= MIN_DURATION_SEC:
+            logger.info("[YT] 手動名單排除(實際片長不足):%s",
+                        (info.get("title") or "")[:40])
+            continue
+        candidates[vid] = {
+            "video_id": vid,
+            "title": info.get("title") or "",
+            "url": "https://www.youtube.com/watch?v=%s" % vid,
+            "channel": info.get("channel") or info.get("uploader") or "",
+            "duration_min": round(full_dur / 60),
+            "view_count": info.get("view_count") or 0,
+            "timestamp": info.get("timestamp") or 0,
+            "upload_date": _fmt_upload_date(info.get("upload_date")),
+            "subtitle_type": _zh_subtitle_type(info),
+            "keywords": ["manual"],
+        }
+        logger.info("[YT] 手動名單注入:%s", (info.get("title") or "")[:40])
 
     if quick:
         logger.info("[YT] quick 模式:共 %d 筆候選(未抓字幕)", len(candidates))

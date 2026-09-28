@@ -990,7 +990,7 @@ def tasks_view():
     <span class="block-date">📅 2026-09-21</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">ELON &amp; JENSEN Interview（YouTube 熱門訪談）</div>
-      <div class="mb-2"><span class="source-tag">yt-dlp（免 API key）</span> <span class="filter-tag">片長 &gt;20 分鐘</span> <span class="filter-tag">24h 觀看成長前 3 名</span></div>
+      <div class="mb-2"><span class="source-tag">yt-dlp（免 API key）</span> <span class="filter-tag">片長 &gt;20 分鐘</span> <span class="filter-tag">24h 觀看成長前 3 名</span> <span class="filter-tag">手動觀察名單 ×1</span></div>
       <div><small class="text-muted">關鍵字：</small> &quot;Elon Musk interview&quot; &bull; &quot;Jensen Huang interview&quot;</div>
       <div><small class="text-muted">排名：</small> 以每日快照計算觀看數成長率（首次執行以觀看數/上架時數替代）</div>
     </div>
