@@ -1502,7 +1502,21 @@ def api_youtube_test():
     from youtube_monitor import fetch_top_interviews, SEARCH_QUERIES
     full = request.args.get("full") == "1"
     out = {"mode": "full(每關鍵字 4 筆)" if full else "quick(僅平面搜尋)",
-           "queries": SEARCH_QUERIES, "results": [], "error": None}
+           "queries": SEARCH_QUERIES, "results": [], "log": [], "error": None}
+    # 捕捉 youtube_monitor 的 warning/error 訊息,便於線上診斷抓取失敗原因
+    import logging as _logging
+    cap_records = []
+
+    class _Cap(_logging.Handler):
+        def emit(self, record):
+            try:
+                cap_records.append("%s %s" % (record.levelname, record.getMessage()))
+            except Exception:
+                pass
+
+    cap = _Cap(level=_logging.WARNING)
+    yt_logger = _logging.getLogger("youtube_monitor")
+    yt_logger.addHandler(cap)
     try:
         vids = fetch_top_interviews(
             quick=not full, per_query_limit=4, top_n=3)
@@ -1520,6 +1534,9 @@ def api_youtube_test():
             out["error"] = "搜尋成功但無符合條件影片"
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {e}"
+    finally:
+        yt_logger.removeHandler(cap)
+    out["log"] = cap_records[:60]
     return jsonify(out)
 
 
