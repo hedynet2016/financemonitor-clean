@@ -3445,6 +3445,53 @@ class NewsMonitor:
         section += "⚠️ 財報日期為預估值，以公司公告為準\n"
         return section
 
+    # ■ [2026-09-30] 投資熱門話題  PTT Stock + Reddit 當日熱門
+    # ════════════════════════════════════════════════════════════════
+    def _format_hot_topics_section(self, topics: Dict) -> str:
+        """格式化投資熱門話題區塊(PTT 推文前 3 + Reddit 當日熱門前 3)"""
+        section  = f"\n{'='*40}\n"
+        section += "🔥 <b>投資熱門話題</b>\n"
+        section += f"{'='*40}\n"
+
+        ptt = (topics or {}).get('ptt') or []
+        reddit = (topics or {}).get('reddit') or []
+
+        if ptt:
+            section += "\n🇹🇼 <b>PTT Stock（推文前 3）</b>\n"
+            for idx, it in enumerate(ptt, 1):
+                display = html.escape(it.get('title') or '(無標題)')
+                section += (
+                    f"{idx}. <a href=\"{html.escape(it.get('url') or '')}\">"
+                    f"{display}</a> 💬 {it.get('push', 0)} 推"
+                    + (f"（{html.escape(it['date'])}）"
+                       if it.get('date') else "") + "\n"
+                )
+        else:
+            section += "\n🇹🇼 <b>PTT Stock</b>：📭 今日無資料\n"
+
+        if reddit:
+            section += "\n🌎 <b>Reddit（wallstreetbets × stocks 當日熱門）</b>\n"
+            for idx, it in enumerate(reddit, 1):
+                zh = it.get('title_zh')
+                display = html.escape(zh or it.get('title') or '(無標題)')
+                orig = '' if zh else ''
+                sub_tag = html.escape(it.get('sub') or 'reddit')
+                section += (
+                    f"{idx}. <a href=\"{html.escape(it.get('url') or '')}\">"
+                    f"{display}</a> （r/{sub_tag}）\n"
+                )
+                if zh and zh != it.get('title'):
+                    section += f"    📝 原文：{html.escape(it.get('title') or '')[:80]}\n"
+        else:
+            section += "\n🌎 <b>Reddit</b>：📭 今日無資料\n"
+
+        section += f"{'='*40}\n"
+        section += (
+            "📋 來源: PTT Stock 板（推文數）＋ Reddit r/wallstreetbets、"
+            "r/stocks（當日熱門排序）；Threads/X 匿名不可行未納入\n"
+        )
+        return section
+
     # ■ [2026-06-25] ICT/AI 活動  ICT/AI 活動資訊(美/中/台,未來三個月)
     # ════════════════════════════════════════════════════════════════
     def _scrape_accupass_events(self, keywords: List[str] = None) -> List[Dict]:
@@ -4343,7 +4390,8 @@ class NewsMonitor:
                                   ict_ai_events: List[Dict] = None,
                                   mag7_events: List[Dict] = None,
                                   ai_momentum_news: List[Dict] = None,
-                                  financial_calendar: List[Dict] = None) -> str:
+                                  financial_calendar: List[Dict] = None,
+                                  hot_topics: Dict = None) -> str:
         """生成Telegram消息"""
         current_time = datetime.now()
         date_str = current_time.strftime('%Y年%m月%d日')
@@ -4358,7 +4406,9 @@ class NewsMonitor:
             for _lst in (top_articles, politician_trades,
                          filings_13f, media_13f,
                          ipo_news, earnings_news, economic_news, mag7_events,
-                         ai_momentum_news):
+                         ai_momentum_news) + tuple(
+                             v for v in ((hot_topics or {}).get('reddit'),)
+                             if isinstance(v, list)):
                 if not isinstance(_lst, list):
                     continue
                 for _it in _lst:
@@ -4381,7 +4431,9 @@ class NewsMonitor:
             _filled = 0
             for _lst in (top_articles, ipo_news, earnings_news, economic_news,
                          mag7_events, ai_momentum_news, politician_trades,
-                         filings_13f, media_13f):
+                         filings_13f, media_13f) + tuple(
+                             v for v in ((hot_topics or {}).get('reddit'),)
+                             if isinstance(v, list)):
                 if not isinstance(_lst, list):
                     continue
                 for _it in _lst:
@@ -4475,6 +4527,10 @@ class NewsMonitor:
         if financial_calendar is not None:
             message += self._format_financial_calendar_section(financial_calendar)
 
+        # ―― [2026-09-30] 投資熱門話題:PTT Stock + Reddit 當日熱門 ――――――――
+        if hot_topics is not None:
+            message += self._format_hot_topics_section(hot_topics)
+
         return message
 
     def send_telegram_message(self, message: str, discord_webhook: str = None) -> bool:
@@ -4488,7 +4544,7 @@ class NewsMonitor:
         return any(results.values())
     
     def run_news_only(self):
-        """執行一次新聞監控檢查(熱門財經/VIP/13F/IPO/財報/AI動能/經濟指標/財經行事曆)"""
+        """執行一次新聞監控檢查(熱門財經/VIP/13F/IPO/財報/AI動能/經濟指標/財經行事曆/投資熱門話題)"""
         logger.info("="*50)
         logger.info("Starting news-only monitor check...")
         logger.info("="*50)
@@ -4576,6 +4632,15 @@ class NewsMonitor:
         except Exception as e:
             logger.error(f"Financial calendar fetch failed, will skip: {e}")
 
+        # ── [2026-09-30] 投資熱門話題:PTT Stock + Reddit 當日熱門 ────────
+        hot_topics = None
+        try:
+            logger.info("Fetching hot topics (PTT Stock + Reddit)...")
+            from topics_monitor import fetch_hot_topics
+            hot_topics = fetch_hot_topics()
+        except Exception as e:
+            logger.error(f"Hot topics fetch failed, will skip: {e}")
+
         # 發送整合通知(不含[2026-06-25] ICT/AI 活動)
         logger.info("Sending notification report...")
         notification_message = self.generate_telegram_message(
@@ -4590,6 +4655,7 @@ class NewsMonitor:
             ict_ai_events=None,  # [2026-06-25] ICT/AI 活動 獨立發送
             ai_momentum_news=ai_momentum_news,
             financial_calendar=financial_calendar,
+            hot_topics=hot_topics,
         )
         self.send_telegram_message(notification_message)
 

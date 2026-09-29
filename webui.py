@@ -508,7 +508,7 @@ def dashboard():
   <div class="card-header"><i class="bi bi-info-circle me-2"></i>系統資訊</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控（台股時段含台指期）+ 08:00 新聞（含 AI 動能觀察 + 財經行事曆）+ 14:00 活動 + 16:00 商品追蹤（雅虎拍賣 固定賣場＋雙北同類店家）+ 09:00 自動備份</td></tr>
+      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控（台股時段含台指期）+ 08:00 新聞（含 AI 動能觀察 + 財經行事曆 + 投資熱門話題）+ 14:00 活動 + 16:00 商品追蹤（雅虎拍賣 固定賣場＋雙北同類店家）+ 09:00 自動備份</td></tr>
       <tr><td class="text-muted">推送管道</td><td>Telegram Bot + Discord Webhook</td></tr>
       <tr><td class="text-muted">Python</td><td>{{py_version}}</td></tr>
       <tr><td class="text-muted">工作目錄</td><td>{{work_dir}}</td></tr>
@@ -633,7 +633,7 @@ def settings():
         </thead>
         <tbody>
           <tr><td><b>每半小時</b></td><td>股市監控（美股交易時段，跌幅 &gt;3% 個股 + ETF；台股時段附台指期漲跌＋損益試算）</td><td><span class="badge bg-secondary">監控</span></td></tr>
-          <tr><td><b>{{'%02d:00' % dc.news_hour}}</b></td><td>新聞 + 經濟指標 + AI 動能觀察 + 財經行事曆 推播</td><td><span class="badge bg-secondary">監控</span></td></tr>
+          <tr><td><b>{{'%02d:00' % dc.news_hour}}</b></td><td>新聞 + 經濟指標 + AI 動能觀察 + 財經行事曆 + 投資熱門話題 推播</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>{{'%02d:00' % dc.events_hour}}</b></td><td>活動推播（ICT/AI 活動，2026-06-25 啟用）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>16:00</b></td><td>商品追蹤（雅虎拍賣 9 關鍵字：固定 3 賣場 + 雙北地區同類 3C 店家）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>09:00</b></td><td>自動備份 logs → GitHub</td><td><span class="badge bg-info">排程器</span></td></tr>
@@ -863,7 +863,7 @@ def tasks_view():
   <div class="card-header"><i class="bi bi-clock me-2"></i>排程</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">每日完整推播</td><td><b>{news_hour:02d}:00 台北時間</b> — 熱門財經/VIP交易/13F/IPO/財報/AI動能/經濟指標/財經行事曆（卡片左側為各區塊啟用日期）</td></tr>
+      <tr><td class="text-muted" style="width:200px">每日完整推播</td><td><b>{news_hour:02d}:00 台北時間</b> — 熱門財經/VIP交易/13F/IPO/財報/AI動能/經濟指標/財經行事曆/投資熱門話題（卡片左側為各區塊啟用日期）</td></tr>
       <tr><td class="text-muted">每日活動推播</td><td><b>{events_hour:02d}:00 台北時間</b> — ICT/AI 活動（2026-06-25 啟用，未來90天）</td></tr>
       <tr><td class="text-muted">每日商品追蹤</td><td><b>16:00 台北時間</b> — 雅虎拍賣商品監控（9 關鍵字，價格 $2,000~$15,000，排除NG，刊登 7 天內，上限 30 筆）<br>　① 固定賣場 3 家：樺仔二手電腦 / 點子3C 板橋店 / US3C<br>　② 雙北地區同類店家：台北市・新北市「店鋪型 3C 賣家」（與點子3C同類），條件與固定賣場完全相同，自動納入新店家</td></tr>
       <tr><td class="text-muted">每半小時股市監控</td><td>美股交易時段自動執行（跌幅&gt;3%個股+ETF）；台股時段附台指期漲跌與 09:30-11:30 小台、微台各自損益試算（假設 09:00 買進各五口）</td></tr>
@@ -981,6 +981,19 @@ def tasks_view():
       <div class="mb-2"><span class="source-tag">Fed / BLS 官方日程</span> <span class="filter-tag">財報為預估日</span> <span class="filter-tag">未來 30 天</span></div>
       <div><small class="text-muted">追蹤：</small> FOMC 利率決議 &bull; CPI 物價指數 &bull; 非農就業報告</div>
       <div><small class="text-muted">財報：</small> TSMC &bull; TESLA &bull; NVIDIA &bull; MSFT &bull; AMZN &bull; GOOGL &bull; AVGO &bull; SPACEX(SPCX)（預估日，以公司公告為準）</div>
+    </div>
+  </div>
+</div>
+
+<div class="block-card">
+  <div class="d-flex align-items-start gap-3">
+    <span class="block-date">📅 2026-09-30</span>
+    <div class="flex-grow-1">
+      <div class="fw-bold mb-1">投資熱門話題（PTT Stock × Reddit）</div>
+      <div class="mb-2"><span class="source-tag">匿名抓取、免 API key</span> <span class="filter-tag">PTT 本日推文前 3 名</span> <span class="filter-tag">Reddit 當日熱門前 3 名</span> <span class="filter-tag">Reddit 標題中文化</span></div>
+      <div><small class="text-muted">PTT：</small> Stock 板文章列表，依推文數排序（爆 = 100+）</div>
+      <div><small class="text-muted">Reddit：</small> r/wallstreetbets × r/stocks 的 sort=top RSS（RSS 排序即熱度排名，無票數欄位）</div>
+      <div><small class="text-muted">未納入：</small> Threads（JS 登入殼、無匿名熱門端點）• X（登入牆、Nitter 已停止、API 付費）</div>
     </div>
   </div>
 </div>
@@ -1476,6 +1489,26 @@ def api_translate_test():
             }
     except Exception as e:
         out["error"] = str(e)[:300]
+    return jsonify(out)
+
+
+@app.route("/api/topics-test")
+def api_topics_test():
+    """投資熱門話題診斷：驗證伺服器環境對 PTT / Reddit 的匿名連線能力。"""
+    from topics_monitor import fetch_ptt_hot, fetch_reddit_hot
+    out = {"ptt": [], "reddit": [], "error": None}
+    try:
+        for it in fetch_ptt_hot(pages=2, top_n=3):
+            out["ptt"].append({"title": it.get("title"), "url": it.get("url"),
+                               "push": it.get("push"), "date": it.get("date")})
+    except Exception as e:
+        out["error"] = f"PTT: {type(e).__name__}: {e}"
+    try:
+        for it in fetch_reddit_hot(per_sub=3, top_n=3):
+            out["reddit"].append({"title": it.get("title"), "url": it.get("url"),
+                                  "sub": it.get("sub")})
+    except Exception as e:
+        out["error"] = (out["error"] or "") + f" Reddit: {type(e).__name__}: {e}"
     return jsonify(out)
 
 
