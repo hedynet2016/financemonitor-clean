@@ -991,7 +991,7 @@ def tasks_view():
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">投資熱門話題（PTT Stock × Reddit）</div>
       <div class="mb-2"><span class="source-tag">匿名抓取、免 API key</span> <span class="filter-tag">PTT 本日推文前 3 名</span> <span class="filter-tag">Reddit 當日熱門前 3 名</span> <span class="filter-tag">Reddit 標題中文化</span></div>
-      <div><small class="text-muted">PTT：</small> Stock 板文章列表，依推文數排序（爆 = 100+）</div>
+      <div><small class="text-muted">PTT：</small> Stock 板文章列表，依推文數排序（爆 = 100+）；<b>Render 資料中心 IP 遭 PTT 403 封鎖時自動略過</b>（requests→curl 降級鏈，本機/台灣 IP 正常）</div>
       <div><small class="text-muted">Reddit：</small> r/wallstreetbets × r/stocks 的 sort=top RSS（RSS 排序即熱度排名，無票數欄位）</div>
       <div><small class="text-muted">未納入：</small> Threads（JS 登入殼、無匿名熱門端點）• X（登入牆、Nitter 已停止、API 付費）</div>
     </div>

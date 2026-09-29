@@ -3466,15 +3466,12 @@ class NewsMonitor:
                     + (f"（{html.escape(it['date'])}）"
                        if it.get('date') else "") + "\n"
                 )
-        else:
-            section += "\n🇹🇼 <b>PTT Stock</b>：📭 今日無資料\n"
 
         if reddit:
             section += "\n🌎 <b>Reddit（wallstreetbets × stocks 當日熱門）</b>\n"
             for idx, it in enumerate(reddit, 1):
                 zh = it.get('title_zh')
                 display = html.escape(zh or it.get('title') or '(無標題)')
-                orig = '' if zh else ''
                 sub_tag = html.escape(it.get('sub') or 'reddit')
                 section += (
                     f"{idx}. <a href=\"{html.escape(it.get('url') or '')}\">"
@@ -3482,13 +3479,14 @@ class NewsMonitor:
                 )
                 if zh and zh != it.get('title'):
                     section += f"    📝 原文：{html.escape(it.get('title') or '')[:80]}\n"
-        else:
-            section += "\n🌎 <b>Reddit</b>：📭 今日無資料\n"
+
+        if not ptt and not reddit:
+            section += "\n📭 今日無資料（來源暫時失效或遭封鎖）\n"
 
         section += f"{'='*40}\n"
         section += (
             "📋 來源: PTT Stock 板（推文數）＋ Reddit r/wallstreetbets、"
-            "r/stocks（當日熱門排序）；Threads/X 匿名不可行未納入\n"
+            "r/stocks（當日熱門排序）；PTT 於 Render 資料中心 IP 遭 403 封鎖時自動略過\n"
         )
         return section
 
