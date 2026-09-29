@@ -56,11 +56,50 @@ _STICKY_PATTERNS = (
 )
 
 
-def _get(url, headers=None, **kw):
+def _get(url, headers=None, cookies=None, **kw):
     h = {"User-Agent": UA}
     if headers:
         h.update(headers)
+    if cookies:
+        kw["cookies"] = cookies
     return requests.get(url, headers=h, timeout=TIMEOUT, **kw)
+
+
+# PTT 用完整瀏覽器標頭（資料中心 IP 遭 403 時降低被偵測機率）
+_BROWSER_HEADERS = {
+    "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,"
+               "image/avif,image/webp,*/*;q=0.8"),
+    "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Upgrade-Insecure-Requests": "1",
+}
+
+
+def _fetch_ptt_page(url):
+    """抓 PTT 單頁：requests 完整瀏覽器標頭 → 失敗改用系統 curl（TLS 指紋不同）。"""
+    try:
+        r = _get(url, headers=_BROWSER_HEADERS, cookies={"over18": "1"})
+        if r.status_code == 200 and "r-ent" in r.text:
+            return r.text
+        logger.warning("[Topics] PTT requests HTTP %s，改用 curl", r.status_code)
+    except Exception as e:
+        logger.warning("[Topics] PTT requests 失敗(%s)，改用 curl", e)
+    import subprocess
+    try:
+        p = subprocess.run(
+            ["curl", "-s", "-m", str(TIMEOUT), "-A", UA,
+             "-H", "Accept-Language: zh-TW,zh;q=0.9",
+             "-b", "over18=1", url],
+            capture_output=True, text=True, timeout=TIMEOUT + 5)
+        if p.returncode == 0 and "r-ent" in (p.stdout or ""):
+            return p.stdout
+        logger.warning("[Topics] PTT curl fallback rc=%s len=%s",
+                       p.returncode, len(p.stdout or ""))
+    except Exception as e:
+        logger.warning("[Topics] PTT curl fallback 例外: %s", e)
+    raise RuntimeError("PTT 頁面抓取失敗（requests 與 curl 皆無效）")
 
 
 # ── PTT ────────────────────────────────────────────────────────────
@@ -110,10 +149,9 @@ def fetch_ptt_hot(board=PTT_BOARD, pages=PTT_PAGES, top_n=PTT_TOP_N):
     url = "https://www.ptt.cc/bbs/%s/index.html" % board
     all_items = []
     for _ in range(pages):
-        r = _get(url)
-        r.raise_for_status()
-        all_items.extend(_parse_ptt_page(r.text))
-        prev = _PT_PREV.search(r.text)
+        html_text = _fetch_ptt_page(url)
+        all_items.extend(_parse_ptt_page(html_text))
+        prev = _PT_PREV.search(html_text)
         if not prev:
             break
         url = "https://www.ptt.cc" + prev.group(1)
@@ -142,15 +180,14 @@ _RD_TITLE = re.compile(r"<title>(.*?)</title>", re.S)
 _RD_LINK = re.compile(r'<link[^>]*href="([^"]+)"')
 
 
-def _fetch_reddit_sub_rss(sub):
+def _fetch_reddit_sub_rss(sub, retries=REDDIT_RETRIES):
     """單一板當日熱門 RSS（sort=top&t=day），遇 429 重試。"""
     url = ("https://www.reddit.com/r/%s/search/.rss"
            "?q=*&sort=top&t=day&restrict_sr=1" % sub)
     last_err = None
-    for i in range(REDDIT_RETRIES):
+    for i in range(retries):
         try:
-            r = _get(url, headers={
-                "User-Agent": UA, "Accept": "application/rss+xml"})
+            r = _get(url, headers={"Accept": "application/rss+xml"})
             if r.status_code == 200 and r.text.strip():
                 return r.text
             last_err = "HTTP %s" % r.status_code
@@ -158,7 +195,7 @@ def _fetch_reddit_sub_rss(sub):
                 break
         except Exception as e:
             last_err = str(e)
-        if i < REDDIT_RETRIES - 1:
+        if i < retries - 1:
             time.sleep(REDDIT_RETRY_WAIT[min(i, len(REDDIT_RETRY_WAIT) - 1)])
     raise RuntimeError("reddit r/%s RSS 失敗: %s" % (sub, last_err))
 
@@ -181,13 +218,13 @@ def _parse_reddit_rss(rss_text, sub):
 
 
 def fetch_reddit_hot(subs=REDDIT_SUBS, per_sub=REDDIT_PER_SUB,
-                     top_n=REDDIT_TOP_N):
+                     top_n=REDDIT_TOP_N, retries=REDDIT_RETRIES):
     """Reddit 多板當日熱門合併前 N 名（各板輪流取，排序=熱度排名）。"""
     merged = []
     per_board = {}
     for sub in subs:
         try:
-            rss = _fetch_reddit_sub_rss(sub)
+            rss = _fetch_reddit_sub_rss(sub, retries=retries)
             per_board[sub] = _parse_reddit_rss(rss, sub)[:per_sub]
             logger.info("[Topics] Reddit r/%s: %d 篇候選",
                         sub, len(per_board[sub]))

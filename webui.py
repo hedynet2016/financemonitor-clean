@@ -1504,7 +1504,7 @@ def api_topics_test():
     except Exception as e:
         out["error"] = f"PTT: {type(e).__name__}: {e}"
     try:
-        for it in fetch_reddit_hot(per_sub=3, top_n=3):
+        for it in fetch_reddit_hot(per_sub=3, top_n=3, retries=2):
             out["reddit"].append({"title": it.get("title"), "url": it.get("url"),
                                   "sub": it.get("sub")})
     except Exception as e:
