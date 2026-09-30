@@ -5,30 +5,29 @@
 用途:
   08:00 新聞推播「投資熱門話題」區塊的資料收集。
 
-來源（皆為匿名存取、免 API key）:
-  1. PTT Stock 板    — 抓近幾頁文章列表，取「今日」（台北時間）推文數前 N 名
-  2. Reddit          — r/wallstreetbets + r/stocks 的 search RSS（sort=top&t=day），
-                       RSS 排序即當日熱度排名，剔除置頂公告後取前 N 名
+來源（匿名存取、免 API key）:
+  Reddit — 美股×AI 相關板（wallstreetbets/stocks/investing/StockMarket/
+  artificial/singularity）的 search RSS（sort=top&t=day），
+  RSS 排序即當日熱度排名，剔除置頂公告後各板輪流合併取前 N 名
 
 技術評估結論（2026-09-30）:
-  - PTT 匿名 GET 可行（HTTP 200，HTML 含標題/推文數/日期/連結）
   - Reddit .json 匿名回 403，但 RSS (.rss) 可匿名（間歇 429，需重試）；
     search RSS 支援 sort=top&t=day 直接回傳當日熱門排序（RSS 無票數欄位，
     僅能以排序代表排名）
+  - PTT 於 Render 資料中心 IP 遭全面 403 封鎖（2026-09-30 實測，requests/
+    curl/公開代理/Google 跳板皆失敗）→ 使用者決策放棄 PTT 來源
   - Threads（JS 登入殼、無匿名熱門端點）與 X（登入牆、Nitter 已死、API 付費）
     技術上不可行，不納入
 
 使用方式:
     from topics_monitor import fetch_hot_topics
     topics = fetch_hot_topics()
-    # {"ptt": [ {title, url, push, date}, ... ],
-    #  "reddit": [ {title, url, sub}, ... ]}
+    # {"reddit": [ {title, url, sub}, ... ]}  前 10 名
 """
 
 import logging
 import re
 import time
-from datetime import datetime
 
 import requests
 
@@ -37,13 +36,17 @@ logger = logging.getLogger(__name__)
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 
-PTT_BOARD = "Stock"
-PTT_PAGES = 5                # 抓取頁數（每頁約 22 篇，5 頁足以涵蓋當日）
-PTT_TOP_N = 3                # PTT 取前 N 名
-
-REDDIT_SUBS = ("wallstreetbets", "stocks")
-REDDIT_TOP_N = 3             # Reddit 合併後取前 N 名
-REDDIT_PER_SUB = 5           # 每個板先取前 N 名再輪流合併
+# 美股 × AI 相關板（依主題相關性排序，越前面越優先抓取）
+REDDIT_SUBS = (
+    "wallstreetbets",   # 美股討論主戰場
+    "stocks",           # 個股/大盤討論
+    "investing",        # 投資綜合
+    "StockMarket",      # 大盤動態
+    "artificial",       # AI 話題
+    "singularity",      # AI 前沿話題
+)
+REDDIT_TOP_N = 10            # 合併後取前 N 名
+REDDIT_PER_SUB = 4           # 每個板先取前 N 名再輪流合併
 REDDIT_RETRIES = 4           # RSS 遇 429 的重試次數
 REDDIT_RETRY_WAIT = (5, 15, 30)   # 重試間隔秒數
 
@@ -56,121 +59,11 @@ _STICKY_PATTERNS = (
 )
 
 
-def _get(url, headers=None, cookies=None, **kw):
+def _get(url, headers=None, **kw):
     h = {"User-Agent": UA}
     if headers:
         h.update(headers)
-    if cookies:
-        kw["cookies"] = cookies
     return requests.get(url, headers=h, timeout=TIMEOUT, **kw)
-
-
-# PTT 用完整瀏覽器標頭（資料中心 IP 遭 403 時降低被偵測機率）
-_BROWSER_HEADERS = {
-    "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,"
-               "image/avif,image/webp,*/*;q=0.8"),
-    "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Upgrade-Insecure-Requests": "1",
-}
-
-
-def _fetch_ptt_page(url):
-    """抓 PTT 單頁：requests 完整瀏覽器標頭 → 失敗改用系統 curl（TLS 指紋不同）。"""
-    try:
-        r = _get(url, headers=_BROWSER_HEADERS, cookies={"over18": "1"})
-        if r.status_code == 200 and "r-ent" in r.text:
-            return r.text
-        logger.warning("[Topics] PTT requests HTTP %s，改用 curl", r.status_code)
-    except Exception as e:
-        logger.warning("[Topics] PTT requests 失敗(%s)，改用 curl", e)
-    import subprocess
-    try:
-        p = subprocess.run(
-            ["curl", "-s", "-m", str(TIMEOUT), "-A", UA,
-             "-H", "Accept-Language: zh-TW,zh;q=0.9",
-             "-b", "over18=1", url],
-            capture_output=True, text=True, timeout=TIMEOUT + 5)
-        if p.returncode == 0 and "r-ent" in (p.stdout or ""):
-            return p.stdout
-        logger.warning("[Topics] PTT curl fallback rc=%s len=%s",
-                       p.returncode, len(p.stdout or ""))
-    except Exception as e:
-        logger.warning("[Topics] PTT curl fallback 例外: %s", e)
-    raise RuntimeError("PTT 頁面抓取失敗（requests 與 curl 皆無效）")
-
-
-# ── PTT ────────────────────────────────────────────────────────────
-
-_PT_ENT = re.compile(
-    r'<div class="title">\s*(?:<a href="([^"]+)">([^<]+)</a>|([^<]*))')
-_PT_PUSH = re.compile(r'<span class="hl f[1-4]">([^<]*)</span>')
-_PT_DATE = re.compile(r'<div class="date">([^<]+)</div>')
-_PT_PREV = re.compile(r'<a class="btn wide" href="(/bbs/\w+/index\d+\.html)">[^<]*上頁')
-
-
-def _parse_ptt_page(html):
-    """解析單頁文章列表 → [{title,url,push,date}]（已刪文略過）"""
-    items = []
-    for block in re.split(r'<div class="r-ent">', html)[1:]:
-        m = _PT_ENT.search(block)
-        if not m:
-            continue
-        href, t_link, t_plain = m.groups()
-        title = (t_link or t_plain or "").strip()
-        if not href or not title:
-            continue  # 已刪除/未核准文章
-        pm = _PT_PUSH.search(block)
-        raw_push = (pm.group(1).strip() if pm else "")
-        if raw_push == "爆":
-            push = 100
-        elif raw_push.isdigit():
-            push = int(raw_push)
-        else:
-            push = 0
-        dm = _PT_DATE.search(block)
-        items.append({
-            "title": title,
-            "url": "https://www.ptt.cc" + href,
-            "push": push,
-            "date": dm.group(1).strip() if dm else "",
-        })
-    return items
-
-
-def fetch_ptt_hot(board=PTT_BOARD, pages=PTT_PAGES, top_n=PTT_TOP_N):
-    """PTT 板「今日」推文數前 N 名（台北時間）。無今日文章時改用已抓取全部文章。"""
-    from pytz import timezone
-    now = datetime.now(timezone("Asia/Taipei"))
-    today = "%d/%d" % (now.month, now.day)
-
-    url = "https://www.ptt.cc/bbs/%s/index.html" % board
-    all_items = []
-    for _ in range(pages):
-        html_text = _fetch_ptt_page(url)
-        all_items.extend(_parse_ptt_page(html_text))
-        prev = _PT_PREV.search(html_text)
-        if not prev:
-            break
-        url = "https://www.ptt.cc" + prev.group(1)
-        time.sleep(0.5)  # 禮貌性節流
-
-    todays = [it for it in all_items if it["date"] == today]
-    todays.sort(key=lambda x: x["push"], reverse=True)
-    top = todays[:top_n]
-    if len(top) < top_n:
-        # 今日文章不足（如清晨）時以近幾日熱門補足
-        rest = sorted(all_items, key=lambda x: x["push"], reverse=True)
-        for it in rest:
-            if len(top) >= top_n:
-                break
-            if it not in top:
-                top.append(it)
-    logger.info("[Topics] PTT %s: 今日(%s) %d 篇 / 共抓 %d 篇，取前 %d",
-                board, today, len(todays), len(all_items), len(top))
-    return top
 
 
 # ── Reddit ─────────────────────────────────────────────────────────
@@ -219,7 +112,11 @@ def _parse_reddit_rss(rss_text, sub):
 
 def fetch_reddit_hot(subs=REDDIT_SUBS, per_sub=REDDIT_PER_SUB,
                      top_n=REDDIT_TOP_N, retries=REDDIT_RETRIES):
-    """Reddit 多板當日熱門合併前 N 名（各板輪流取，排序=熱度排名）。"""
+    """Reddit 多板當日熱門合併前 N 名（各板輪流取，排序=熱度排名）。
+
+    板間節流 2 秒；板數多時若候選已足（>= top_n + 5）提前停止，
+    降低連續請求觸發 429 的機率。
+    """
     merged = []
     per_board = {}
     for sub in subs:
@@ -231,8 +128,11 @@ def fetch_reddit_hot(subs=REDDIT_SUBS, per_sub=REDDIT_PER_SUB,
         except Exception as e:
             logger.warning("[Topics] %s", e)
             per_board[sub] = []
+        # 候選已足時提前結束，減少後續板請求
+        if sum(len(v) for v in per_board.values()) >= top_n + 5:
+            break
         time.sleep(2)  # 板間節流，降低 429 機率
-    # 輪流合併: wsb#1, stocks#1, wsb#2, stocks#2 ...
+    # 輪流合併: 板1#1, 板2#1, ..., 板1#2, 板2#2 ...
     for rank in range(per_sub):
         for sub in subs:
             lst = per_board.get(sub) or []
@@ -244,12 +144,8 @@ def fetch_reddit_hot(subs=REDDIT_SUBS, per_sub=REDDIT_PER_SUB,
 # ── 整合入口 ───────────────────────────────────────────────────────
 
 def fetch_hot_topics():
-    """收集 PTT + Reddit 熱門話題。單一來源失敗不影響另一來源。"""
-    topics = {"ptt": [], "reddit": []}
-    try:
-        topics["ptt"] = fetch_ptt_hot()
-    except Exception as e:
-        logger.error("[Topics] PTT fetch failed: %s", e)
+    """收集 Reddit 美股×AI 當日熱門話題前 10 名。"""
+    topics = {"reddit": []}
     try:
         topics["reddit"] = fetch_reddit_hot()
     except Exception as e:

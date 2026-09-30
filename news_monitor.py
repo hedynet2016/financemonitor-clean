@@ -3445,48 +3445,35 @@ class NewsMonitor:
         section += "⚠️ 財報日期為預估值，以公司公告為準\n"
         return section
 
-    # ■ [2026-09-30] 投資熱門話題  PTT Stock + Reddit 當日熱門
+    # ■ [2026-09-30] 投資熱門話題  Reddit 美股×AI 當日熱門前 10
     # ════════════════════════════════════════════════════════════════
     def _format_hot_topics_section(self, topics: Dict) -> str:
-        """格式化投資熱門話題區塊(PTT 推文前 3 + Reddit 當日熱門前 3)"""
+        """格式化投資熱門話題區塊(Reddit 美股×AI 板當日熱門前 10)"""
         section  = f"\n{'='*40}\n"
         section += "🔥 <b>投資熱門話題</b>\n"
         section += f"{'='*40}\n"
 
-        ptt = (topics or {}).get('ptt') or []
         reddit = (topics or {}).get('reddit') or []
 
-        if ptt:
-            section += "\n🇹🇼 <b>PTT Stock（推文前 3）</b>\n"
-            for idx, it in enumerate(ptt, 1):
-                display = html.escape(it.get('title') or '(無標題)')
-                section += (
-                    f"{idx}. <a href=\"{html.escape(it.get('url') or '')}\">"
-                    f"{display}</a> 💬 {it.get('push', 0)} 推"
-                    + (f"（{html.escape(it['date'])}）"
-                       if it.get('date') else "") + "\n"
-                )
-
         if reddit:
-            section += "\n🌎 <b>Reddit（wallstreetbets × stocks 當日熱門）</b>\n"
             for idx, it in enumerate(reddit, 1):
                 zh = it.get('title_zh')
                 display = html.escape(zh or it.get('title') or '(無標題)')
                 sub_tag = html.escape(it.get('sub') or 'reddit')
                 section += (
                     f"{idx}. <a href=\"{html.escape(it.get('url') or '')}\">"
-                    f"{display}</a> （r/{sub_tag}）\n"
+                    f"{display}</a>（r/{sub_tag}）\n"
                 )
                 if zh and zh != it.get('title'):
                     section += f"    📝 原文：{html.escape(it.get('title') or '')[:80]}\n"
-
-        if not ptt and not reddit:
+        else:
             section += "\n📭 今日無資料（來源暫時失效或遭封鎖）\n"
 
         section += f"{'='*40}\n"
         section += (
-            "📋 來源: PTT Stock 板（推文數）＋ Reddit r/wallstreetbets、"
-            "r/stocks（當日熱門排序）；PTT 於 Render 資料中心 IP 遭 403 封鎖時自動略過\n"
+            "📋 來源: Reddit 美股×AI 板（r/wallstreetbets × r/stocks × "
+            "r/investing × r/StockMarket × r/artificial × r/singularity，"
+            "當日熱門排序取前 10）\n"
         )
         return section
 
@@ -4525,7 +4512,7 @@ class NewsMonitor:
         if financial_calendar is not None:
             message += self._format_financial_calendar_section(financial_calendar)
 
-        # ―― [2026-09-30] 投資熱門話題:PTT Stock + Reddit 當日熱門 ――――――――
+        # ―― [2026-09-30] 投資熱門話題:Reddit 美股×AI 當日熱門前 10 ―――――――
         if hot_topics is not None:
             message += self._format_hot_topics_section(hot_topics)
 
@@ -4630,10 +4617,10 @@ class NewsMonitor:
         except Exception as e:
             logger.error(f"Financial calendar fetch failed, will skip: {e}")
 
-        # ── [2026-09-30] 投資熱門話題:PTT Stock + Reddit 當日熱門 ────────
+        # ── [2026-09-30] 投資熱門話題:Reddit 美股×AI 當日熱門前 10 ───────
         hot_topics = None
         try:
-            logger.info("Fetching hot topics (PTT Stock + Reddit)...")
+            logger.info("Fetching hot topics (Reddit US stocks x AI)...")
             from topics_monitor import fetch_hot_topics
             hot_topics = fetch_hot_topics()
         except Exception as e:

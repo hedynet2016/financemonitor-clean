@@ -989,11 +989,10 @@ def tasks_view():
   <div class="d-flex align-items-start gap-3">
     <span class="block-date">📅 2026-09-30</span>
     <div class="flex-grow-1">
-      <div class="fw-bold mb-1">投資熱門話題（PTT Stock × Reddit）</div>
-      <div class="mb-2"><span class="source-tag">匿名抓取、免 API key</span> <span class="filter-tag">PTT 本日推文前 3 名</span> <span class="filter-tag">Reddit 當日熱門前 3 名</span> <span class="filter-tag">Reddit 標題中文化</span></div>
-      <div><small class="text-muted">PTT：</small> Stock 板文章列表，依推文數排序（爆 = 100+）；<b>Render 資料中心 IP 遭 PTT 403 封鎖時自動略過</b>（requests→curl 降級鏈，本機/台灣 IP 正常）</div>
-      <div><small class="text-muted">Reddit：</small> r/wallstreetbets × r/stocks 的 sort=top RSS（RSS 排序即熱度排名，無票數欄位）</div>
-      <div><small class="text-muted">未納入：</small> Threads（JS 登入殼、無匿名熱門端點）• X（登入牆、Nitter 已停止、API 付費）</div>
+      <div class="fw-bold mb-1">投資熱門話題（Reddit 美股×AI 當日熱門前 10）</div>
+      <div class="mb-2"><span class="source-tag">匿名抓取、免 API key</span> <span class="filter-tag">Reddit 當日熱門前 10 名</span> <span class="filter-tag">美股 × AI 板</span> <span class="filter-tag">標題中文化</span></div>
+      <div><small class="text-muted">來源板：</small> r/wallstreetbets × r/stocks × r/investing × r/StockMarket × r/artificial × r/singularity — 各板 sort=top RSS（排序即當日熱度排名，無票數欄位），輪流合併取前 10</div>
+      <div><small class="text-muted">未納入：</small> PTT（Render 資料中心 IP 遭全面 403 封鎖）• Threads（JS 登入殼、無匿名熱門端點）• X（登入牆、Nitter 已停止、API 付費）</div>
     </div>
   </div>
 </div>
@@ -1494,21 +1493,15 @@ def api_translate_test():
 
 @app.route("/api/topics-test")
 def api_topics_test():
-    """投資熱門話題診斷：驗證伺服器環境對 PTT / Reddit 的匿名連線能力。"""
-    from topics_monitor import fetch_ptt_hot, fetch_reddit_hot
-    out = {"ptt": [], "reddit": [], "error": None}
+    """投資熱門話題診斷：驗證伺服器環境對 Reddit 的匿名連線能力。"""
+    from topics_monitor import fetch_reddit_hot
+    out = {"reddit": [], "error": None}
     try:
-        for it in fetch_ptt_hot(pages=2, top_n=3):
-            out["ptt"].append({"title": it.get("title"), "url": it.get("url"),
-                               "push": it.get("push"), "date": it.get("date")})
-    except Exception as e:
-        out["error"] = f"PTT: {type(e).__name__}: {e}"
-    try:
-        for it in fetch_reddit_hot(per_sub=3, top_n=3, retries=2):
+        for it in fetch_reddit_hot(per_sub=3, top_n=10, retries=2):
             out["reddit"].append({"title": it.get("title"), "url": it.get("url"),
                                   "sub": it.get("sub")})
     except Exception as e:
-        out["error"] = (out["error"] or "") + f" Reddit: {type(e).__name__}: {e}"
+        out["error"] = f"Reddit: {type(e).__name__}: {e}"
     return jsonify(out)
 
 
