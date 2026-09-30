@@ -1497,7 +1497,7 @@ def api_topics_test():
     from topics_monitor import fetch_reddit_hot
     out = {"reddit": [], "error": None}
     try:
-        for it in fetch_reddit_hot(per_sub=3, top_n=10, retries=2):
+        for it in fetch_reddit_hot(per_sub=6, top_n=10, retries=2):
             out["reddit"].append({"title": it.get("title"), "url": it.get("url"),
                                   "sub": it.get("sub")})
     except Exception as e:

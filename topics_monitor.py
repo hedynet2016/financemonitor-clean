@@ -46,7 +46,8 @@ REDDIT_SUBS = (
     "singularity",      # AI 前沿話題
 )
 REDDIT_TOP_N = 10            # 合併後取前 N 名
-REDDIT_PER_SUB = 4           # 每個板先取前 N 名再輪流合併
+REDDIT_PER_SUB = 6           # 每個板先取前 N 名再輪流合併（板多遭 429 時，
+                             # 成功板單板即可貢獻足夠名額補滿前 10）
 REDDIT_RETRIES = 4           # RSS 遇 429 的重試次數
 REDDIT_RETRY_WAIT = (5, 15, 30)   # 重試間隔秒數
 
