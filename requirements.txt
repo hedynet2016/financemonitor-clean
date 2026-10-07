@@ -49,3 +49,6 @@ appdirs>=1.4.4
 
 # HTTP utilities (disable SSL warnings in stock_monitor)
 urllib3>=2.0.0
+
+# Simplified-to-Traditional Chinese conversion for LLM translation output
+zhconv>=1.4.3

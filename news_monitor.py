@@ -846,14 +846,19 @@ class NewsMonitor:
 
     @staticmethod
     def _note_engine(name: str, ok: bool):
-        """記錄引擎成敗，連續失敗達門檻即停用（本次執行不再嘗試）。"""
+        """記錄引擎成敗，連續失敗達門檻即停用（本次執行不再嘗試）。
+
+        pollinations 為 Render 上的主力引擎（Google/Bing 皆被封鎖），
+        門檻放寬為 6 次，避免匿名端點暫時限流即整場停用導致大量英文殘留。
+        """
+        threshold = 6 if name == 'pollinations' else NewsMonitor._ENGINE_FAIL_THRESHOLD
         if ok:
             NewsMonitor._engine_fail[name] = 0
             NewsMonitor._engine_dead.discard(name)
             return
         n = NewsMonitor._engine_fail.get(name, 0) + 1
         NewsMonitor._engine_fail[name] = n
-        if n >= NewsMonitor._ENGINE_FAIL_THRESHOLD and name not in NewsMonitor._engine_dead:
+        if n >= threshold and name not in NewsMonitor._engine_dead:
             NewsMonitor._engine_dead.add(name)
             logger.info(f"[translate] engine '{name}' 連續失敗 {n} 次，本次執行停用")
 
@@ -1146,8 +1151,22 @@ class NewsMonitor:
         NewsMonitor._last_polli_ts = time.monotonic()
 
     @staticmethod
+    def _to_traditional(text: str) -> str:
+        """簡轉繁保險網：LLM 偶爾無視提示詞輸出簡體中文，統一轉為繁體。
+
+        zhconv 為純 Python 輕量字典轉換（無 C 編譯依賴）；未安裝時原樣返回。
+        """
+        if not text:
+            return text
+        try:
+            from zhconv import convert
+            return convert(text, 'zh-hant')
+        except Exception:
+            return text
+
+    @staticmethod
     def _clean_llm_output(raw: str) -> str:
-        """清洗 LLM 輸出：去除引號、markdown、說明文字、尾註。"""
+        """清洗 LLM 輸出：去除引號、markdown、說明文字、尾註，並簡轉繁。"""
         if not raw:
             return ''
         s = raw.strip()
@@ -1163,6 +1182,8 @@ class NewsMonitor:
         s = s.strip('"\'“”「」『』').strip()
         # 去除尾註式括號說明（如 "（此為翻譯）"）
         s = _re.sub(r'[（(]\s*(?:此為|這是|以下為)?(?:翻譯|譯文|translation)[^）)]*[）)]\s*$', '', s).strip()
+        # 簡轉繁（LLM 偶爾輸出簡體，如「联发科」「资料中心」）
+        s = NewsMonitor._to_traditional(s)
         return s
 
     def _pollinations_translate_batch(self, texts: List[str]) -> Dict[str, str]:
@@ -1210,8 +1231,9 @@ class NewsMonitor:
         依序嘗試主模型與備援模型（同一服務、不同後端），提高可用性。
         """
         for model in (NewsMonitor._POLLI_MODEL,) + tuple(NewsMonitor._POLLI_FALLBACK_MODELS):
-            # 匿名端點偶有「HTTP 200 但 content 為空」的過載/限流情況，重試一次
-            for attempt in range(2):
+            # 匿名端點偶有「HTTP 200 但 content 為空」的過載/限流情況，重試一次；
+            # HTTP 429（限流）另加 15 秒退避後重試，避免瞬時限流被誤判為引擎失效
+            for attempt in range(3):
                 try:
                     self._throttle_polli()
                     resp = requests.post(
@@ -1221,6 +1243,13 @@ class NewsMonitor:
                               'temperature': 0.2},
                         timeout=timeout,
                     )
+                    if resp.status_code == 429:
+                        NewsMonitor._last_polli_error = '%s [%s] HTTP 429 (attempt %d)' % (
+                            tag, model, attempt + 1)
+                        if attempt < 2:
+                            time.sleep(15)  # 限流退避後重試同一模型
+                            continue
+                        break
                     if resp.status_code != 200:
                         NewsMonitor._last_polli_error = '%s [%s] HTTP %d: %s' % (
                             tag, model, resp.status_code, resp.text[:130])
@@ -1415,6 +1444,8 @@ class NewsMonitor:
             logger.warning(f"All translation engines failed, using original: {text[:60]!r}")
             return text
 
+        # 簡轉繁保險網（MyMemory/LLM 偶爾回簡體）
+        result = self._to_traditional(result)
         NewsMonitor._translate_cache[cache_key] = result
         return result
     
@@ -4447,7 +4478,7 @@ class NewsMonitor:
 
         message = '\n\U0001f4f0 <b>七巨頭 + OpenAI/SpaceX/Anthropic 熱門新聞 Top10</b>\n'
         message += '\U0001f4c5 ' + date_str + ' EST\n'
-        message += '\U0001f550 生成时间: ' + time_str + '\n'
+        message += '\U0001f550 生成時間: ' + time_str + '\n'
         message += '========================================\n\n'
         
         for article in top_articles:

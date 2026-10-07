@@ -1171,6 +1171,11 @@ def api_translate_test():
         "engine_chain": ("deepl > azure > bing > gtx > clients5 > deep_translator "
                          "> pollinations(LLM,免key) > mymemory"),
     }
+    try:
+        import importlib.util as _ilu
+        out["zhconv"] = _ilu.find_spec("zhconv") is not None
+    except Exception:
+        out["zhconv"] = False
 
     # ── 原始 HTTP 端點測試（找出網路層失敗原因）─────────────────────
     try:
