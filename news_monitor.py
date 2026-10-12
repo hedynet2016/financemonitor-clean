@@ -13,6 +13,7 @@ import logging
 import hashlib
 import re as _re
 import math
+import urllib.parse
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Tuple, Optional
 
@@ -180,6 +181,8 @@ class NewsMonitor:
 
         # ── 名人金融交易監控 ──────────────────────────────────────────────
         # 結構:{'name': 顯示名稱, 'keywords': [搜尋關鍵字], 'category': 分類}
+        # 比對順序即下方清單順序（先命中者勝），因此「川普本人」的裸關鍵字 'trump'
+        # 必須放在家族成員之後，否則會把所有家族成員新聞都算成川普本人。
         self.vip_targets = [
             # 川普家族
             {'name': 'Donald Trump Jr',  'keywords': ['donald trump jr', 'trump jr'],      'category': '川普家族'},
@@ -191,6 +194,13 @@ class NewsMonitor:
             # 裴洛西夫婦
             {'name': 'Nancy Pelosi',      'keywords': ['nancy pelosi', 'pelosi'],            'category': '裴洛西夫婦'},
             {'name': 'Paul Pelosi',       'keywords': ['paul pelosi'],                       'category': '裴洛西夫婦'},
+            # 國會交易大戶（2026-10-12 新增）
+            {'name': 'Marjorie Taylor Greene', 'keywords': ['marjorie taylor greene'],       'category': '國會交易'},
+            {'name': 'Ro Khanna',         'keywords': ['ro khanna'],                          'category': '國會交易'},
+            {'name': 'Josh Gottheimer',   'keywords': ['josh gottheimer', 'gottheimer'],      'category': '國會交易'},
+            {'name': 'Tommy Tuberville',  'keywords': ['tommy tuberville', 'tuberville'],     'category': '國會交易'},
+            {'name': 'Mark Green',        'keywords': ['rep. mark green', 'representative mark green'], 'category': '國會交易'},
+            {'name': 'Bill Hagerty',      'keywords': ['bill hagerty', 'senator hagerty'],    'category': '國會交易'},
             # 科技名人
             {'name': 'Elon Musk',         'keywords': ['elon musk', 'musk'],                 'category': '科技名人'},
             {'name': 'Bill Gates',        'keywords': ['bill gates', 'gates foundation'],    'category': '科技名人'},
@@ -199,6 +209,12 @@ class NewsMonitor:
             {'name': 'Mark Zuckerberg',   'keywords': ['mark zuckerberg', 'zuckerberg'],     'category': '科技名人'},
             {'name': 'Tim Cook',          'keywords': ['tim cook'],                          'category': '科技名人'},
             {'name': 'Jensen Huang',      'keywords': ['jensen huang'],                      'category': '科技名人'},
+            # 政商名人（2026-10-12 新增）
+            {'name': 'Jamie Dimon',       'keywords': ['jamie dimon', 'dimon'],              'category': '政商名人'},
+            {'name': 'Larry Fink',        'keywords': ['larry fink'],                        'category': '政商名人'},
+            {'name': 'Bill Ackman',       'keywords': ['bill ackman', 'ackman'],             'category': '政商名人'},
+            {'name': 'Stanley Druckenmiller', 'keywords': ['druckenmiller'],                 'category': '政商名人'},
+            {'name': 'Michael Bloomberg', 'keywords': ['michael bloomberg'],                 'category': '政商名人'},
             # 創投 / 投資名人
             {'name': 'Warren Buffett',    'keywords': ['warren buffett', 'buffett', 'berkshire hathaway'], 'category': '投資大師'},
             {'name': 'Charlie Munger',    'keywords': ['charlie munger', 'munger'],          'category': '投資大師'},
@@ -206,7 +222,38 @@ class NewsMonitor:
             {'name': 'Cathie Wood',       'keywords': ['cathie wood', 'ark invest'],         'category': '投資大師'},
             {'name': 'Ray Dalio',         'keywords': ['ray dalio', 'bridgewater'],          'category': '投資大師'},
             {'name': 'George Soros',      'keywords': ['george soros', 'soros'],             'category': '投資大師'},
+            # 美國總統川普本人（務必置於最後，見上方說明）
+            {'name': 'Donald Trump',      'keywords': ['donald trump', 'president trump', 'trump'], 'category': '川普家族'},
         ]
+
+        # ── Google News 查詢式來源（2026-10-12 新增）────────────────────────
+        # 原本只掃一般市場頭條 RSS，名人交易為低頻事件，命中率趨近 0；
+        # 改用查詢式來源可直接撈到特定名人的交易揭露報導（實測單查詢可回 100 筆）。
+        # 每組一個查詢，6 組共約 6~10 秒。
+        self.vip_news_queries = [
+            ('川普家族',
+             '("Donald Trump" OR "Trump Jr" OR "Eric Trump" OR "Ivanka Trump" OR "Jared Kushner") '
+             '(stock OR shares OR trade OR disclosure OR portfolio)'),
+            ('裴洛西夫婦',
+             '("Nancy Pelosi" OR "Paul Pelosi") (stock OR shares OR trade OR disclosure)'),
+            ('國會交易',
+             '("Marjorie Taylor Greene" OR "Ro Khanna" OR "Josh Gottheimer" OR "Tommy Tuberville" '
+             'OR "Mark Green" OR "Bill Hagerty") (stock OR shares OR trade OR disclosure)'),
+            ('科技名人',
+             '("Elon Musk" OR "Jensen Huang" OR "Tim Cook" OR "Mark Zuckerberg" OR "Jeff Bezos" '
+             'OR "Bill Gates" OR "Peter Thiel") (stock OR shares OR buys OR sells OR stake)'),
+            ('投資大師',
+             '("Warren Buffett" OR "Michael Burry" OR "Cathie Wood" OR "Ray Dalio" OR "George Soros") '
+             '(stock OR shares OR buys OR sells OR stake)'),
+            ('政商名人',
+             '("Jamie Dimon" OR "Larry Fink" OR "Bill Ackman" OR "Stanley Druckenmiller" '
+             'OR "Michael Bloomberg") (stock OR shares OR buys OR sells)'),
+        ]
+
+        # 名人交易新聞只保留近 N 天（查詢式來源會回大量舊聞，必須限窗）
+        self.vip_max_age_days = 7
+        # 每位名人最多顯示筆數（避免單一人物如 Cathie Wood 洗版）
+        self.vip_max_per_person = 3
 
         # ── 13F 官方申報監控機構清單 ─────────────────────────────────────
         # 結構:{'name': 顯示名稱, 'cik': SEC CIK號, 'category': 分類,
@@ -1884,6 +1931,56 @@ class NewsMonitor:
 
         return top_10
 
+    # 名人交易新聞的判定採三層：
+    #   1) 命中排除語（貿易政策／關稅）→ 直接剔除
+    #   2) 命中任一「揭露名詞」→ 通過
+    #   3) 否則須「交易動詞 + 證券詞」同時命中 → 通過
+    # 這樣可避免「money buys happiness」這類含動詞但非交易的標題誤入。
+    VIP_DISCLOSURE_TERMS = [
+        'discloses', 'disclosed', 'disclosure', 'filing', 'filings', '13f',
+        'insider', 'portfolio', 'holdings', 'stake', 'ownership',
+        'position in', 'stock trade', 'stock trades', 'stock holdings',
+        'stock transaction', 'transaction',
+    ]
+
+    VIP_ACTION_VERBS = [
+        'bought', 'sold', 'buys', 'sells', 'purchase', 'purchased',
+        'acquires', 'acquired', 'divested', 'owns', 'invests', 'investing',
+        'dumped', 'trims', 'trimmed', 'loads up', 'loading up', 'adds to',
+    ]
+
+    VIP_SECURITY_WORDS = [
+        'stock', 'stocks', 'shares', 'share', 'etf', 'options', 'futures',
+        'crypto', 'bitcoin', 'bond', 'equity', 'stake', 'portfolio',
+        'warrant',
+    ]
+
+    # 命中即排除：關稅／貿易政策類用語（非個股交易）
+    VIP_EXCLUDE_PHRASES = [
+        'trade talks', 'trade talk', 'trade deal', 'trade deficit', 'trade war',
+        'trade regime', 'trade policy', 'trade pact', 'trade agreement',
+        'trade negotiation', 'trade surplus', 'trade dispute', 'trade barrier',
+        'trade route', 'trade relationship', 'trade ties',
+        'tariff', 'tariffs',
+    ]
+
+    def _norm_news_title(self, title: str) -> str:
+        """Google News 標題格式為 'Title - Source'，去尾端來源並正規化，供去重使用"""
+        t = _re.sub(r'\s*-\s*[^-]{2,60}$', '', (title or '').strip())
+        return _re.sub(r'\s+', ' ', t).strip().lower()
+
+    def _vip_is_trade_news(self, text: str) -> bool:
+        """判斷文字是否屬名人「交易揭露」性質（排除關稅／貿易政策類用語）"""
+        low = (text or '').lower()
+        if any(p in low for p in self.VIP_EXCLUDE_PHRASES):
+            return False
+        if any(t in low for t in self.VIP_DISCLOSURE_TERMS):
+            return True
+        if (any(v in low for v in self.VIP_ACTION_VERBS) and
+                any(s in low for s in self.VIP_SECURITY_WORDS)):
+            return True
+        return False
+
     def _match_politician(self, text: str) -> Dict:
         """
         檢查文字是否包含追蹤名人,回傳匹配到的 {'name': ..., 'category': ...}
@@ -1896,9 +1993,69 @@ class NewsMonitor:
                     return {'name': target['name'], 'category': target['category']}
         return {}
 
+    def _fetch_vip_google_news(self) -> List[Dict]:
+        """以 Google News 查詢式 RSS 抓取名人交易新聞（每組一個分類查詢）
+
+        查詢式來源可精準撈到特定名人的交易揭露報導（實測單一查詢可回 100 筆），
+        遠優於在一般市場頭條 RSS 中被動等待關鍵字命中（實測命中率趨近 0）。
+        """
+        items: List[Dict] = []
+        seen = set()
+        for group, query in self.vip_news_queries:
+            url = ('https://news.google.com/rss/search?q=' + urllib.parse.quote(query) +
+                   '&hl=en-US&gl=US&ceid=US:en')
+            try:
+                feed = feedparser.parse(url)
+            except Exception as e:
+                logger.warning(f"  [GNews:{group}] feed error: {e}")
+                continue
+            logger.info(f"  [GNews:{group}] entries: {len(feed.entries)}")
+            for entry in feed.entries[:100]:
+                title = entry.get('title', '')
+                if self._is_error_title(title):
+                    continue
+                # 僅以「去來源後綴」的標題判定：
+                #   Google News 的 summary 多為標題複述易混入雜訊；
+                #   標題尾端的來源名（如 - Business Insider）含 'insider' 會誤觸揭露詞。
+                judge = self._norm_news_title(title)
+                matched = self._match_politician(judge)
+                if not matched:
+                    continue
+                if not self._vip_is_trade_news(judge):
+                    continue
+                published_raw = entry.get('published_parsed')
+                if not published_raw:
+                    continue
+                try:
+                    pub_date = datetime(*published_raw[:6])
+                except Exception:
+                    continue
+                if (datetime.now() - pub_date).days > self.vip_max_age_days:
+                    continue
+                norm_key = (self._norm_news_title(title), matched['name'])
+                if norm_key in seen:
+                    continue
+                seen.add(norm_key)
+                src_name = 'Google News'
+                try:
+                    src_name = (entry.get('source') or {}).get('title') or 'Google News'
+                except Exception:
+                    pass
+                items.append({
+                    'source':     src_name,
+                    'politician': matched['name'],
+                    'category':   matched['category'],
+                    'title':      title,
+                    'title_zh':   '',
+                    'link':       entry.get('link', ''),
+                    'published':  pub_date,
+                })
+        logger.info(f"  [GNews] 名人交易命中: {len(items)}")
+        return items
+
     def fetch_politician_trades(self) -> List[Dict]:
         """
-        從 CNBC 和 WSJ RSS 抓取名人交易相關新聞(使用關鍵字過濾).
+        抓取名人交易相關新聞：Google News 查詢式來源 + 一般財經媒體 RSS 關鍵字過濾.
         
         來源:
           1. CNBC RSS(關鍵字過濾)
@@ -1915,17 +2072,13 @@ class NewsMonitor:
           'published': datetime,
         }
         """
-        logger.info("Fetching VIP trade news from media sources...")
-        results = []
-        seen_links = set()
+        logger.info("Fetching VIP trade news (Google News queries + media RSS)...")
 
-        trade_keywords = [
-            'stock', 'trade', 'bought', 'sold', 'purchase', 'sell',
-            'invest', 'crypto', 'bitcoin', 'option', 'futures',
-            'portfolio', 'disclosure', 'filing', 'shares', 'etf',
-            'warrant', 'stake', 'holding', 'position', 'buys', 'sells',
-            'acquired', 'divested', 'bet', 'wager', 'trading',
-        ]
+        # ── 1. Google News 查詢式來源（主要來源，2026-10-12 新增）──────────
+        # 舊版只掃一般市場頭條 RSS，名人交易屬低頻事件，實測命中率趨近 0。
+        results = self._fetch_vip_google_news()
+        seen_links = {it['link'] for it in results}
+        seen_norm = {(self._norm_news_title(it['title']), it['politician']) for it in results}
 
         # ── 從所有新聞來源(CNBC、WSJ、Reuters、Morningstar、Schwab 等)抓取相關新聞 ──
         for src in self.news_sources:
@@ -1948,18 +2101,22 @@ class NewsMonitor:
                     if not matched:
                         continue
 
-                    # 檢查是否包含交易關鍵字
-                    if not any(kw in combined.lower() for kw in trade_keywords):
+                    # 名人交易判定（揭露名詞、或交易動詞+證券詞；排除關稅類用語）
+                    if not self._vip_is_trade_news(combined):
                         continue
 
-                    # 去重
-                    if link in seen_links:
+                    # 去重（連結 + 標題正規化，避免同一則新聞多家媒體轉載重複）
+                    norm_key = (self._norm_news_title(title), matched['name'])
+                    if link in seen_links or norm_key in seen_norm:
                         continue
                     seen_links.add(link)
+                    seen_norm.add(norm_key)
 
-                    # 取得發布時間(不限天數,永遠顯示最新內容)
+                    # 取得發布時間（限近 N 天，查詢式來源會回大量舊聞）
                     published_raw = entry.get('published_parsed')
                     pub_date = datetime(*published_raw[:6]) if published_raw else datetime.now()
+                    if (datetime.now() - pub_date).days > self.vip_max_age_days:
+                        continue
                     results.append({
                         'source':    src['name'],
                         'politician': matched['name'],
@@ -1984,18 +2141,22 @@ class NewsMonitor:
                 matched = self._match_politician(combined)
                 if not matched:
                     continue
-                if not any(kw in combined for kw in trade_keywords):
+                if not self._vip_is_trade_news(combined):
                     continue
                 link = entry.get('link', '')
-                if link in seen_links:
+                norm_key = (self._norm_news_title(title), matched['name'])
+                if link in seen_links or norm_key in seen_norm:
                     continue
                 seen_links.add(link)
+                seen_norm.add(norm_key)
                 pub_date = now
                 try:
                     if entry.get('published_parsed'):
                         pub_date = datetime(*entry.published_parsed[:6])
                 except Exception:
                     pass
+                if (datetime.now() - pub_date).days > self.vip_max_age_days:
+                    continue
                 results.append({
                     'source':    'MacroMicro 財經M平方',
                     'politician': matched['name'],
@@ -2008,9 +2169,19 @@ class NewsMonitor:
         except Exception as e:
             logger.warning(f"  [MacroMicro VIP] error: {e}")
 
-        # 按發布時間排序(最新優先),取前20筆
+        # 按發布時間排序(最新優先)
         results.sort(key=lambda x: x['published'], reverse=True)
-        results = results[:20]
+
+        # 每位名人限額，避免單一人物（如 Cathie Wood）洗版；取前 20 筆
+        per_person: Dict[str, int] = {}
+        limited: List[Dict] = []
+        for item in results:
+            cnt = per_person.get(item['politician'], 0)
+            if cnt >= self.vip_max_per_person:
+                continue
+            per_person[item['politician']] = cnt + 1
+            limited.append(item)
+        results = limited[:20]
 
         # 批次預翻譯填快取
         try:
@@ -2029,18 +2200,20 @@ class NewsMonitor:
         """格式化名人金融交易揭露訊息區塊(按分類分組)"""
         section  = f"\n{'='*40}\n"
         section += "🌟 <b>名人金融交易動態揭露</b>\n"
-        section += "(政治人物 ／ 科技名人 ／ 投資大師)\n"
+        section += "(政界 ／ 國會交易 ／ 科技名人 ／ 政商名人 ／ 投資大師)\n"
         section += f"{'='*40}\n\n"
 
         if not trades:
             section += "📭 目前無名人金融交易相關資訊\n"
         else:
             # 按分類分組
-            category_order = ['川普家族', '裴洛西夫婦', '科技名人', '投資大師']
+            category_order = ['川普家族', '裴洛西夫婦', '國會交易', '科技名人', '政商名人', '投資大師']
             category_emoji = {
                 '川普家族':  '🏛️',
                 '裴洛西夫婦': '🏛️',
+                '國會交易':  '🏛️',
                 '科技名人':  '💻',
+                '政商名人':  '🏢',
                 '投資大師':  '💰',
             }
 
@@ -2074,9 +2247,10 @@ class NewsMonitor:
 
         section += f"{'='*40}\n"
         section += (
-            "📊 資料來源: CNBC ／ 華爾街日報 ／ Bloomberg ／ "
-            "MarketWatch ／ Financial Times ／ Yahoo Finance ／ Seeking Alpha(新聞報導)\n"
+            "📊 資料來源: Google News 查詢（CNBC ／ 華爾街日報 ／ Bloomberg ／ "
+            "MarketWatch ／ Yahoo Finance ／ Benzinga ／ MarketBeat 等財經媒體報導）\n"
         )
+        section += f"🕐 收錄範圍: 近 {self.vip_max_age_days} 天內之名人交易相關報導\n"
         section += "📋 官方持倉數據: 詳見下方 SEC 13F 官方申報區塊\n"
         section += "⚠️ 註: 本區塊數據來自財經媒體報導,非官方交易揭露\n"
         return section

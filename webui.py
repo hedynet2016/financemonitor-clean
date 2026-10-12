@@ -852,7 +852,7 @@ def tasks_view():
     news_sources = ["CNBC", "WSJ", "Bloomberg", "MarketWatch", "Yahoo Finance", "FT", "Seeking Alpha", "TechNews", "MacroMicro", "Digitimes"]
     sec_api_13f = ["Berkshire Hathaway", "ARK Invest", "Baupost Group", "Appaloosa", "Tiger Global", "Bridgewater", "Soros Fund", "Dalio", "Norges Bank (挪威主權基金)", "Temasek (新加坡淡馬錫)"]
     mag7 = ["AAPL (Apple)", "MSFT (Microsoft)", "NVDA (NVIDIA)", "GOOGL (Alphabet)", "AMZN (Amazon)", "META (Meta)", "TSLA (Tesla)"]
-    vip_categories = ["Trump family", "Pelosi", "Musk/Gates/Bezos/Zuck/Huang/Cook", "Buffett/Druckenmiller/Dalio/Burry"]
+    vip_categories = ["川普家族（含川普本人）", "裴洛西夫婦", "國會交易（MTG/Khanna/Gottheimer/Tuberville/Green/Hagerty）", "科技名人（Musk/Gates/Thiel/Bezos/Zuckerberg/Cook/Huang）", "政商名人（Dimon/Fink/Ackman/Druckenmiller/Bloomberg）", "投資大師（Buffett/Munger/Burry/Wood/Dalio/Soros）"]
     bls_indicators = ["CPI (CUUR0000SA0)", "Core CPI (CUUR0000SA0L1E)", "PPI (WPSFD4)", "Unemployment (LNS14000000)", "Non-Farm Payrolls (CES0000000001)"]
     ict_sources = ["TechCrunch", "VentureBeat", "The Verge", "Wired", "MIT Tech Review", "Ars Technica", "AnandTech", "CNET", "Tom\u2019s Hardware", "Hacker News", "ACCUPASS (5 keywords)", "EventPlus (all)", "Huodongxing (5 keywords)", "Allevents.in (weekdays)"]
 
@@ -889,9 +889,9 @@ def tasks_view():
   <div class="d-flex align-items-start gap-3">
     <span class="block-date">📅 2026-06-25</span>
     <div class="flex-grow-1">
-      <div class="fw-bold mb-1">VIP 交易揭露</div>
-      <div class="mb-2"><span class="source-tag">同上 10 來源</span> <span class="filter-tag">關鍵字過濾</span> <span class="filter-tag">1 週內</span></div>
-      <div><small class="text-muted">監控對象：</small> {" &bull; ".join(vip_categories)}</div>
+      <div class="fw-bold mb-1">名人金融交易動態揭露</div>
+      <div class="mb-2"><span class="source-tag">Google News 查詢式來源</span> <span class="filter-tag">6 組分類查詢</span> <span class="filter-tag">近 7 天</span> <span class="filter-tag">每人上限 3 筆</span> <span class="filter-tag">排除關稅政策類</span></div>
+      <div><small class="text-muted">監控對象（33 位）：</small> {" &bull; ".join(vip_categories)}</div>
     </div>
   </div>
 </div>
@@ -1507,6 +1507,40 @@ def api_topics_test():
                                   "sub": it.get("sub")})
     except Exception as e:
         out["error"] = f"Reddit: {type(e).__name__}: {e}"
+    return jsonify(out)
+
+
+@app.route("/api/vip-test")
+def api_vip_test():
+    """名人交易診斷：驗證伺服器環境對 Google News 查詢式來源的連線能力與命中數。"""
+    import feedparser as _fp
+    from news_monitor import NewsMonitor
+    out = {"google_news_status": None, "google_news_entries": 0,
+           "matched": 0, "categories": {}, "samples": [], "error": None}
+    try:
+        probe = _fp.parse("https://news.google.com/rss/search?q=Pelosi+stock+disclosure"
+                          "&hl=en-US&gl=US&ceid=US:en")
+        out["google_news_status"] = probe.get("status")
+        out["google_news_entries"] = len(probe.entries)
+    except Exception as e:
+        out["error"] = f"probe: {type(e).__name__}: {e}"
+    try:
+        nm = NewsMonitor(config_file=str(CONFIG_FILE))
+        items = nm._fetch_vip_google_news()
+        out["matched"] = len(items)
+        cnt = {}
+        for it in items:
+            cnt[it["category"]] = cnt.get(it["category"], 0) + 1
+        out["categories"] = cnt
+        for it in sorted(items, key=lambda x: x["published"], reverse=True)[:15]:
+            out["samples"].append({
+                "politician": it["politician"], "category": it["category"],
+                "source": it["source"],
+                "published": it["published"].strftime("%Y-%m-%d %H:%M"),
+                "title": it["title"],
+            })
+    except Exception as e:
+        out["error"] = (out["error"] or "") + f" | fetch: {type(e).__name__}: {e}"
     return jsonify(out)
 
 
