@@ -1969,6 +1969,20 @@ class NewsMonitor:
         t = _re.sub(r'\s*-\s*[^-]{2,60}$', '', (title or '').strip())
         return _re.sub(r'\s+', ' ', t).strip().lower()
 
+    # LLM 譯名與本專案既有用語對齊（分類名為「裴洛西夫婦」、13F 區塊用「波克夏·哈薩威」）
+    VIP_TERM_FIXES = [
+        ('佩洛西', '裴洛西'),
+        ('伯克希爾·哈撒韋', '波克夏·哈薩威'),
+        ('伯克希爾哈撒韋', '波克夏·哈薩威'),
+    ]
+
+    def _localize_vip_terms(self, text: str) -> str:
+        """統一推播中的常見譯名（避免同一人物在不同區塊名稱不一致）"""
+        out = text or ''
+        for src, dst in self.VIP_TERM_FIXES:
+            out = out.replace(src, dst)
+        return out
+
     def _vip_is_trade_news(self, text: str) -> bool:
         """判斷文字是否屬名人「交易揭露」性質（排除關稅／貿易政策類用語）"""
         low = (text or '').lower()
@@ -2236,7 +2250,7 @@ class NewsMonitor:
                 section += f"{emoji} <b>【{cat}】</b>\n"
                 for item in grouped[cat]:
                     pub_str   = item['published'].strftime('%m/%d %H:%M')
-                    title_zh  = self._safe_title_zh(item)
+                    title_zh  = self._localize_vip_terms(self._safe_title_zh(item))
                     section += (
                         f"  #{idx} 👤 <b>{html.escape(item['politician'])}</b>  "
                         f"[{html.escape(item['source'])}]  {pub_str}\n"
