@@ -68,14 +68,10 @@ FUT_ENTRY_MINUTES = 9 * 60
 FUT_PNL_BLOCKS = range(19, 24)
 FUT_STATE_FILE = "taiex_state.json"
 
-# ── 台股全市場即時排行設定（2026-10-14 新增）─────────────────────────
-# 問題：台股原本只監控固定 7 檔個股 + 7 檔 ETF，卻宣稱「交易量前 20 名」，
-# 導致排行失真（樣本太小）且幾乎不變動（非每半小時動態）。
-# 解法：以 TWSE/TPEx 全市場日成交資料建立「每日股池」（依前一日成交量取前 N），
-# 再以證交所 MIS 即時行情 API 批次查詢即時量價 → 真正的全市場即時排行。
-TW_UNIVERSE_FILE = "tw_universe.json"     # 每日股池快取
-TW_UNIVERSE_STOCKS = 260                  # 上市股池大小（依前一日成交量）
-TW_UNIVERSE_OTC = 90                      # 上櫃股池大小
+# ── 台股即時排行設定（範圍固定為 config 監控清單：7 檔個股＋7 檔 ETF）──
+# 2026-10-15 修正：2026-10-14 曾改為 TWSE/TPEx 全市場股池（前一日量前 260+90），
+# 經使用者要求收回範圍至監控清單；資料來源維持證交所 MIS 即時行情 API
+# 批次查詢，量價即時、每半小時重排（解決舊版 Yahoo 資料不動態的問題）。
 TW_MIS_BATCH = 80                         # MIS API 每批查詢檔數
 TW_VOL_TOP_N = 10                         # 成交量排行取前 N 名
 TW_DROP_POOL = 50                         # 跌幅排行母體（成交量前 N 名）
@@ -491,18 +487,11 @@ class StockMonitor:
             logger.error(f"TPEx API error: {e}")
             return []
 
-    # ── 台股全市場即時排行（2026-10-14 新增）──────────────────────────
-    # 背景：台股原僅固定監控 7 檔個股 + 7 檔 ETF，卻以「交易量前 20 名」名義推播，
-    # 造成 (a) 排行失真（樣本僅 7 檔）、(b) 幾乎不變動（非每半小時動態）。
-    # 解法：TWSE/TPEx 全市場日成交 → 每日股池（前一日量前 N）→ 證交所 MIS 即時
-    # 行情 API 批次查詢，取得真正的全市場即時量價，逐半小時重新排序。
+    # ── 台股即時排行（範圍固定為監控清單 7 檔個股＋7 檔 ETF）────────────
+    # 2026-10-15 修正：範圍收回為 config 監控清單（原全市場股池已移除），
+    # 資料來源維持證交所 MIS 即時行情 API 批次查詢。
 
     TW_ETF_CODE_RE = re.compile(r'^00\d{2,4}[A-Z]?$')
-
-    def _cache_path(self, filename: str) -> str:
-        """狀態檔一律放在程式所在目錄（與 taiex_state.json 一致）"""
-        base = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(base, filename)
 
     @classmethod
     def _is_tw_etf_code(cls, code: str) -> bool:
@@ -510,91 +499,20 @@ class StockMonitor:
         return bool(cls.TW_ETF_CODE_RE.match(str(code or '').strip().upper()))
 
     def _load_tw_universe(self) -> List[Dict]:
-        """取得每日股池（前一日成交量前 N 的上市/上櫃證券），當日快取有效。"""
-        today = datetime.now(pytz.timezone('Asia/Taipei')).strftime('%Y-%m-%d')
-        path = self._cache_path(TW_UNIVERSE_FILE)
-        try:
-            if os.path.exists(path):
-                with open(path, 'r', encoding='utf-8') as f:
-                    cached = json.load(f)
-                if cached.get('date') == today and cached.get('items'):
-                    logger.info(f"TW universe cache hit: {len(cached['items'])} securities ({today})")
-                    return cached['items']
-        except Exception as e:
-            logger.warning(f"TW universe cache read failed: {e}")
-
-        items = self._build_tw_universe()
-        if items:
-            try:
-                with open(path, 'w', encoding='utf-8') as f:
-                    json.dump({'date': today, 'items': items}, f, ensure_ascii=False)
-            except Exception as e:
-                logger.warning(f"TW universe cache write failed: {e}")
-        return items
-
-    def _build_tw_universe(self) -> List[Dict]:
-        """由 TWSE/TPEx 全市場日成交資料，依成交量取前 N 建立股池（ex: tse/otc）。"""
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "application/json",
-        }
-        listed, otc = [], []
-
-        try:
-            r = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
-                             headers=headers, timeout=25)
-            r.raise_for_status()
-            for row in r.json():
-                code = str(row.get('Code', '')).strip()
-                if not code:
-                    continue
-                try:
-                    vol = int(str(row.get('TradeVolume') or 0).replace(',', ''))
-                except Exception:
-                    vol = 0
-                listed.append({'code': code, 'name': str(row.get('Name', '')).strip(),
-                               'ex': 'tse', 'vol': vol})
-        except Exception as e:
-            logger.error(f"TWSE STOCK_DAY_ALL failed: {e}")
-
-        try:
-            r = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes",
-                             headers=headers, timeout=25)
-            r.raise_for_status()
-            for row in r.json():
-                code = str(row.get('SecuritiesCompanyCode', '')).strip()
-                # 僅保留 4 碼個股或 00 開頭 ETF，排除權證/ETN 等衍生商品
-                if not re.fullmatch(r'\d{4}|00\d{2,4}[A-Z]?', code):
-                    continue
-                try:
-                    vol = int(str(row.get('TradingShares') or 0).replace(',', ''))
-                except Exception:
-                    vol = 0
-                otc.append({'code': code, 'name': str(row.get('CompanyName', '')).strip(),
-                            'ex': 'otc', 'vol': vol})
-        except Exception as e:
-            logger.error(f"TPEx daily quotes failed: {e}")
-
-        listed.sort(key=lambda x: x['vol'], reverse=True)
-        otc.sort(key=lambda x: x['vol'], reverse=True)
-        items = listed[:TW_UNIVERSE_STOCKS] + otc[:TW_UNIVERSE_OTC]
-
-        # 併入使用者監控清單，確保指定標的永遠在池內
-        seen = {i['code'] for i in items}
+        """即時查詢標的：固定為 config 監控清單（個股＋ETF）。"""
+        items, seen = [], set()
         for t in (self.tw_tickers + self.tw_etfs):
             code = self._strip_tw_suffix(t)
             if not code or code in seen:
                 continue
+            seen.add(code)
             is_otc = t.endswith('.TWO')
             nm = (self.get_tw_stock_name(t) if t in self.TW_STOCK_NAMES
                   else self.get_tw_etf_name(t))
-            items.append({'code': code, 'name': nm, 'ex': 'otc' if is_otc else 'tse'})
-            seen.add(code)
-
-        cleaned = [{'code': i['code'], 'name': i['name'], 'ex': i['ex']} for i in items]
-        logger.info(f"TW universe built: {len(cleaned)} securities "
-                    f"(listed pool {len(listed)}, otc pool {len(otc)})")
-        return cleaned
+            items.append({'code': code, 'name': nm,
+                          'ex': 'otc' if is_otc else 'tse'})
+        logger.info(f"TW watchlist universe: {len(items)} securities")
+        return items
 
     def _fetch_tw_mis_quotes(self, items: List[Dict]) -> List[Dict]:
         """以證交所 MIS 即時行情 API 批次查詢股池，回傳即時量價清單。"""
@@ -667,7 +585,7 @@ class StockMonitor:
         return quotes
 
     def fetch_tw_market_realtime(self) -> List[Dict]:
-        """取得台股全市場即時量價（股池 + MIS）。"""
+        """取得台股監控清單（固定範圍）即時量價（MIS 批次查詢）。"""
         items = self._load_tw_universe()
         if not items:
             logger.warning("TW universe empty, cannot build realtime rankings")
@@ -675,7 +593,7 @@ class StockMonitor:
         return self._fetch_tw_mis_quotes(items)
 
     def rank_tw_volume(self, quotes: List[Dict]) -> Dict[str, List[Dict]]:
-        """台股成交量排行：個股 Top N 與 ETF Top N（全市場即時）"""
+        """台股成交量排行：個股與 ETF（範圍固定為監控清單，即時）"""
         stocks = sorted([q for q in quotes if not q.get('is_etf')],
                         key=lambda x: x['volume'], reverse=True)
         etfs = sorted([q for q in quotes if q.get('is_etf')],
@@ -689,7 +607,7 @@ class StockMonitor:
         return {'stocks': top_stocks, 'etfs': top_etfs}
 
     def rank_tw_drop(self, quotes: List[Dict]) -> Dict[str, List[Dict]]:
-        """台股跌幅排行：成交量前 N 名母體中，跌幅超過門檻者（依跌幅排序）"""
+        """台股跌幅排行：監控標的中跌幅超過門檻者（依跌幅排序）"""
         stocks = sorted([q for q in quotes if not q.get('is_etf')],
                         key=lambda x: x['volume'], reverse=True)[:TW_DROP_POOL]
         etfs = sorted([q for q in quotes if q.get('is_etf')],
@@ -1297,7 +1215,7 @@ class StockMonitor:
     def generate_tw_drop_message(self, vol_rank: Dict[str, List[Dict]],
                                  drop_data: Dict[str, List[Dict]],
                                  fut_quotes: Dict[str, Dict] = None) -> str:
-        """生成台股推播訊息：全市場即時成交量排行（個股/ETF）＋跌幅排行＋台指期"""
+        """生成台股推播訊息：監控清單成交量排行（個股/ETF）＋跌幅排行＋台指期"""
         taipei_tz = pytz.timezone('Asia/Taipei')
         current_time = datetime.now(taipei_tz)
 
@@ -1307,7 +1225,7 @@ class StockMonitor:
         drop_etfs = drop_data.get('etfs', [])
 
         message = f"""
-🇹🇼 <b>台股監控（全市場即時排行）</b>
+🇹🇼 <b>台股監控（監控清單即時排行）</b>
 📅 {current_time.strftime('%Y年%m月%d日 %H:%M')} (台灣時間)
 
 """
@@ -1316,7 +1234,7 @@ class StockMonitor:
             return item.get('code') or self._strip_tw_suffix(item.get('ticker', ''))
 
         def _tw_vol_str(item: Dict) -> str:
-            # MIS 全市場資料單位為張；備援（Yahoo/固定清單）資料沿用原格式
+            # MIS 即時資料單位為張；備援（Yahoo/固定清單）資料沿用原格式
             return self.format_tw_volume(item['volume']) if 'code' in item else self.format_volume(item['volume'])
 
         def _tw_line(item: Dict, rank=None) -> str:
@@ -1333,8 +1251,8 @@ class StockMonitor:
 
         # ── 個股成交量排行 ──
         message += f"{'='*35}\n"
-        message += f"📈 <b>台股個股成交量 Top{TW_VOL_TOP_N}</b>\n"
-        message += f"（全市場即時，每半小時更新）\n"
+        message += f"📈 <b>台股個股成交量排行</b>\n"
+        message += f"（監控清單 {len(top_stocks)} 檔，MIS 即時，每半小時更新）\n"
         message += f"{'='*35}\n\n"
         if top_stocks:
             for s in top_stocks:
@@ -1344,8 +1262,8 @@ class StockMonitor:
 
         # ── ETF 成交量排行 ──
         message += f"{'='*35}\n"
-        message += f"📊 <b>台股 ETF 成交量 Top{TW_VOL_TOP_N}</b>\n"
-        message += f"（全市場即時，每半小時更新）\n"
+        message += f"📊 <b>台股 ETF 成交量排行</b>\n"
+        message += f"（監控清單 {len(top_etfs)} 檔，MIS 即時，每半小時更新）\n"
         message += f"{'='*35}\n\n"
         if top_etfs:
             for e in top_etfs:
@@ -1356,7 +1274,7 @@ class StockMonitor:
         # ── 跌幅排行（成交量前 50 名中跌幅 >3%）──
         message += f"{'='*35}\n"
         message += f"📉 <b>台股跌幅排行警報</b>\n"
-        message += f"（成交量前{TW_DROP_POOL}名且跌幅超過3%）\n"
+        message += f"（監控標的中跌幅超過3%）\n"
         message += f"{'='*35}\n\n"
 
         if drop_stocks:
@@ -1371,7 +1289,7 @@ class StockMonitor:
                     f"{change_emoji} {change_sign}{s['change_percent']:.2f}%\n"
                 )
         else:
-            message += "✅ 成交量前50名中無個股跌幅超過3%\n"
+            message += "✅ 監控標的中無個股跌幅超過3%\n"
 
         if drop_etfs:
             message += "\n🔻 <b>ETF</b>\n"
@@ -1385,7 +1303,7 @@ class StockMonitor:
                     f"{change_emoji} {change_sign}{e['change_percent']:.2f}%\n"
                 )
         else:
-            message += "✅ 成交量前10名 ETF 中無跌幅超過3%\n"
+            message += "✅ 監控標的 ETF 中無跌幅超過3%\n"
 
         # 台指期區塊（漲跌點數；09:30-11:30 加損益試算）
         if fut_quotes:
@@ -1461,18 +1379,18 @@ class StockMonitor:
             logger.info("\nUS drop rankings monitor check completed!")
             logger.info("="*50 + "\n")
         
-        # 台股交易期間：全市場即時成交量排行 + 跌幅排行（2026-10-14 改版）
+        # 台股交易期間：監控清單即時成交量排行 + 跌幅排行（2026-10-15 修正範圍）
         if tw_trading:
-            logger.info("TW market is trading, fetching market-wide realtime quotes...")
+            logger.info("TW market is trading, fetching watchlist realtime quotes...")
 
             tw_quotes = self.fetch_tw_market_realtime()
 
             if tw_quotes:
                 vol_rank = self.rank_tw_volume(tw_quotes)
                 drop_data = self.rank_tw_drop(tw_quotes)
-                self._tw_data_source = "證交所 MIS 即時行情（全市場）"
+                self._tw_data_source = "證交所 MIS 即時行情（監控清單）"
             else:
-                # 全市場來源失效時退回固定監控清單（Yahoo/TWSE OpenAPI）
+                # MIS 來源失效時退回 Yahoo/TWSE OpenAPI（同一份監控清單）
                 logger.warning("TW market-wide quotes empty, falling back to fixed watchlist")
                 tw_stock_data = self.get_tw_realtime_data()
                 tw_etf_data = self.get_tw_etf_data()
@@ -1491,19 +1409,19 @@ class StockMonitor:
 
             # 顯示結果
             logger.info("\n" + "="*50)
-            logger.info("TW Stocks Volume Top10 (market-wide realtime):")
+            logger.info("TW Stocks Volume Ranking (watchlist realtime):")
             logger.info("="*50)
             for s in vol_rank['stocks']:
                 logger.info(f"{s['rank']}. {s['code']} {s['name']} - Volume: {self.format_tw_volume(s['volume'])} - Price: {s['price']:.2f} ({s['change_percent']:+.2f}%)")
 
             logger.info("\n" + "="*50)
-            logger.info("TW ETFs Volume Top10 (market-wide realtime):")
+            logger.info("TW ETFs Volume Ranking (watchlist realtime):")
             logger.info("="*50)
             for e in vol_rank['etfs']:
                 logger.info(f"{e['rank']}. {e['code']} {e['name']} - Volume: {self.format_tw_volume(e['volume'])} - Price: {e['price']:.2f} ({e['change_percent']:+.2f}%)")
 
             logger.info("\n" + "="*50)
-            logger.info("TW Drop Rankings (top50 by volume, drop >3%):")
+            logger.info("TW Drop Rankings (watchlist, drop >3%):")
             logger.info("="*50)
             for i, stock in enumerate(drop_data['stocks'], 1):
                 logger.info(f"{i}. {stock['code'] if 'code' in stock else stock['ticker']} - Volume: {self.format_tw_volume(stock['volume'])} - Drop: {stock['change_percent']:.2f}%")

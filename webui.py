@@ -632,7 +632,7 @@ def settings():
           <tr><th style="width:120px">時間</th><th>任務</th><th style="width:120px">來源</th></tr>
         </thead>
         <tbody>
-          <tr><td><b>每半小時</b></td><td>股市監控（美股跌幅 &gt;3% 個股 + ETF；台股全市場即時個股/ETF 成交量 Top10＋跌幅排行＋台指期）</td><td><span class="badge bg-secondary">監控</span></td></tr>
+          <tr><td><b>每半小時</b></td><td>股市監控（美股跌幅 &gt;3% 個股 + ETF；台股監控清單 7+7 檔個股/ETF 即時成交量排行＋跌幅排行＋台指期）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>{{'%02d:00' % dc.news_hour}}</b></td><td>新聞 + 經濟指標 + AI 動能觀察 + 財經行事曆 + 投資熱門話題 推播</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>{{'%02d:00' % dc.events_hour}}</b></td><td>活動推播（ICT/AI 活動，2026-06-25 啟用）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>16:00</b></td><td>商品追蹤（雅虎拍賣 9 關鍵字：固定 3 賣場 + 雙北地區同類 3C 店家）</td><td><span class="badge bg-secondary">監控</span></td></tr>
@@ -866,7 +866,7 @@ def tasks_view():
       <tr><td class="text-muted" style="width:200px">每日完整推播</td><td><b>{news_hour:02d}:00 台北時間</b> — 熱門財經/VIP交易/13F/IPO/財報/AI動能/經濟指標/財經行事曆/投資熱門話題（卡片左側為各區塊啟用日期）</td></tr>
       <tr><td class="text-muted">每日活動推播</td><td><b>{events_hour:02d}:00 台北時間</b> — ICT/AI 活動（2026-06-25 啟用，未來90天）</td></tr>
       <tr><td class="text-muted">每日商品追蹤</td><td><b>16:00 台北時間</b> — 雅虎拍賣商品監控（9 關鍵字，價格 $2,000~$15,000，排除NG，刊登 7 天內，上限 30 筆）<br>　① 固定賣場 3 家：樺仔二手電腦 / 點子3C 板橋店 / US3C<br>　② 雙北地區同類店家：台北市・新北市「店鋪型 3C 賣家」（與點子3C同類），條件與固定賣場完全相同，自動納入新店家</td></tr>
-      <tr><td class="text-muted">每半小時股市監控</td><td>美股跌幅&gt;3%個股+ETF；台股全市場即時個股/ETF 成交量 Top10＋跌幅排行，附台指期漲跌與 09:30-11:30 小台、微台各自損益試算（假設 09:00 買進各五口）</td></tr>
+      <tr><td class="text-muted">每半小時股市監控</td><td>美股跌幅&gt;3%個股+ETF；台股監控清單（7 檔個股+7 檔 ETF）MIS 即時成交量排行＋跌幅排行，附台指期漲跌與 09:30-11:30 小台、微台各自損益試算（假設 09:00 買進各五口）</td></tr>
       <tr><td class="text-muted">每日自動備份</td><td><b>09:00 台北時間</b> — 推送 logs 到 GitHub（render_scheduler.py）</td></tr>
     </table>
   </div>
@@ -1022,14 +1022,14 @@ def tasks_view():
   <div class="d-flex align-items-start gap-3">
     <span class="block-num" style="font-size:1.5rem">NT</span>
     <div class="flex-grow-1">
-      <div class="fw-bold mb-1">台股監控（全市場即時排行）</div>
+      <div class="fw-bold mb-1">台股監控（監控清單即時排行）</div>
       <div class="mb-2">
         <span class="tag {'tag-success' if tw_mkt.get('enabled') else 'tag-danger'}">{'ON' if tw_mkt.get('enabled') else 'OFF'}</span>
         <small class="text-muted ms-2">{tw_mkt.get('start_hour',9):02d}:{tw_mkt.get('start_minute',0):02d} - {tw_mkt.get('end_hour',13):02d}:{tw_mkt.get('end_minute',30):02d} (Asia/Taipei)</small>
       </div>
-      <div><small class="text-muted">來源：證交所 MIS 即時行情（全市場，每半小時動態重排）；日成交股池＝上市前 260＋上櫃前 90（依前一日成交量，併入下方監控標的）</small></div>
-      <div class="mt-1"><small class="text-muted">推播內容：個股成交量 Top10 ＋ ETF 成交量 Top10 ＋ 跌幅排行（成交量前 50 名、跌幅 &gt;3%）＋ 台指期（09:30-11:30 附小台/微台各五口損益試算）</small></div>
-      <div class="mt-2"><small class="text-muted">核心監控標的（永遠納入股池；全市場來源失效時作為備援）：</small></div>
+      <div><small class="text-muted">來源：證交所 MIS 即時行情（範圍固定為下方監控清單，量價即時、每半小時重排）</small></div>
+      <div class="mt-1"><small class="text-muted">推播內容：個股/ETF 成交量排行 ＋ 跌幅排行（監控標的、跌幅 &gt;3%）＋ 台指期（09:30-11:30 附小台/微台各五口損益試算）；MIS 失效時退回 Yahoo/證交所 OpenAPI</small></div>
+      <div class="mt-2"><small class="text-muted">監控標的（排行範圍固定於此）：</small></div>
       <div><small class="text-muted">{len(tw_stocks)} 個股：</small><br><code>{" ".join([s.replace('.TWO','').replace('.TW','') for s in tw_stocks])}</code></div>
       <div class="mt-1"><small class="text-muted">{len(tw_etfs)} ETF：</small><br><code>{" ".join([s.replace('.TWO','').replace('.TW','') for s in tw_etfs])}</code></div>
     </div>
@@ -1549,15 +1549,14 @@ def api_vip_test():
 
 @app.route("/api/stock-test")
 def api_stock_test():
-    """台股監控診斷：驗證全市場股池、MIS 即時行情命中數與排行榜內容。"""
-    from stock_monitor import StockMonitor, TW_UNIVERSE_STOCKS, TW_UNIVERSE_OTC
+    """台股監控診斷：驗證監控清單、MIS 即時行情命中數與排行榜內容。"""
+    from stock_monitor import StockMonitor
     out = {"universe": 0, "quotes": 0, "top_stocks": [], "top_etfs": [],
            "drop_stocks": [], "error": None}
     try:
         m = StockMonitor()
         items = m._load_tw_universe()
         out["universe"] = len(items)
-        out["pool_target"] = TW_UNIVERSE_STOCKS + TW_UNIVERSE_OTC
         quotes = m._fetch_tw_mis_quotes(items)
         out["quotes"] = len(quotes)
         vol_rank = m.rank_tw_volume(quotes)
