@@ -36,3 +36,4 @@ monitor_state.json
 backup/
 *.bak
 taiex_state.json
+tw_universe.json
