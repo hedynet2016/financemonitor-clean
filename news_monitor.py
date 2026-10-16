@@ -3705,6 +3705,116 @@ class NewsMonitor:
         )
         return section
 
+    # ■ [2026-10-16] 台指期多空指標  三大法人臺股期貨未平倉淨部位
+    # ════════════════════════════════════════════════════════════════
+    TAIFEX_FUT_URL = (
+        "https://openapi.taifex.com.tw/v1/"
+        "MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate"
+    )
+    TAIFEX_SENTIMENT_ORDER = ['外資及陸資', '投信', '自營商']
+
+    @staticmethod
+    def _tf_int(val) -> int:
+        """期交所 OpenAPI 的數字欄位為字串,轉為 int(失敗回 0)"""
+        try:
+            return int(str(val).replace(',', '').replace(' ', '').strip())
+        except (TypeError, ValueError):
+            return 0
+
+    def fetch_taifex_sentiment(self) -> Dict:
+        """取得期交所三大法人臺股期貨未平倉部位(台指期多空指標).
+
+        資料源: 期交所 OpenAPI(免 key),盤後公布前一交易日資料.
+        回傳 dict:
+            date / weekday / items[{name,net,long,short,day_net}]
+            total_net / error
+        """
+        out = {'date': None, 'weekday': None, 'items': [],
+               'total_net': None, 'error': None}
+        headers = {'User-Agent': 'Mozilla/5.0 (compatible; WorkBuddyMonitor/1.0)'}
+        try:
+            resp = requests.get(self.TAIFEX_FUT_URL, headers=headers, timeout=30)
+            resp.raise_for_status()
+            rows, date_raw = {}, None
+            for it in resp.json():
+                if str(it.get('ContractCode', '')).strip() != '臺股期貨':
+                    continue
+                if not date_raw:
+                    date_raw = str(it.get('Date', '')).strip()
+                rows[str(it.get('Item', '')).strip()] = it
+
+            if not rows:
+                out['error'] = '臺股期貨查無三大法人留倉資料'
+            else:
+                total = 0
+                for name in self.TAIFEX_SENTIMENT_ORDER:
+                    row = rows.get(name)
+                    if not row:
+                        continue
+                    net = self._tf_int(row.get('OpenInterest(Net)'))
+                    total += net
+                    out['items'].append({
+                        'name': name,
+                        'net': net,
+                        'long': self._tf_int(row.get('OpenInterest(Long)')),
+                        'short': self._tf_int(row.get('OpenInterest(Short)')),
+                        'day_net': self._tf_int(row.get('TradingVolume(Net)')),
+                    })
+                out['total_net'] = total
+                if date_raw:
+                    try:
+                        d = datetime.strptime(date_raw, '%Y%m%d')
+                        out['date'] = d.strftime('%Y/%m/%d')
+                        out['weekday'] = _WEEKDAY_ZH[d.weekday()]
+                    except ValueError:
+                        out['date'] = date_raw
+        except Exception as e:
+            out['error'] = f"{type(e).__name__}: {e}"
+        return out
+
+    def _format_taifex_sentiment_section(self, sentiment: Dict) -> str:
+        """格式化台指期多空指標區塊(三大法人臺股期貨未平倉淨部位)"""
+        section  = f"\n{'='*40}\n"
+        section += "📉 <b>台指期多空指標</b>（三大法人未平倉）\n"
+        section += f"{'='*40}\n\n"
+
+        if not sentiment or not sentiment.get('items'):
+            section += "📭 目前無法取得期交所三大法人留倉資料\n"
+            if sentiment and sentiment.get('error'):
+                section += f"⚠️ {html.escape(str(sentiment['error']))[:120]}\n"
+            section += f"{'='*40}\n"
+            return section
+
+        date_txt = sentiment.get('date') or '—'
+        wd = sentiment.get('weekday')
+        section += f"🗓 資料日期: {date_txt}"
+        section += f"（{wd}）\n\n" if wd else "\n\n"
+
+        icon = {'外資及陸資': '🏦', '投信': '🏢', '自營商': '🏛️'}
+        for item in sentiment['items']:
+            net = item['net']
+            trend = '偏多 🔴' if net >= 0 else '偏空 🟢'
+            section += f"{icon.get(item['name'], '📌')} <b>{item['name']}</b>\n"
+            section += (
+                f"   淨部位: <b>{net:+,} 口</b>（{trend}）\n"
+                f"   多單 {item['long']:,} ／ 空單 {item['short']:,} 口\n"
+                f"   當日進出: {item['day_net']:+,} 口\n\n"
+            )
+
+        total = sentiment.get('total_net')
+        if total is not None:
+            section += "────────────\n"
+            section += (
+                f"📊 三大法人合計淨部位: <b>{total:+,} 口</b>"
+                f" → {'偏多 🔴' if total >= 0 else '偏空 🟢'}\n"
+            )
+
+        section += f"{'='*40}\n"
+        section += "📋 來源: 台灣期貨交易所 三大法人期貨留倉（盤後公布前一交易日）\n"
+        section += "📐 契約: 臺股期貨（TX）；淨部位 = 未平倉多單 − 未平倉空單\n"
+        section += "🔴 偏多 ／ 🟢 偏空（台股慣例）；單位: 口\n"
+        return section
+
     # ■ [2026-06-25] ICT/AI 活動  ICT/AI 活動資訊(美/中/台,未來三個月)
     # ════════════════════════════════════════════════════════════════
     def _scrape_accupass_events(self, keywords: List[str] = None) -> List[Dict]:
@@ -4604,6 +4714,7 @@ class NewsMonitor:
                                   mag7_events: List[Dict] = None,
                                   ai_momentum_news: List[Dict] = None,
                                   financial_calendar: List[Dict] = None,
+                                  taifex_sentiment: Dict = None,
                                   hot_topics: Dict = None) -> str:
         """生成Telegram消息"""
         current_time = datetime.now()
@@ -4740,6 +4851,10 @@ class NewsMonitor:
         if financial_calendar is not None:
             message += self._format_financial_calendar_section(financial_calendar)
 
+        # ―― [2026-10-16] 台指期多空指標:三大法人臺股期貨未平倉淨部位 ――――――
+        if taifex_sentiment is not None:
+            message += self._format_taifex_sentiment_section(taifex_sentiment)
+
         # ―― [2026-09-30] 投資熱門話題:Reddit 美股×AI 當日熱門前 10 ―――――――
         if hot_topics is not None:
             message += self._format_hot_topics_section(hot_topics)
@@ -4757,7 +4872,7 @@ class NewsMonitor:
         return any(results.values())
     
     def run_news_only(self):
-        """執行一次新聞監控檢查(熱門財經/VIP/13F/IPO/財報/AI動能/經濟指標/財經行事曆/投資熱門話題)"""
+        """執行一次新聞監控檢查(熱門財經/VIP/13F/IPO/財報/AI動能/經濟指標/財經行事曆/台指期多空指標/投資熱門話題)"""
         logger.info("="*50)
         logger.info("Starting news-only monitor check...")
         logger.info("="*50)
@@ -4854,6 +4969,14 @@ class NewsMonitor:
         except Exception as e:
             logger.error(f"Hot topics fetch failed, will skip: {e}")
 
+        # ── [2026-10-16] 台指期多空指標:三大法人臺股期貨未平倉淨部位 ─────
+        taifex_sentiment = None
+        try:
+            logger.info("Fetching TAIEX futures institutional positioning...")
+            taifex_sentiment = self.fetch_taifex_sentiment()
+        except Exception as e:
+            logger.error(f"TAIFEX sentiment fetch failed, will skip: {e}")
+
         # 發送整合通知(不含[2026-06-25] ICT/AI 活動)
         logger.info("Sending notification report...")
         notification_message = self.generate_telegram_message(
@@ -4868,6 +4991,7 @@ class NewsMonitor:
             ict_ai_events=None,  # [2026-06-25] ICT/AI 活動 獨立發送
             ai_momentum_news=ai_momentum_news,
             financial_calendar=financial_calendar,
+            taifex_sentiment=taifex_sentiment,
             hot_topics=hot_topics,
         )
         self.send_telegram_message(notification_message)
