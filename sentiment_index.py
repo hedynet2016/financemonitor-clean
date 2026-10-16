@@ -15,7 +15,7 @@
   5. 前一日台股表現      加權指數漲跌點數
                          漲 > 500 點 → 5 分；跌 > 500 點 → 15 分；其他 → 10 分
 
-判定：合計 > 50 → 建議做多 🔴；< 50 → 建議做空 🟢；= 50 → 中性觀望
+判定：合計 > 60 → 建議做多 🔴；< 50 → 建議做空 🟢；50 ~ 60 → 觀望 ⚪
 比對：11:30 以台指期（TXF）漲跌比對方向命中率（見 format_hitrate_section）
 
 資料來源（皆免 API key）：
@@ -46,7 +46,9 @@ TPE = ZoneInfo('Asia/Taipei') if ZoneInfo else timezone(timedelta(hours=8))
 # ── 常數 ────────────────────────────────────────────────────────────
 STATE_FILE = 'sentiment_index_state.json'
 SCORE_BEAR, SCORE_NEUTRAL, SCORE_BULL = 5, 10, 15
-BASE_TOTAL = 50
+BASE_TOTAL = 50                  # 中性基準（僅用於顯示）
+BULL_THRESHOLD = 60              # 總分 > 60 → 建議做多
+BEAR_THRESHOLD = 50              # 總分 < 50 → 建議做空；50 ~ 60 → 觀望
 TOTAL_MAX = 75
 SENTI_MAX_AGE_DAYS = 45          # CPI / 非農：約 1.5 個月，確保月度指標下次公布前仍有效
 HISTORY_MAX = 60                 # 命中率歷史保留筆數
@@ -419,6 +421,17 @@ def fetch_oil_spot() -> List[Dict]:
 
 
 # ── 主流程 ──────────────────────────────────────────────────────────
+def decide_direction(total: Optional[int]) -> Optional[str]:
+    """依合計分數決定建議方向：> 60 → 做多；< 50 → 做空；50 ~ 60 → 觀望"""
+    if total is None:
+        return None
+    if total > BULL_THRESHOLD:
+        return '做多'
+    if total < BEAR_THRESHOLD:
+        return '做空'
+    return '觀望'
+
+
 def fetch_sentiment_index(run_time: Optional[datetime] = None) -> Dict:
     """計算自訂多空評分指標（五項）"""
     run_time = run_time or now_tpe()
@@ -460,12 +473,7 @@ def fetch_sentiment_index(run_time: Optional[datetime] = None) -> Dict:
     idx['oil_spot'] = fetch_oil_spot()
 
     idx['total'] = sum(i['score'] for i in idx['items'])
-    if idx['total'] > BASE_TOTAL:
-        idx['direction'] = '做多'
-    elif idx['total'] < BASE_TOTAL:
-        idx['direction'] = '做空'
-    else:
-        idx['direction'] = '中性觀望'
+    idx['direction'] = decide_direction(idx['total'])
     return idx
 
 
@@ -527,7 +535,7 @@ def evaluate_signal(date_str: str, ref: float, last: float,
     """依 08:00 建議方向計算當日命中結果（不寫檔）
 
     命中定義：建議做多且台指期上漲，或建議做空且台指期下跌；
-    中性觀望不列入命中率。模擬損益以昨結算為基準、小台×5＋微台×5。
+    觀望（50 ~ 60 分）不列入命中率。模擬損益以昨結算為基準、小台×5＋微台×5。
     """
     sig = get_signal(date_str, path)
     if not sig:
@@ -637,14 +645,13 @@ def format_section(idx: Dict) -> str:
             for r in spot)
         section += f"🛢 WTI 西德州原油參考（不計分）：{html.escape(txt)}\n\n"
 
-    icon = {'做多': '🔴', '做空': '🟢', '中性觀望': '⚪'}
+    icon = {'做多': '🔴', '做空': '🟢', '觀望': '⚪', '中性觀望': '⚪'}
     section += "────────────\n"
     section += (f"📊 合計：<b>{idx['total']} 分</b>"
                 f"（基準 {BASE_TOTAL} 分／滿分 {TOTAL_MAX} 分）\n")
     section += (f"🎯 建議：<b>{idx['direction']}</b> "
                 f"{icon.get(idx['direction'], '')}"
-                f"（{'>' if idx['total'] > BASE_TOTAL else ('<' if idx['total'] < BASE_TOTAL else '=')}"
-                f" {BASE_TOTAL} 分）\n")
+                f"（&gt;{BULL_THRESHOLD} 做多／&lt;{BEAR_THRESHOLD} 做空／其餘觀望）\n")
 
     st = hit_stats()
     if st['total']:
@@ -694,7 +701,7 @@ def format_hitrate_section(taifex: Dict, run_time: Optional[datetime] = None) ->
     elif rec and rec.get('hit') is False:
         lines.append("　❌ <b>未命中</b>（方向相反）")
     else:
-        lines.append("　⚪ 中性觀望，不列入命中率")
+        lines.append("　⚪ 觀望（50 ~ 60 分），不列入命中率")
     if rec and rec.get('pnl') is not None:
         pnl = rec['pnl']
         lines.append(f"　💰 依建議方向模擬損益（小台×5＋微台×5）："
