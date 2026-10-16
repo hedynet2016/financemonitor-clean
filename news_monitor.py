@@ -16,6 +16,7 @@ import math
 import urllib.parse
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Tuple, Optional
+from zoneinfo import ZoneInfo
 
 # ── Patch yfinance cache directory (must be before yfinance import) ──
 import os as _os
@@ -64,26 +65,29 @@ logger = logging.getLogger(__name__)
 # ══════════════════════════════════════════════════════════════════════
 # 財經行事曆資料表（2026 年官方已公布日程 + 財報預估日）
 # - FOMC / CPI / 非農就業：來源 Federal Reserve & BLS 官方 2026 年度日程
-#   （FOMC 決議日 = 會議第二天 14:00 ET；CPI/非農 = 當日 08:30 ET）
+# - **時間標示一律為台灣時間（Asia/Taipei, UTC+8）**
+#   原始美東時間換算：CPI/非農 08:30 ET → 台北 20:30（夏令）／21:30（冬令）
+#                     FOMC 決議 14:00 ET → 台北隔日 02:00（夏令）／03:00（冬令）
+#   FOMC 跨日者，date 已調整為「台北時間對應日期」
 # - 財報日期為「預估值」，實際日期以各公司 IR 公告為準，建議每季校準一次
 # - SpaceX 於 2026/6/12 在納斯達克上市（代碼 SPCX），已列入財報追蹤
 # - 每年初需更新此資料表（官方行事曆通常在年底前公布下年度日程）
 # ══════════════════════════════════════════════════════════════════════
 FINANCIAL_CALENDAR_2026 = [
     # ── 聯準會 FOMC 利率決議 ────────────────────────────────────────
-    {'date': '2026-09-16', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '9/15-16 會議（含 SEP 點陣圖）'},
-    {'date': '2026-10-28', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '10/27-28 會議'},
-    {'date': '2026-12-09', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '12/8-9 會議（含 SEP 點陣圖）'},
+    {'date': '2026-09-17', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '台北時間 02:00 公布（含 SEP 點陣圖）'},
+    {'date': '2026-10-29', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '台北時間 02:00 公布'},
+    {'date': '2026-12-10', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '台北時間 03:00 公布（含 SEP 點陣圖）'},
     # ── 美國 CPI 物價指數（BLS）────────────────────────────────────
-    {'date': '2026-09-11', 'category': 'CPI',   'title': '美國 8 月 CPI 物價指數', 'note': 'BLS 公布 08:30 ET'},
-    {'date': '2026-10-14', 'category': 'CPI',   'title': '美國 9 月 CPI 物價指數', 'note': 'BLS 公布 08:30 ET'},
-    {'date': '2026-11-10', 'category': 'CPI',   'title': '美國 10 月 CPI 物價指數', 'note': 'BLS 公布 08:30 ET'},
-    {'date': '2026-12-10', 'category': 'CPI',   'title': '美國 11 月 CPI 物價指數', 'note': 'BLS 公布 08:30 ET'},
+    {'date': '2026-09-11', 'category': 'CPI',   'title': '美國 8 月 CPI 物價指數', 'note': '台北時間 20:30 公布'},
+    {'date': '2026-10-14', 'category': 'CPI',   'title': '美國 9 月 CPI 物價指數', 'note': '台北時間 20:30 公布'},
+    {'date': '2026-11-10', 'category': 'CPI',   'title': '美國 10 月 CPI 物價指數', 'note': '台北時間 21:30 公布'},
+    {'date': '2026-12-10', 'category': 'CPI',   'title': '美國 11 月 CPI 物價指數', 'note': '台北時間 21:30 公布'},
     # ── 非農就業報告（Employment Situation，BLS）──────────────────
-    {'date': '2026-09-04', 'category': '非農就業', 'title': '美國 8 月非農就業報告', 'note': 'BLS 公布 08:30 ET'},
-    {'date': '2026-10-02', 'category': '非農就業', 'title': '美國 9 月非農就業報告', 'note': 'BLS 公布 08:30 ET'},
-    {'date': '2026-11-06', 'category': '非農就業', 'title': '美國 10 月非農就業報告', 'note': 'BLS 公布 08:30 ET'},
-    {'date': '2026-12-04', 'category': '非農就業', 'title': '美國 11 月非農就業報告', 'note': 'BLS 公布 08:30 ET'},
+    {'date': '2026-09-04', 'category': '非農就業', 'title': '美國 8 月非農就業報告', 'note': '台北時間 20:30 公布'},
+    {'date': '2026-10-02', 'category': '非農就業', 'title': '美國 9 月非農就業報告', 'note': '台北時間 20:30 公布'},
+    {'date': '2026-11-06', 'category': '非農就業', 'title': '美國 10 月非農就業報告', 'note': '台北時間 21:30 公布'},
+    {'date': '2026-12-04', 'category': '非農就業', 'title': '美國 11 月非農就業報告', 'note': '台北時間 21:30 公布'},
     # ── 追蹤公司財報（預估日）──────────────────────────────────────
     {'date': '2026-10-15', 'category': '財報', 'title': 'TSMC 台積電 Q3 財報', 'ticker': 'TSM',  'note': '預估日'},
     {'date': '2026-10-22', 'category': '財報', 'title': 'TESLA Q3 財報', 'ticker': 'TSLA', 'note': '預估日'},
@@ -3635,13 +3639,16 @@ class NewsMonitor:
     def _format_financial_calendar_section(self, calendar_events: List[Dict]) -> str:
         """格式化財經行事曆區塊（未來 30 天）"""
         section  = f"\n{'='*40}\n"
-        section += "📅 <b>財經行事曆</b>（未來 30 天）\n"
+        section += "📅 <b>財經行事曆</b>（未來 30 天，台灣時間）\n"
         section += f"{'='*40}\n\n"
 
         if not calendar_events:
             section += "📭 未來 30 天內暫無已排定的財經事件\n"
             section += f"{'='*40}\n"
             return section
+
+        taipei_fmt = datetime.strftime(
+            datetime.now(ZoneInfo('Asia/Taipei')), '%Y/%m/%d %H:%M')
 
         cat_emoji = {'FOMC': '🏦', 'CPI': '🏷️', '非農就業': '📊', '財報': '💰'}
         for idx, ev in enumerate(calendar_events, 1):
@@ -3661,6 +3668,8 @@ class NewsMonitor:
             "📋 追蹤: FOMC / CPI / 非農就業 + "
             "TSMC / TESLA / NVIDIA / MSFT / AMZN / GOOGL / AVGO / SPCX 財報\n"
         )
+        section += "🕐 以上時間均為台灣時間（Asia/Taipei）\n"
+        section += f"🗓 台灣時間基準: {taipei_fmt}\n"
         section += "⚠️ 財報日期為預估值，以公司公告為準\n"
         return section
 
