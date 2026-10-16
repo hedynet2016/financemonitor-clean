@@ -9,7 +9,9 @@
   2. 最新美國 CPI 表現   實際 vs 市場預期
                          超出預期 → 5 分；低於預期 → 15 分；無最新數據 → 10 分
   3. 最新美國非農就業    實際 vs 市場預期（同上）
-  4. 最新國際油價表現    EIA 原油庫存變化（實際 vs 市場預期，同上）
+  4. 最新國際油價表現    Brent 布蘭特原油單日漲跌幅（Yahoo BZ=F）
+                         漲 > 3% → 5 分（超出預期，通膨壓力，偏空）
+                         跌 > 3% → 15 分（低於預期，偏多）；其他 → 10 分
   5. 前一日台股表現      加權指數漲跌點數
                          漲 > 500 點 → 5 分；跌 > 500 點 → 15 分；其他 → 10 分
 
@@ -18,9 +20,10 @@
 
 資料來源（皆免 API key）：
   - 美股市值前 20 大： Yahoo predefined screener（most_actives 取 250 檔後依市值排序）
-  - CPI / 非農 / 油庫存：TradingView 經濟行事曆（含 forecast / actual）
+  - CPI / 非農：        TradingView 經濟行事曆（含 forecast / actual）
+  - 布蘭特油價：        Yahoo BZ=F 日線（最新收盤 vs 前一交易日漲跌幅）
   - 前一日台股：        證交所 FMTQIK（發行量加權股價指數＋漲跌點數），Yahoo ^TWII 備援
-  - 油價現貨參考：      Yahoo CL=F / BZ=F（僅供顯示，不計分）
+  - WTI 油價參考：      Yahoo CL=F（僅供顯示，不計分）
 """
 
 import html
@@ -46,13 +49,13 @@ SCORE_BEAR, SCORE_NEUTRAL, SCORE_BULL = 5, 10, 15
 BASE_TOTAL = 50
 TOTAL_MAX = 75
 SENTI_MAX_AGE_DAYS = 45          # CPI / 非農：約 1.5 個月，確保月度指標下次公布前仍有效
-SENTI_OIL_MAX_AGE_DAYS = 10      # EIA 原油庫存為週資料
 HISTORY_MAX = 60                 # 命中率歷史保留筆數
 HIT_STATS_N = 10                 # 顯示近 N 次命中率
 HIT_BLOCK = 23                   # 11:30（block = hour*2 + minute//30）
 US_TOP_N = 20
 
 MOVEMENT_THRESHOLD_PCT = 3.0     # 美股前 20 大平均漲跌幅門檻（%）
+OIL_MOVEMENT_THRESHOLD_PCT = 3.0 # Brent 布蘭特油價單日漲跌幅門檻（%）
 TAIEX_THRESHOLD_PTS = 500.0      # 前一日台股漲跌門檻（點）
 
 _UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
@@ -70,7 +73,6 @@ SHARE_CLASS_DUP = {'GOOG': 'GOOGL', 'FOX': 'FOXA', 'NWS': 'NWSA'}
 # TradingView 事件標題偏好（依序取第一個命中；採精確比對避免誤抓子項）
 CPI_TITLES = ['CPI y/y', 'CPI m/m', 'CPI']
 NFP_TITLES = ['Non Farm Payrolls', 'Nonfarm Payrolls', 'Non-Farm Payrolls']
-OIL_TITLES = ['EIA Crude Oil Stocks Change', 'Crude Oil Inventories']
 
 
 # ── 通用工具 ────────────────────────────────────────────────────────
@@ -333,18 +335,78 @@ def score_prev_taiex(data: Dict) -> Tuple[int, str]:
     return SCORE_NEUTRAL, f'加權指數 {ch:+,.0f} 點（未達 ±500 點）'
 
 
-# ── 油價現貨（僅顯示，不計分）─────────────────────────────────────
+# ── 4. 國際油價（Brent 布蘭特，單日漲跌幅 ±3%）───────────────────
+def _ts_to_dt(ts) -> Optional[datetime]:
+    """Yahoo spark 時間戳（秒或毫秒）→ UTC datetime"""
+    try:
+        t = float(ts)
+    except (TypeError, ValueError):
+        return None
+    if t > 1e11:                      # 毫秒
+        t /= 1000.0
+    try:
+        return datetime.fromtimestamp(t, timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def fetch_brent_oil() -> Dict:
+    """Brent 布蘭特原油最新收盤與相對前一交易日漲跌幅（Yahoo BZ=F 日線）"""
+    out = {'symbol': 'BZ=F', 'label': 'Brent 布蘭特', 'date': None,
+           'last': None, 'prev': None, 'pct': None, 'source': None, 'error': None}
+    try:
+        resp = requests.get(YAHOO_SPARK_URL,
+                            params={'symbols': 'BZ=F', 'range': '1mo', 'interval': '1d'},
+                            headers={'User-Agent': _UA}, timeout=20)
+        resp.raise_for_status()
+        d = resp.json().get('BZ=F') or {}
+        closes = d.get('close') or []
+        stamps = d.get('timestamp') or []
+    except Exception as e:
+        out['error'] = f'Yahoo BZ=F {type(e).__name__}: {e}'
+        return out
+
+    seq = [(t, c) for t, c in zip(stamps, closes) if c]
+    if len(seq) < 2:
+        out['error'] = 'Yahoo BZ=F 日線資料不足（<2 筆）'
+        return out
+    _, prev = seq[-2]
+    ct, last = seq[-1]
+    dt = _ts_to_dt(ct)
+    out.update({'prev': float(prev), 'last': float(last),
+                'pct': (float(last) / float(prev) - 1) * 100,
+                'date': dt.astimezone(TPE).strftime('%Y-%m-%d') if dt else None,
+                'source': 'Yahoo Finance BZ=F（Brent 布蘭特原油期貨）'})
+    return out
+
+
+def score_brent_oil(data: Dict) -> Tuple[int, str]:
+    """Brent 布蘭特油價單日漲跌幅：
+       漲逾 3% → 5 分（超出預期，通膨壓力，偏空）
+       跌逾 3% → 15 分（低於預期，偏多）；其他（含未達 ±3%）→ 10 分
+    """
+    pct = (data or {}).get('pct')
+    if pct is None:
+        return SCORE_NEUTRAL, '無法取得 Brent 布蘭特油價（視為無最新數據）'
+    if pct > OIL_MOVEMENT_THRESHOLD_PCT:
+        return SCORE_BEAR, f'Brent 布蘭特單日漲 {pct:+.2f}%（漲逾 3%，通膨壓力）'
+    if pct < -OIL_MOVEMENT_THRESHOLD_PCT:
+        return SCORE_BULL, f'Brent 布蘭特單日跌 {pct:+.2f}%（跌逾 3%）'
+    return SCORE_NEUTRAL, f'Brent 布蘭特單日漲跌 {pct:+.2f}%（未達 ±3%）'
+
+
+# ── WTI 油價現貨（僅顯示，不計分）─────────────────────────────────
 def fetch_oil_spot() -> List[Dict]:
     try:
         resp = requests.get(YAHOO_SPARK_URL,
-                            params={'symbols': 'CL=F,BZ=F', 'range': '5d', 'interval': '1d'},
+                            params={'symbols': 'CL=F', 'range': '5d', 'interval': '1d'},
                             headers={'User-Agent': _UA}, timeout=20)
         resp.raise_for_status()
         j = resp.json()
     except Exception as e:
         logger.info('[sentiment] 油價現貨取得失敗：%s', e)
         return []
-    labels = {'CL=F': 'WTI 西德州', 'BZ=F': 'Brent 布蘭特'}
+    labels = {'CL=F': 'WTI 西德州'}
     rows = []
     for sym, label in labels.items():
         d = j.get(sym) or {}
@@ -371,18 +433,23 @@ def fetch_sentiment_index(run_time: Optional[datetime] = None) -> Dict:
     idx['items'].append({'key': 'us', 'name': '最新美股表現', 'score': s, 'why': why,
                          'data': us})
 
-    # 2/3/4. CPI / 非農 / 油價
+    # 2/3. CPI / 非農（實際 vs 市場預期）
     econ = fetch_econ_events()
     idx['debug']['econ_source'] = econ.get('source')
     idx['debug']['econ_error'] = econ.get('error')
     events = econ['events']
-    for key, name, titles, max_age in (
-            ('cpi', '最新美國 CPI', CPI_TITLES, SENTI_MAX_AGE_DAYS),
-            ('nfp', '最新美國非農就業', NFP_TITLES, SENTI_MAX_AGE_DAYS),
-            ('oil', '最新國際油價（EIA 原油庫存）', OIL_TITLES, SENTI_OIL_MAX_AGE_DAYS)):
-        ev = _pick_event(events, titles, max_age) if events else None
+    for key, name, titles in (
+            ('cpi', '最新美國 CPI', CPI_TITLES),
+            ('nfp', '最新美國非農就業', NFP_TITLES)):
+        ev = _pick_event(events, titles, SENTI_MAX_AGE_DAYS) if events else None
         s, why = _score_surprise(ev)
         idx['items'].append({'key': key, 'name': name, 'score': s, 'why': why, 'data': ev})
+
+    # 4. 國際油價（Brent 布蘭特單日漲跌幅 ±3%）
+    oil = fetch_brent_oil()
+    s, why = score_brent_oil(oil)
+    idx['items'].append({'key': 'oil', 'name': '最新國際油價（Brent 布蘭特）',
+                         'score': s, 'why': why, 'data': oil})
 
     # 5. 前一日台股表現
     tw = fetch_prev_taiex()
@@ -532,7 +599,7 @@ def format_section(idx: Dict) -> str:
                 section += f"   資料：{html.escape(str(data.get('source') or '—'))}\n"
             else:
                 section += f"   ⚠️ {html.escape(str(data.get('error') or '無資料'))[:120]}\n"
-        elif key in ('cpi', 'nfp', 'oil'):
+        elif key in ('cpi', 'nfp'):
             if data:
                 pub = data['dt'].astimezone(TPE).strftime('%Y/%m/%d %H:%M')
                 section += (f"   公布：{pub}（台灣時間）· 實際 "
@@ -543,6 +610,16 @@ def format_section(idx: Dict) -> str:
                     section += f"   來源：{html.escape(str(data['source']))}\n"
             else:
                 section += "   📭 無最新數據（視為 10 分）\n"
+        elif key == 'oil':
+            if data.get('pct') is not None:
+                date_disp = data.get('date') or '最新交易日'
+                section += (f"   {date_disp} 收盤 <b>{data['last']:,.2f}</b> 美元"
+                            f"（{data['pct']:+.2f}%；前一日 {data['prev']:,.2f}）\n")
+                if data.get('source'):
+                    section += f"   來源：{html.escape(str(data['source']))}\n"
+            else:
+                section += (f"   ⚠️ {html.escape(str(data.get('error') or '無油價資料'))[:120]}"
+                            f"（視為 10 分）\n")
         elif key == 'tw':
             if data.get('change') is not None:
                 date_disp = data.get('date') or '前一日'
@@ -558,7 +635,7 @@ def format_section(idx: Dict) -> str:
             f"{r['label']} {r['last']:,.2f}"
             + (f"（{r['pct']:+.2f}%）" if r.get('pct') is not None else '')
             for r in spot)
-        section += f"🛢 國際油價參考（不計分）：{html.escape(txt)}\n\n"
+        section += f"🛢 WTI 西德州原油參考（不計分）：{html.escape(txt)}\n\n"
 
     icon = {'做多': '🔴', '做空': '🟢', '中性觀望': '⚪'}
     section += "────────────\n"
@@ -575,9 +652,9 @@ def format_section(idx: Dict) -> str:
         section += f"（{st['hits']}/{st['total']}）\n"
     section += "🕦 11:30 台股推播將以台指期比對方向命中率\n"
     section += f"{'='*40}\n"
-    section += ("📐 評分：美股前 20 大｜CPI｜非農｜EIA 原油庫存｜前一日台股，"
+    section += ("📐 評分：美股前 20 大｜CPI｜非農｜Brent 布蘭特油價｜前一日台股，"
                 "各 5/10/15 分（合計 25~75）\n")
-    section += "📋 來源: Yahoo Finance / TradingView 經濟行事曆 / 台灣證交所\n"
+    section += "📋 來源: Yahoo Finance（BZ=F） / TradingView 經濟行事曆 / 台灣證交所\n"
     section += "🔴 偏多 ／ 🟢 偏空（台股慣例）\n"
     return section
 

@@ -1003,7 +1003,7 @@ def tasks_view():
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">自訂多空評分指標（每日 08:00）</div>
       <div class="mb-2"><span class="source-tag">Yahoo Finance</span> <span class="source-tag">TradingView 經濟行事曆</span> <span class="source-tag">證交所 FMTQIK</span> <span class="filter-tag">每項 5/10/15 分</span> <span class="filter-tag">合計 25~75 分</span></div>
-      <div><small class="text-muted">五項指標：</small> ① 最新美股表現（市值前 20 大平均漲跌）&bull; ② 美國 CPI（實際 vs 預期）&bull; ③ 美國非農就業（實際 vs 預期）&bull; ④ 國際油價（EIA 原油庫存，實際 vs 預期）&bull; ⑤ 前一日台股（加權指數漲跌點數）</div>
+      <div><small class="text-muted">五項指標：</small> ① 最新美股表現（市值前 20 大平均漲跌）&bull; ② 美國 CPI（實際 vs 預期）&bull; ③ 美國非農就業（實際 vs 預期）&bull; ④ 國際油價（Brent 布蘭特單日漲跌 ±3%）&bull; ⑤ 前一日台股（加權指數漲跌點數）</div>
       <div><small class="text-muted">判定：</small> 合計 &gt; 50 分 → 建議做多 🔴；&lt; 50 分 → 建議做空 🟢；= 50 分 → 中性觀望</div>
       <div><small class="text-muted">比對：</small> 11:30 台股推播以台指期（TXF 對昨結算）比對方向命中率並累計近 10 次勝率</div>
       <div><small class="text-muted">診斷：</small> <code>/api/sentiment-test</code></div>
