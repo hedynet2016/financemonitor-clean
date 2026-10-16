@@ -17,6 +17,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import requests
+
 # 確保專案根目錄在 Python path
 PROJECT_ROOT = Path(__file__).parent.absolute()
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -180,6 +182,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "FinanceMonitor Bot 指令列表\n"
         "============================\n"
+        "💬 直接輸入文字即可與 AI 助理對話\n"
         "/run      - 立即執行完整推播（新聞 + 活動）\n"
         "/news     - 只執行新聞區塊（區塊 1-10）\n"
         "/events   - 只執行活動區塊（區塊 11）\n"
@@ -299,6 +302,93 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("無效命令，請輸入 /help 查看可用指令。")
+
+# ============================================================
+# AI 自由對話（Pollinations 免費 LLM，與翻譯系統同一管道）
+# ============================================================
+POLLINATIONS_URL = "https://text.pollinations.ai/openai"
+AI_CHAT_MODELS = ("openai", "openai-fast")     # 主力 → 備援
+AI_HISTORY_MAX_MSGS = 12                       # 每個對話保留的訊息數（user+assistant 合計）
+AI_REPLY_TIMEOUT = 90                          # LLM 呼叫逾時（秒）
+_ai_history = {}                               # chat_id -> [{"role": ..., "content": ...}]
+
+AI_SYSTEM_PROMPT = (
+    "你是金融監控系統 FinanceMonitor 的 AI 助理，透過 Telegram 與使用者（Ben）對話。\n"
+    "規則：\n"
+    "1. 一律使用繁體中文（台灣用語），簡潔有條理，單次回覆不超過 300 字。\n"
+    "2. 系統背景：Render 雲端部署，監控台美股（每 30 分鐘）、08:00 新聞推播"
+    "（含自訂多空評分指標、台指期多空指標）、16:00 Yahoo 拍賣商品追蹤、"
+    "13F/IPO/財報/AI動能等新聞區塊。\n"
+    "3. 可用指令：/run（完整推播）、/news、/events、/stocks、/product、/status、/help。"
+    "使用者要手動觸發時請引導他用指令。\n"
+    "4. 涉及投資標的時僅供參考，須提醒不構成投資建議。\n"
+    "5. 你無法即時查詢股價與執行系統操作；需要資料時請引導使用者用對應指令或 Web UI。"
+)
+
+
+def _pollinations_chat(messages):
+    """呼叫 Pollinations OpenAI 相容端點，回傳 (回覆文字, 模型名) 或 (None, None)"""
+    headers = {"Content-Type": "application/json", "User-Agent": "FinanceMonitor/1.0"}
+    for model in AI_CHAT_MODELS:
+        for attempt in range(2):  # 每個模型重試一次（429 限流常見）
+            try:
+                resp = requests.post(
+                    POLLINATIONS_URL,
+                    json={"model": model, "messages": messages},
+                    headers=headers,
+                    timeout=AI_REPLY_TIMEOUT,
+                )
+                if resp.status_code == 200:
+                    content = resp.json()["choices"][0]["message"]["content"]
+                    if content and content.strip():
+                        return content.strip(), model
+                else:
+                    logger.warning(f"[AI chat] Pollinations {model} HTTP {resp.status_code}")
+            except Exception as e:
+                logger.warning(f"[AI chat] Pollinations {model} 失敗: {e}")
+            time.sleep(3)
+    return None, None
+
+
+def _ai_reply(chat_id, text):
+    """組含歷史的訊息呼叫 LLM，回傳回覆文字（失敗回 None）。歷史僅存記憶體。"""
+    hist = _ai_history.setdefault(str(chat_id), [])
+    hist.append({"role": "user", "content": text})
+    while len(hist) > AI_HISTORY_MAX_MSGS:
+        hist.pop(0)
+    messages = [{"role": "system", "content": AI_SYSTEM_PROMPT}] + hist
+    reply, model = _pollinations_chat(messages)
+    if reply is None:
+        hist.pop()  # 移除本次 user 訊息，避免失敗輪污染歷史
+        return None
+    hist.append({"role": "assistant", "content": reply})
+    while len(hist) > AI_HISTORY_MAX_MSGS:
+        hist.pop(0)
+    logger.info(f"[AI chat] chat_id={chat_id} 回覆完成（model={model}, 歷史={len(hist)} 則）")
+    return reply
+
+
+async def ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """處理非指令的純文字訊息：交給 LLM 對話"""
+    if not await auth_check(update):
+        return
+    text = (update.message.text or "").strip()
+    if not text:
+        return
+    chat_id = update.effective_chat.id
+    try:
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+    except Exception:
+        pass
+    reply = await asyncio.to_thread(_ai_reply, chat_id, text)
+    if reply is None:
+        await update.message.reply_text(
+            "⚠️ AI 助理暫時無法回應（LLM 服務限流或逾時），請稍後再試。"
+        )
+        return
+    # Telegram 單則上限 4096 字元
+    await update.message.reply_text(reply[:4000])
+
 
 # ============================================================
 # 排程推播（背景執行緒）
@@ -526,6 +616,9 @@ def main():
 
     # 未知命令
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
+
+    # AI 自由對話（非指令純文字）
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_chat))
 
     # 全域錯誤處理器（避免 Conflict/Network 等例外導致 Bot 崩潰）
     async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):

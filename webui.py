@@ -1820,19 +1820,21 @@ def start_scheduler():
     """Start scheduler processes in background (non-blocking).
 
     Launches two background processes:
-      1. telegram_bot.py --no-bot  (monitor scheduling)
+      1. telegram_bot.py  (monitor scheduling + Telegram bot polling/AI chat)
       2. scripts/render_scheduler.py (backup)
     """
     global SCHEDULER_PROCS
     python = shutil.which("python3") or shutil.which("python") or sys.executable
 
     procs = []
-    # 1. Monitor scheduler (telegram_bot.py --no-bot --no-webui)
+    # 1. Monitor scheduler + Telegram Bot (telegram_bot.py --no-webui)
     #    --no-webui: prevent circular webui.py startup (webui.py already running)
+    #    2026-10-17: 移除 --no-bot，啟用 Telegram Bot 輪詢（指令 + AI 自由對話）
+    #    注意：getUpdates 只能單一消費者，本機若另行手動跑 telegram_bot.py 會 409 衝突
     #    stdout/stderr inherit so monitor logs appear in Render log panel
     try:
         p1 = subprocess.Popen(
-            [python, str(SCRIPT_DIR / "telegram_bot.py"), "--no-bot", "--no-webui"],
+            [python, str(SCRIPT_DIR / "telegram_bot.py"), "--no-webui"],
             cwd=str(SCRIPT_DIR),
         )
         procs.append(p1)
