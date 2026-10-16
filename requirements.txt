@@ -6,7 +6,9 @@ flask>=3.0.0,<4.0
 gunicorn>=21.0.0,<22.0
 
 # Telegram
-python-telegram-bot>=20.7,<21.0
+# 21.6+ 才支援 Python 3.13（Render native 環境）；20.x 在 3.13 會報
+# 'Updater' object has no attribute '_Updater__polling_cleanup_cb'
+python-telegram-bot>=21.6,<22.0
 
 # Discord
 requests>=2.31.0,<3.0
