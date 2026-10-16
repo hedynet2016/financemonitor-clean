@@ -663,6 +663,13 @@ def main():
 
     # 啟動 polling
     try:
+        # Python 3.12+（Render 3.13/3.14）移除了 get_event_loop 的自動建立行為，
+        # PTB __run 內部（_application.py）呼叫 get_event_loop() 前必須先備妥迴圈，
+        # 否則報 "There is no current event loop in thread 'MainThread'"
+        try:
+            asyncio.get_event_loop()
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
         _write_bot_status(polling=True, reason="run_polling_started")
         app.run_polling(
             allowed_updates=Update.ALL_TYPES,
