@@ -60,6 +60,8 @@ DEPLOY_FILES = [
     "economic_monitor.py",
     "webui.py",
     "telegram_bot.py",
+    "topics_monitor.py",
+    "sentiment_index.py",
     # 依賴與設定
     "requirements.txt",
     "Dockerfile",

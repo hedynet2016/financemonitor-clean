@@ -3966,6 +3966,17 @@ class NewsMonitor:
         section += "🔴 偏多 ／ 🟢 偏空（台股慣例）；單位: 口\n"
         return section
 
+    # ■ [2026-10-16] 自訂多空評分指標  五項指標合計分數(使用者自訂)
+    # ════════════════════════════════════════════════════════════════
+    def _format_sentiment_index_section(self, idx: Dict) -> str:
+        """格式化自訂多空評分指標區塊(五項指標，合計 >50 做多 / <50 做空)"""
+        try:
+            import sentiment_index as senti_mod
+            return senti_mod.format_section(idx)
+        except Exception as e:
+            logger.warning(f"sentiment index format failed: {e}")
+            return ""
+
     # ■ [2026-06-25] ICT/AI 活動  ICT/AI 活動資訊(美/中/台,未來三個月)
     # ════════════════════════════════════════════════════════════════
     def _scrape_accupass_events(self, keywords: List[str] = None) -> List[Dict]:
@@ -4866,6 +4877,7 @@ class NewsMonitor:
                                   ai_momentum_news: List[Dict] = None,
                                   financial_calendar: List[Dict] = None,
                                   taifex_sentiment: Dict = None,
+                                  sentiment_index: Dict = None,
                                   hot_topics: Dict = None) -> str:
         """生成Telegram消息"""
         current_time = datetime.now()
@@ -5006,6 +5018,10 @@ class NewsMonitor:
         if taifex_sentiment is not None:
             message += self._format_taifex_sentiment_section(taifex_sentiment)
 
+        # ―― [2026-10-16] 自訂多空評分指標:五項指標合計分數(做多/做空)――――
+        if sentiment_index is not None:
+            message += self._format_sentiment_index_section(sentiment_index)
+
         # ―― [2026-09-30] 投資熱門話題:Reddit 美股×AI 當日熱門前 10 ―――――――
         if hot_topics is not None:
             message += self._format_hot_topics_section(hot_topics)
@@ -5023,7 +5039,7 @@ class NewsMonitor:
         return any(results.values())
     
     def run_news_only(self):
-        """執行一次新聞監控檢查(熱門財經/VIP/13F/IPO/財報/AI動能/經濟指標/財經行事曆/台指期多空指標/投資熱門話題)"""
+        """執行一次新聞監控檢查(熱門財經/VIP/13F/IPO/財報/AI動能/經濟指標/財經行事曆/台指期多空指標/自訂多空評分指標/投資熱門話題)"""
         logger.info("="*50)
         logger.info("Starting news-only monitor check...")
         logger.info("="*50)
@@ -5128,6 +5144,19 @@ class NewsMonitor:
         except Exception as e:
             logger.error(f"TAIFEX sentiment fetch failed, will skip: {e}")
 
+        # ── [2026-10-16] 自訂多空評分指標:五項指標合計分數(做多/做空)─────
+        #    同時寫入 sentiment_index_state.json，供 11:30 台股推播比對命中率
+        sentiment_index = None
+        try:
+            logger.info("Fetching custom sentiment index (5 user-defined indicators)...")
+            import sentiment_index as senti_mod
+            sentiment_index = senti_mod.fetch_sentiment_index()
+            senti_mod.save_signal(sentiment_index)
+            logger.info("Sentiment index: %s 分 → %s",
+                        sentiment_index.get('total'), sentiment_index.get('direction'))
+        except Exception as e:
+            logger.error(f"Sentiment index fetch failed, will skip: {e}")
+
         # 發送整合通知(不含[2026-06-25] ICT/AI 活動)
         logger.info("Sending notification report...")
         notification_message = self.generate_telegram_message(
@@ -5143,6 +5172,7 @@ class NewsMonitor:
             ai_momentum_news=ai_momentum_news,
             financial_calendar=financial_calendar,
             taifex_sentiment=taifex_sentiment,
+            sentiment_index=sentiment_index,
             hot_topics=hot_topics,
         )
         self.send_telegram_message(notification_message)

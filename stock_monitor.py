@@ -66,6 +66,8 @@ FUT_ENTRY_MINUTES = 9 * 60
 # 損益試算顯示時段：09:30 ~ 11:30（以半小時 block 計：block = hour*2 + minute//30）
 # block 19=09:30, 20=10:00, 21=10:30, 22=11:00, 23=11:30
 FUT_PNL_BLOCKS = range(19, 24)
+# [2026-10-16] 08:00 自訂多空評分指標的命中比對時點：11:30（block 23）
+FUT_HIT_BLOCK = 23
 FUT_STATE_FILE = "taiex_state.json"
 
 # ── 台股即時排行設定（範圍固定為 config 監控清單：7 檔個股＋7 檔 ETF）──
@@ -1210,6 +1212,15 @@ class StockMonitor:
                     )
             else:
                 lines.append("（今日尚無進場基準價）")
+
+        # [2026-10-16] 11:30 命中比對：08:00 自訂多空評分指標 vs 台指期走勢
+        if block == FUT_HIT_BLOCK:
+            try:
+                import sentiment_index as senti_mod
+                lines.append("")
+                lines.append(senti_mod.format_hitrate_section(txf or {}, now).strip("\n"))
+            except Exception as e:
+                logger.warning("[TAIFEX] 自訂多空評分命中比對失敗：%s", e)
         return "\n".join(lines) + "\n\n"
 
     def generate_tw_drop_message(self, vol_rank: Dict[str, List[Dict]],

@@ -999,6 +999,20 @@ def tasks_view():
 
 <div class="block-card">
   <div class="d-flex align-items-start gap-3">
+    <span class="block-date">📅 2026-10-16</span>
+    <div class="flex-grow-1">
+      <div class="fw-bold mb-1">自訂多空評分指標（每日 08:00）</div>
+      <div class="mb-2"><span class="source-tag">Yahoo Finance</span> <span class="source-tag">TradingView 經濟行事曆</span> <span class="source-tag">證交所 FMTQIK</span> <span class="filter-tag">每項 5/10/15 分</span> <span class="filter-tag">合計 25~75 分</span></div>
+      <div><small class="text-muted">五項指標：</small> ① 最新美股表現（市值前 20 大平均漲跌）&bull; ② 美國 CPI（實際 vs 預期）&bull; ③ 美國非農就業（實際 vs 預期）&bull; ④ 國際油價（EIA 原油庫存，實際 vs 預期）&bull; ⑤ 前一日台股（加權指數漲跌點數）</div>
+      <div><small class="text-muted">判定：</small> 合計 &gt; 50 分 → 建議做多 🔴；&lt; 50 分 → 建議做空 🟢；= 50 分 → 中性觀望</div>
+      <div><small class="text-muted">比對：</small> 11:30 台股推播以台指期（TXF 對昨結算）比對方向命中率並累計近 10 次勝率</div>
+      <div><small class="text-muted">診斷：</small> <code>/api/sentiment-test</code></div>
+    </div>
+  </div>
+</div>
+
+<div class="block-card">
+  <div class="d-flex align-items-start gap-3">
     <span class="block-date">📅 2026-09-30</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">投資熱門話題（Reddit 美股×AI 當日熱門前 10）</div>
@@ -1662,6 +1676,45 @@ def api_taifex_probe():
         except Exception as e:
             rec["error"] = f"{type(e).__name__}: {e}"
         out[name] = rec
+    return jsonify(out)
+
+
+@app.route("/api/sentiment-test")
+def api_sentiment_test():
+    """自訂多空評分指標診斷：五項指標分數、合計與建議方向（不寫入狀態檔）。"""
+    import sentiment_index as senti_mod
+
+    def _plain(data):
+        """把 datetime 轉字串，讓診斷回應可 JSON 序列化"""
+        if not isinstance(data, dict):
+            return data
+        out = {}
+        for k, v in data.items():
+            if k == "items" and isinstance(v, list):
+                out[k] = [{kk: vv for kk, vv in r.items()}
+                          for r in v if isinstance(r, dict)]
+            elif hasattr(v, "isoformat"):
+                out[k] = v.isoformat()
+            else:
+                out[k] = v
+        return out
+
+    out = {"run_time": None, "items": [], "total": None, "direction": None,
+           "oil_spot": [], "hit_stats": {}, "section": "", "debug": {}, "error": None}
+    try:
+        idx = senti_mod.fetch_sentiment_index()
+        out["run_time"] = idx.get("run_time")
+        out["items"] = [{"key": i["key"], "name": i["name"], "score": i["score"],
+                         "why": i["why"], "data": _plain(i.get("data"))}
+                        for i in idx["items"]]
+        out["total"] = idx.get("total")
+        out["direction"] = idx.get("direction")
+        out["oil_spot"] = idx.get("oil_spot") or []
+        out["debug"] = idx.get("debug") or {}
+        out["hit_stats"] = {k: v for k, v in senti_mod.hit_stats().items() if k != "records"}
+        out["section"] = senti_mod.format_section(idx)
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"
     return jsonify(out)
 
 

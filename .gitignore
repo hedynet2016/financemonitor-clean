@@ -37,3 +37,4 @@ backup/
 *.bak
 taiex_state.json
 tw_universe.json
+sentiment_index_state.json
