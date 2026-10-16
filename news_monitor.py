@@ -3754,37 +3754,88 @@ class NewsMonitor:
             out['error'] = f"期交所 OpenAPI HTTP {resp.status_code}"
             dbg['taifex_body'] = resp.text[:300]
             return
+
+        # 期交所同一端點會依環境回不同格式：本機(經代理)得到 JSON,
+        # Render 實測得到 CSV(application/octet-stream),故兩種都解析。
+        body = resp.content.decode('utf-8-sig', errors='replace')
+        dbg['taifex_head'] = body[:120]
+        stripped = body.lstrip()
+        if stripped[:1] in ('[', '{'):
+            try:
+                data = resp.json()
+            except ValueError:
+                data = None
+            if data is not None:
+                rows, date_raw = {}, None
+                for it in data:
+                    if str(it.get('ContractCode', '')).strip() != '臺股期貨':
+                        continue
+                    if not date_raw:
+                        date_raw = str(it.get('Date', '')).strip()
+                    rows[str(it.get('Item', '')).strip()] = it
+                if rows:
+                    for name in self.TAIFEX_SENTIMENT_ORDER:
+                        row = rows.get(name)
+                        if not row:
+                            continue
+                        out['items'].append({
+                            'name': name,
+                            'net': self._tf_int(row.get('OpenInterest(Net)')),
+                            'long': self._tf_int(row.get('OpenInterest(Long)')),
+                            'short': self._tf_int(row.get('OpenInterest(Short)')),
+                            'day_net': self._tf_int(row.get('TradingVolume(Net)')),
+                        })
+                    self._tf_set_date(out, date_raw)
+                    out['source'] = '期交所 OpenAPI(JSON)'
+                    return
+        self._taifex_parse_csv(out, body)
+
+    def _taifex_parse_csv(self, out: Dict, text: str) -> None:
+        """解析期交所 OpenAPI 的 CSV 回應(雲端環境實測格式).
+
+        欄位順序: 日期,商品名稱,身份別,多方交易口數,…,多空交易口數淨額,
+                  多方未平倉口數,…,空方未平倉口數,…,多空未平倉口數淨額,…
+        """
+        import csv as _csv
+        import io as _io
+        rows, date_raw = {}, None
         try:
-            data = resp.json()
-        except ValueError:
-            out['error'] = '期交所 OpenAPI 回應非 JSON'
-            dbg['taifex_body'] = resp.text[:300]
+            reader = _csv.reader(_io.StringIO(text))
+            first = True
+            for rec in reader:
+                if not rec:
+                    continue
+                if first:
+                    first = False  # 標頭列
+                    continue
+                if len(rec) < 14:
+                    continue
+                if rec[1].strip() != '臺股期貨':
+                    continue
+                if not date_raw:
+                    date_raw = rec[0].strip()
+                rows[rec[2].strip()] = rec
+        except Exception as e:
+            out['error'] = f"期交所 CSV 解析失敗 {type(e).__name__}: {e}"
             return
 
-        rows, date_raw = {}, None
-        for it in data:
-            if str(it.get('ContractCode', '')).strip() != '臺股期貨':
-                continue
-            if not date_raw:
-                date_raw = str(it.get('Date', '')).strip()
-            rows[str(it.get('Item', '')).strip()] = it
         if not rows:
             out['error'] = '期交所 OpenAPI 查無臺股期貨三大法人資料'
             return
 
         for name in self.TAIFEX_SENTIMENT_ORDER:
-            row = rows.get(name)
-            if not row:
+            rec = rows.get(name)
+            if not rec:
                 continue
             out['items'].append({
                 'name': name,
-                'net': self._tf_int(row.get('OpenInterest(Net)')),
-                'long': self._tf_int(row.get('OpenInterest(Long)')),
-                'short': self._tf_int(row.get('OpenInterest(Short)')),
-                'day_net': self._tf_int(row.get('TradingVolume(Net)')),
+                'net': self._tf_int(rec[13]),      # 多空未平倉口數淨額
+                'long': self._tf_int(rec[9]),      # 多方未平倉口數
+                'short': self._tf_int(rec[11]),    # 空方未平倉口數
+                'day_net': self._tf_int(rec[7]),   # 多空交易口數淨額
             })
         self._tf_set_date(out, date_raw)
-        out['source'] = '期交所 OpenAPI'
+        out['source'] = '期交所 OpenAPI(CSV)'
 
     def _taifex_from_finmind(self, out: Dict) -> None:
         """備援來源: FinMind TaiwanFuturesInstitutionalInvestors(匿名)
