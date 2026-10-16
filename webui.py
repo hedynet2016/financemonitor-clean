@@ -1696,9 +1696,18 @@ def api_bot_status():
                     cmd = f.read().decode("utf-8", "replace").split("\x00")
                 cmd = [c for c in cmd if c]
                 info["cmdline"] = cmd
-                info["polling"] = ("telegram_bot.py" in cmd) and ("--no-bot" not in cmd)
+                joined = " ".join(cmd)
+                info["polling"] = ("telegram_bot.py" in joined) and ("--no-bot" not in cmd)
         except Exception as e:
             info["cmdline_error"] = str(e)
+    # 讀取 telegram_bot 寫入的運行狀態檔
+    try:
+        status_file = SCRIPT_DIR / "logs" / "bot_runtime_status.json"
+        if status_file.exists():
+            with open(status_file, encoding="utf-8") as f:
+                info["runtime"] = json.load(f)
+    except Exception as e:
+        info["runtime_error"] = str(e)
     return jsonify(info)
 
 

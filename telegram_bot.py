@@ -500,6 +500,18 @@ def stop_scheduler():
 # ============================================================
 # 主程式
 # ============================================================
+BOT_RUNTIME_STATUS = PROJECT_ROOT / "logs" / "bot_runtime_status.json"
+
+def _write_bot_status(**kw):
+    """寫入 Bot 運行狀態（供 webui /api/bot-status 讀取診斷）"""
+    try:
+        payload = {"updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+        payload.update(kw)
+        BOT_RUNTIME_STATUS.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:
+        pass
+
 def main():
     global AUTHORIZED_CHAT_IDS
 
@@ -575,6 +587,8 @@ def main():
     bot_token = get_bot_token(config)
     if not bot_token or bot_token.strip() in ('', 'x', 'X', 'your_token_here', 'YOUR_BOT_TOKEN'):
         logger.debug("config.json 中的 telegram.bot_token 未設定或為佔位符，跳過 Bot 啟動")
+        _write_bot_status(polling=False, reason="token_missing_or_placeholder",
+                          token_present=bool(bot_token))
         # 僅執行排程模式（不啟動 Bot）
         try:
             while True:
@@ -587,12 +601,15 @@ def main():
 
     AUTHORIZED_CHAT_IDS = get_authorized_chat_ids(config)
     logger.info(f"授權 chat_ids: {AUTHORIZED_CHAT_IDS}")
+    _write_bot_status(polling="starting", token_present=True,
+                      chat_ids=AUTHORIZED_CHAT_IDS)
 
     # 建立 Application
     try:
         app = Application.builder().token(bot_token).build()
     except Exception as e:
         logger.error(f"Telegram Bot 初始化失敗: {e}")
+        _write_bot_status(polling=False, reason="app_build_failed", error=str(e))
         print(f"錯誤：Telegram Bot 初始化失敗：{e}")
         print("  排程推播仍在背景運行，按 Ctrl+C 停止")
         try:
@@ -646,6 +663,7 @@ def main():
 
     # 啟動 polling
     try:
+        _write_bot_status(polling=True, reason="run_polling_started")
         app.run_polling(
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=True,
@@ -653,6 +671,7 @@ def main():
         )
     except Exception as e:
         logger.error(f"Telegram Bot polling 失敗: {e}")
+        _write_bot_status(polling=False, reason="run_polling_failed", error=str(e))
         print(f"錯誤：Telegram Bot polling 中斷：{e}")
         print("  排程推播仍在背景運行，按 Ctrl+C 停止")
         try:
