@@ -3711,65 +3711,165 @@ class NewsMonitor:
         "https://openapi.taifex.com.tw/v1/"
         "MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate"
     )
+    # 備援來源: FinMind(匿名可查,數值與期交所一致,實測 Render 雲端 IP 可連)
+    FINMIND_FUT_URL = (
+        "https://api.finmindtrade.com/api/v4/data"
+        "?dataset=TaiwanFuturesInstitutionalInvestors&data_id=TX&start_date={start}"
+    )
     TAIFEX_SENTIMENT_ORDER = ['外資及陸資', '投信', '自營商']
+    _TF_HEADERS = {
+        'User-Agent': 'Mozilla/5.0 (compatible; WorkBuddyMonitor/1.0)',
+        'Accept': 'application/json, text/plain, */*',
+    }
 
     @staticmethod
     def _tf_int(val) -> int:
-        """期交所 OpenAPI 的數字欄位為字串,轉為 int(失敗回 0)"""
+        """外部 API 的數字欄位可能為字串,轉為 int(失敗回 0)"""
         try:
             return int(str(val).replace(',', '').replace(' ', '').strip())
         except (TypeError, ValueError):
             return 0
 
-    def fetch_taifex_sentiment(self) -> Dict:
-        """取得期交所三大法人臺股期貨未平倉部位(台指期多空指標).
+    def _tf_set_date(self, out: Dict, date_raw: str) -> None:
+        """設定資料日期(接受 YYYYMMDD 或 YYYY-MM-DD)"""
+        raw = (date_raw or '').replace('-', '').strip()
+        if len(raw) != 8:
+            out['date'] = date_raw or None
+            return
+        try:
+            d = datetime.strptime(raw, '%Y%m%d')
+            out['date'] = d.strftime('%Y/%m/%d')
+            out['weekday'] = _WEEKDAY_ZH[d.weekday()]
+        except ValueError:
+            out['date'] = date_raw
 
-        資料源: 期交所 OpenAPI(免 key),盤後公布前一交易日資料.
+    def _taifex_from_openapi(self, out: Dict) -> None:
+        """主要來源: 期交所 OpenAPI 三大法人期貨留倉"""
+        resp = requests.get(self.TAIFEX_FUT_URL, headers=self._TF_HEADERS, timeout=30)
+        dbg = out['debug']
+        dbg['taifex_status'] = resp.status_code
+        dbg['taifex_ctype'] = resp.headers.get('Content-Type', '')
+        dbg['taifex_len'] = len(resp.content)
+        if resp.status_code != 200:
+            out['error'] = f"期交所 OpenAPI HTTP {resp.status_code}"
+            dbg['taifex_body'] = resp.text[:300]
+            return
+        try:
+            data = resp.json()
+        except ValueError:
+            out['error'] = '期交所 OpenAPI 回應非 JSON'
+            dbg['taifex_body'] = resp.text[:300]
+            return
+
+        rows, date_raw = {}, None
+        for it in data:
+            if str(it.get('ContractCode', '')).strip() != '臺股期貨':
+                continue
+            if not date_raw:
+                date_raw = str(it.get('Date', '')).strip()
+            rows[str(it.get('Item', '')).strip()] = it
+        if not rows:
+            out['error'] = '期交所 OpenAPI 查無臺股期貨三大法人資料'
+            return
+
+        for name in self.TAIFEX_SENTIMENT_ORDER:
+            row = rows.get(name)
+            if not row:
+                continue
+            out['items'].append({
+                'name': name,
+                'net': self._tf_int(row.get('OpenInterest(Net)')),
+                'long': self._tf_int(row.get('OpenInterest(Long)')),
+                'short': self._tf_int(row.get('OpenInterest(Short)')),
+                'day_net': self._tf_int(row.get('TradingVolume(Net)')),
+            })
+        self._tf_set_date(out, date_raw)
+        out['source'] = '期交所 OpenAPI'
+
+    def _taifex_from_finmind(self, out: Dict) -> None:
+        """備援來源: FinMind TaiwanFuturesInstitutionalInvestors(匿名)
+
+        雲端 IP(如 Render)對期交所 OpenAPI 曾實測回應非 JSON,故加此備援;
+        實測數值與期交所完全一致(2026/10/15 外資 -97,582 口)。
+        """
+        start = (datetime.now() - timedelta(days=12)).strftime('%Y-%m-%d')
+        url = self.FINMIND_FUT_URL.format(start=start)
+        resp = requests.get(url, headers=self._TF_HEADERS, timeout=30)
+        dbg = out['debug']
+        dbg['finmind_status'] = resp.status_code
+        dbg['finmind_len'] = len(resp.content)
+        if resp.status_code != 200:
+            dbg['finmind_body'] = resp.text[:300]
+            return
+        try:
+            rows = (resp.json() or {}).get('data') or []
+        except ValueError:
+            dbg['finmind_body'] = resp.text[:300]
+            return
+        if not rows:
+            return
+
+        latest = max(str(r.get('date', '')) for r in rows)
+        name_map = {'外資': '外資及陸資', '外資及陸資': '外資及陸資',
+                    '投信': '投信', '自營商': '自營商'}
+        picked = {}
+        for r in rows:
+            if str(r.get('date', '')) != latest:
+                continue
+            nm = name_map.get(str(r.get('institutional_investors', '')).strip())
+            if nm:
+                picked[nm] = r
+        if not picked:
+            return
+
+        items = []
+        for name in self.TAIFEX_SENTIMENT_ORDER:
+            r = picked.get(name)
+            if not r:
+                continue
+            lng = self._tf_int(r.get('long_open_interest_balance_volume'))
+            sht = self._tf_int(r.get('short_open_interest_balance_volume'))
+            items.append({
+                'name': name,
+                'net': lng - sht,
+                'long': lng,
+                'short': sht,
+                'day_net': (self._tf_int(r.get('long_deal_volume'))
+                            - self._tf_int(r.get('short_deal_volume'))),
+            })
+        if items:
+            out['items'] = items
+            self._tf_set_date(out, latest)
+            out['source'] = 'FinMind'
+            out['error'] = None
+
+    def fetch_taifex_sentiment(self) -> Dict:
+        """取得三大法人臺股期貨未平倉部位(台指期多空指標).
+
+        來源鏈: 期交所 OpenAPI(主要) -> FinMind(備援).
         回傳 dict:
             date / weekday / items[{name,net,long,short,day_net}]
-            total_net / error
+            total_net / source / error / debug
         """
         out = {'date': None, 'weekday': None, 'items': [],
-               'total_net': None, 'error': None}
-        headers = {'User-Agent': 'Mozilla/5.0 (compatible; WorkBuddyMonitor/1.0)'}
-        try:
-            resp = requests.get(self.TAIFEX_FUT_URL, headers=headers, timeout=30)
-            resp.raise_for_status()
-            rows, date_raw = {}, None
-            for it in resp.json():
-                if str(it.get('ContractCode', '')).strip() != '臺股期貨':
-                    continue
-                if not date_raw:
-                    date_raw = str(it.get('Date', '')).strip()
-                rows[str(it.get('Item', '')).strip()] = it
+               'total_net': None, 'source': None, 'error': None, 'debug': {}}
 
-            if not rows:
-                out['error'] = '臺股期貨查無三大法人留倉資料'
-            else:
-                total = 0
-                for name in self.TAIFEX_SENTIMENT_ORDER:
-                    row = rows.get(name)
-                    if not row:
-                        continue
-                    net = self._tf_int(row.get('OpenInterest(Net)'))
-                    total += net
-                    out['items'].append({
-                        'name': name,
-                        'net': net,
-                        'long': self._tf_int(row.get('OpenInterest(Long)')),
-                        'short': self._tf_int(row.get('OpenInterest(Short)')),
-                        'day_net': self._tf_int(row.get('TradingVolume(Net)')),
-                    })
-                out['total_net'] = total
-                if date_raw:
-                    try:
-                        d = datetime.strptime(date_raw, '%Y%m%d')
-                        out['date'] = d.strftime('%Y/%m/%d')
-                        out['weekday'] = _WEEKDAY_ZH[d.weekday()]
-                    except ValueError:
-                        out['date'] = date_raw
+        try:
+            self._taifex_from_openapi(out)
         except Exception as e:
-            out['error'] = f"{type(e).__name__}: {e}"
+            out['error'] = f"期交所 OpenAPI {type(e).__name__}: {e}"
+            out['debug']['taifex_error'] = f"{type(e).__name__}: {e}"
+
+        if not out['items']:
+            try:
+                self._taifex_from_finmind(out)
+            except Exception as e:
+                out['debug']['finmind_error'] = f"{type(e).__name__}: {e}"
+                if not out.get('error'):
+                    out['error'] = f"FinMind {type(e).__name__}: {e}"
+
+        if out['items']:
+            out['total_net'] = sum(i['net'] for i in out['items'])
         return out
 
     def _format_taifex_sentiment_section(self, sentiment: Dict) -> str:
@@ -3779,7 +3879,7 @@ class NewsMonitor:
         section += f"{'='*40}\n\n"
 
         if not sentiment or not sentiment.get('items'):
-            section += "📭 目前無法取得期交所三大法人留倉資料\n"
+            section += "📭 目前無法取得三大法人期貨留倉資料\n"
             if sentiment and sentiment.get('error'):
                 section += f"⚠️ {html.escape(str(sentiment['error']))[:120]}\n"
             section += f"{'='*40}\n"
@@ -3810,7 +3910,7 @@ class NewsMonitor:
             )
 
         section += f"{'='*40}\n"
-        section += "📋 來源: 台灣期貨交易所 三大法人期貨留倉（盤後公布前一交易日）\n"
+        section += "📋 來源: 台灣期貨交易所 三大法人期貨留倉（盤後公布）\n"
         section += "📐 契約: 臺股期貨（TX）；淨部位 = 未平倉多單 − 未平倉空單\n"
         section += "🔴 偏多 ／ 🟢 偏空（台股慣例）；單位: 口\n"
         return section

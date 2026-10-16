@@ -1617,7 +1617,7 @@ def api_taifex_test():
     """台指期多空指標診斷：三大法人臺股期貨未平倉淨部位。"""
     from news_monitor import NewsMonitor
     out = {"date": None, "weekday": None, "items": [], "total_net": None,
-           "section": "", "error": None}
+           "source": None, "section": "", "debug": {}, "error": None}
     try:
         nm = NewsMonitor(config_file=str(CONFIG_FILE))
         senti = nm.fetch_taifex_sentiment()
@@ -1625,10 +1625,43 @@ def api_taifex_test():
         out["weekday"] = senti.get("weekday")
         out["items"] = senti.get("items", [])
         out["total_net"] = senti.get("total_net")
+        out["source"] = senti.get("source")
+        out["debug"] = senti.get("debug", {})
         out["error"] = senti.get("error")
         out["section"] = nm._format_taifex_sentiment_section(senti)
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {e}"
+    return jsonify(out)
+
+
+@app.route("/api/taifex-probe")
+def api_taifex_probe():
+    """資料源連通性探測：確認各候選來源在目前環境(如 Render)的回應樣態。"""
+    import requests as _rq
+    targets = {
+        "taifex_openapi": (
+            "https://openapi.taifex.com.tw/v1/"
+            "MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate"
+        ),
+        "finmind_tx": (
+            "https://api.finmindtrade.com/api/v4/data"
+            "?dataset=TaiwanFuturesInstitutionalInvestors&data_id=TX"
+        ),
+        "taifex_swagger": "https://openapi.taifex.com.tw/swagger.json",
+    }
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; WorkBuddyMonitor/1.0)"}
+    out = {}
+    for name, url in targets.items():
+        rec = {"status": None, "ctype": None, "len": 0, "head": "", "error": None}
+        try:
+            r = _rq.get(url, headers=headers, timeout=30)
+            rec["status"] = r.status_code
+            rec["ctype"] = r.headers.get("Content-Type", "")
+            rec["len"] = len(r.content)
+            rec["head"] = r.text[:260]
+        except Exception as e:
+            rec["error"] = f"{type(e).__name__}: {e}"
+        out[name] = rec
     return jsonify(out)
 
 
