@@ -1547,6 +1547,29 @@ def api_vip_test():
     return jsonify(out)
 
 
+@app.route("/api/calendar-test")
+def api_calendar_test():
+    """財經行事曆診斷：驗證事件日期／時間標示是否為台灣時間。"""
+    from news_monitor import NewsMonitor
+    out = {"events": [], "section": "", "taipei_now": None, "error": None}
+    try:
+        from zoneinfo import ZoneInfo
+        from datetime import datetime as _dt
+        out["taipei_now"] = _dt.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M")
+        nm = NewsMonitor(config_file=str(CONFIG_FILE))
+        evs = nm.fetch_financial_calendar(days=30)
+        for e in evs:
+            out["events"].append({
+                "date": e["date"], "weekday": e["weekday"],
+                "category": e["category"], "title": e["title"],
+                "note": e.get("note", ""), "days_left": e["days_left"],
+            })
+        out["section"] = nm._format_financial_calendar_section(evs)
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"
+    return jsonify(out)
+
+
 @app.route("/api/stock-test")
 def api_stock_test():
     """台股監控診斷：驗證監控清單、MIS 即時行情命中數與排行榜內容。"""
