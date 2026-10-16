@@ -32,6 +32,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 LOG_FILE = SCRIPT_DIR / "monitor.log"
 HISTORY_FILE = SCRIPT_DIR / "push_history.json"
 SCHEDULER_PROCS = []   # child processes started by start_scheduler()
+BOT_PROC = None        # telegram_bot.py 子程序（供 /api/bot-status 診斷）
 STATUS_FILE = SCRIPT_DIR / ".webui_status.json"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [WEBUI] %(message)s")
@@ -1679,6 +1680,28 @@ def api_taifex_probe():
     return jsonify(out)
 
 
+@app.route("/api/bot-status")
+def api_bot_status():
+    """Telegram Bot 子程序診斷：是否被 spawn、是否仍在運行、是否啟用輪詢。"""
+    info = {"version": "bot-ai-20261017", "spawned": False,
+            "pid": None, "exit_code": None, "polling": None, "cmdline": None}
+    p = BOT_PROC
+    if p is not None:
+        info["spawned"] = True
+        info["pid"] = p.pid
+        info["exit_code"] = p.poll()   # None = 仍在運行
+        try:
+            if os.name == "posix":
+                with open(f"/proc/{p.pid}/cmdline", "rb") as f:
+                    cmd = f.read().decode("utf-8", "replace").split("\x00")
+                cmd = [c for c in cmd if c]
+                info["cmdline"] = cmd
+                info["polling"] = ("telegram_bot.py" in cmd) and ("--no-bot" not in cmd)
+        except Exception as e:
+            info["cmdline_error"] = str(e)
+    return jsonify(info)
+
+
 @app.route("/api/sentiment-test")
 def api_sentiment_test():
     """自訂多空評分指標診斷：五項指標分數、合計與建議方向（不寫入狀態檔）。"""
@@ -1823,7 +1846,7 @@ def start_scheduler():
       1. telegram_bot.py  (monitor scheduling + Telegram bot polling/AI chat)
       2. scripts/render_scheduler.py (backup)
     """
-    global SCHEDULER_PROCS
+    global SCHEDULER_PROCS, BOT_PROC
     python = shutil.which("python3") or shutil.which("python") or sys.executable
 
     procs = []
@@ -1838,7 +1861,8 @@ def start_scheduler():
             cwd=str(SCRIPT_DIR),
         )
         procs.append(p1)
-        logger.info(f"Monitor scheduler started (PID={p1.pid})")
+        BOT_PROC = p1
+        logger.info(f"Monitor scheduler + Telegram Bot started (PID={p1.pid})")
     except Exception as e:
         logger.error(f"Failed to start monitor scheduler: {e}")
 
