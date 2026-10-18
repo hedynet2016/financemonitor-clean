@@ -60,8 +60,8 @@ logger = logging.getLogger(__name__)
 TAIFEX_QUOTE_URL = "https://mis.taifex.com.tw/futures/api/getQuoteList"
 FUT_CIDS = ["TXF", "MXF", "TMF"]            # 大台／小台／微台
 FUT_CONTRACT_SIZE = {"TXF": 200, "MXF": 50, "TMF": 10}  # 每點新台幣（期交所規格）
-FUT_PNL_QTY = 5                              # 小台與微台各五口
-# 09:00 下單（進場價 = 當日 09:00 後第一次抓到的報價）
+FUT_PNL_QTY = 5                              # 小台與微台各五口（多單與空單各自五口）
+# 09:00 下單（進場價 = 當日 09:00 後第一次抓到的報價；多單與空單同進場價）
 FUT_ENTRY_MINUTES = 9 * 60
 # 損益試算顯示時段：09:30 ~ 11:30（以半小時 block 計：block = hour*2 + minute//30）
 # block 19=09:30, 20=10:00, 21=10:30, 22=11:00, 23=11:30
@@ -1146,10 +1146,10 @@ class StockMonitor:
 
     def _update_fut_baseline(self, quotes: Dict[str, Dict],
                              now: datetime) -> Dict:
-        """確保當日 09:00 後有進場基準價（假設 09:00 下單買進）。
+        """確保當日 09:00 後有進場基準價（假設 09:00 下單，多單與空單各五口）。
 
-        當日第一次抓到報價時記錄各商品進場價；若監控 09:00 才啟動或
-        Render 重啟（狀態檔消失），則以當時報價為進場價並註明實際時間。
+        當日第一次抓到報價時記錄各商品進場價（多空同價）；若監控 09:00 才
+        啟動或 Render 重啟（狀態檔消失），則以當時報價為進場價並註明實際時間。
         """
         state = self._load_fut_state()
         today_key = now.strftime("%Y-%m-%d")
@@ -1186,7 +1186,8 @@ class StockMonitor:
                 f"{emoji} {txf['name']}：<b>{txf['last']:,.0f}</b>"
                 f"（{sign}{d:,.0f} 點 / {sign}{txf['diff_rate']:.2f}%）"
             )
-        # 損益試算：09:30 ~ 11:30，小台與微台分開計算（假設 09:00 買進各五口）
+        # 損益試算：09:30 ~ 11:30，小台與微台分開計算
+        # （假設 09:00 進場，多單與空單各五口，[2026-10-19] 新增空單）
         block = now.hour * 2 + now.minute // 30
         if block in FUT_PNL_BLOCKS:
             state = self._load_fut_state()
@@ -1194,22 +1195,25 @@ class StockMonitor:
             if rec and rec.get("entry"):
                 lines.append("")
                 lines.append(
-                    f"💰 <b>損益試算</b>（假設 {rec.get('entry_time', '09:00')} 買進，"
-                    f"小台×{FUT_PNL_QTY}、微台×{FUT_PNL_QTY}，每點 50/10 元）"
+                    f"💰 <b>損益試算</b>（假設 {rec.get('entry_time', '09:00')} 進場，"
+                    f"多／空單各 小台×{FUT_PNL_QTY}、微台×{FUT_PNL_QTY}，每點 50/10 元）"
                 )
+                # [2026-10-19] 多空雙向：09:00 同時模擬買進與賣出各五口，
+                # 空單損益與多單相反（點數 × −1）
                 for cid, label in (("MXF", "小台"), ("TMF", "微台")):
                     q = quotes.get(cid)
                     ep = rec["entry"].get(cid)
                     if not q or not ep:
                         continue
                     pts = q["last"] - float(ep)
-                    pnl = pts * FUT_CONTRACT_SIZE[cid] * FUT_PNL_QTY
                     sign = "+" if pts >= 0 else ""
-                    lines.append(
-                        f"　{label} {FUT_PNL_QTY}口：{float(ep):,.0f} → {q['last']:,.0f}"
-                        f"（{sign}{pts:,.0f} 點）→ "
-                        f"<b>{'+' if pnl >= 0 else '−'}{abs(pnl):,.0f} 元</b>"
-                    )
+                    for side, direction in (("🟢 多單", 1), ("🔴 空單", -1)):
+                        pnl = pts * FUT_CONTRACT_SIZE[cid] * FUT_PNL_QTY * direction
+                        lines.append(
+                            f"　{side} {label} {FUT_PNL_QTY}口：{float(ep):,.0f} → "
+                            f"{q['last']:,.0f}（{sign}{pts:,.0f} 點）→ "
+                            f"<b>{'+' if pnl >= 0 else '−'}{abs(pnl):,.0f} 元</b>"
+                        )
             else:
                 lines.append("（今日尚無進場基準價）")
 
