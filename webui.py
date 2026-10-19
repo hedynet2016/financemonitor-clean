@@ -1548,6 +1548,16 @@ def api_ai_bond_test():
         }
         out["has_coreweave"] = "CRWV" in (data.get("companies") or {})
         out["preview"] = ai_bond_monitor.format_section(data)
+        # [2026-10-20] CDS 警示驗證欄位
+        cds = data.get("cds") or {}
+        out["cds_alerts"] = [
+            {"ticker": a.get("ticker"), "bps": a.get("bps"),
+             "link": a.get("link")}
+            for a in (cds.get("alerts") or [])
+        ]
+        out["cds_errors"] = cds.get("errors")
+        out["has_oracle_cds"] = any(
+            a.get("ticker") == "ORCL" for a in (cds.get("alerts") or []))
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {e}"
     return jsonify(out)
