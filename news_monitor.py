@@ -3553,7 +3553,8 @@ class NewsMonitor:
         logger.info(f"[AI Momentum] Fetched {len(results)} AI momentum news items")
         return results
 
-    def _format_ai_momentum_section(self, ai_momentum_news: List[Dict]) -> str:
+    def _format_ai_momentum_section(self, ai_momentum_news: List[Dict],
+                                    ai_bond_data: Dict = None) -> str:
         """格式化 AI 動能觀察區塊"""
         section  = f"\n{'='*40}\n"
         section += "🤖 <b>AI 動能觀察</b>(資本支出 & Token 需求)\n"
@@ -3601,6 +3602,13 @@ class NewsMonitor:
                 section += (
                     f"   \U0001f550 {pub_str}  \u25aa  \u4f86\u6e90: {html.escape(item['source'])}\n\n"
                 )
+
+        # [2026-10-20] AI 相關公司債：殖利率>10% 的公司名稱及美股代號
+        try:
+            import ai_bond_monitor
+            section += ai_bond_monitor.format_section(ai_bond_data)
+        except Exception as e:
+            logger.warning("AI bond section failed: %s", e)
 
         section += f"{'='*40}\n"
         section += (
@@ -4875,6 +4883,7 @@ class NewsMonitor:
                                   ict_ai_events: List[Dict] = None,
                                   mag7_events: List[Dict] = None,
                                   ai_momentum_news: List[Dict] = None,
+                                  ai_bond_data: Dict = None,
                                   financial_calendar: List[Dict] = None,
                                   taifex_sentiment: Dict = None,
                                   sentiment_index: Dict = None,
@@ -4999,8 +5008,10 @@ class NewsMonitor:
             message += self._format_earnings_section(earnings_news)
         
         # ―― [2026-08-17] AI 動能:AI 動能觀察(資本支出 & Token 需求)―――――――
+        # ―― [2026-10-20] AI 相關公司債:殖利率>10% 的公司(併入 AI 動能區塊)――
         if ai_momentum_news is not None:
-            message += self._format_ai_momentum_section(ai_momentum_news)
+            message += self._format_ai_momentum_section(ai_momentum_news,
+                                                        ai_bond_data=ai_bond_data)
         
         # ―― [2026-06-27] 經濟指標:美國勞工部(BLS) 官方經濟指標 ―――――――――――――――
         if economic_indicators is not None or economic_news:
@@ -5109,6 +5120,18 @@ class NewsMonitor:
         except Exception as e:
             logger.error(f"AI momentum news fetch failed, will skip: {e}")
 
+        # ── [2026-10-20] AI 相關公司債:殖利率>10% 的公司（BondTerminal）──
+        ai_bond_data = None
+        try:
+            logger.info("Fetching AI corporate bond high yields (BondTerminal)...")
+            import ai_bond_monitor
+            ai_bond_data = ai_bond_monitor.fetch_ai_high_yield_bonds()
+            logger.info("AI bond data: source=%s, companies=%d",
+                        ai_bond_data.get('source'),
+                        len(ai_bond_data.get('companies') or {}))
+        except Exception as e:
+            logger.error(f"AI bond fetch failed, will skip: {e}")
+
         # ── [2026-06-27] 經濟指標:經濟指標相關新聞 ─────────────
         # 改採與熱門財經新聞相同媒體來源，不再使用官方 BLS API
         economic_indicators = []
@@ -5170,6 +5193,7 @@ class NewsMonitor:
             economic_news=economic_news,
             ict_ai_events=None,  # [2026-06-25] ICT/AI 活動 獨立發送
             ai_momentum_news=ai_momentum_news,
+            ai_bond_data=ai_bond_data,
             financial_calendar=financial_calendar,
             taifex_sentiment=taifex_sentiment,
             sentiment_index=sentiment_index,

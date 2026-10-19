@@ -1526,6 +1526,33 @@ def api_translate_test():
     return jsonify(out)
 
 
+@app.route("/api/ai-bond-test")
+def api_ai_bond_test():
+    """AI 相關公司債診斷：驗證 BondTerminal 連線與 CoreWeave 偵測。
+
+    ?force=1 可略過 12 小時快取重新抓取。
+    """
+    import ai_bond_monitor
+    force = request.args.get("force") == "1"
+    out = {"error": None}
+    try:
+        data = ai_bond_monitor.fetch_ai_high_yield_bonds(force=force)
+        out["source"] = data.get("source")
+        out["asof"] = data.get("asof")
+        out["note"] = data.get("note")
+        out["errors"] = data.get("errors")
+        out["companies"] = {
+            t: {"name": c["name"], "max_ytw": c["max_ytw"],
+                "bonds": c["bonds"]}
+            for t, c in (data.get("companies") or {}).items()
+        }
+        out["has_coreweave"] = "CRWV" in (data.get("companies") or {})
+        out["preview"] = ai_bond_monitor.format_section(data)
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"
+    return jsonify(out)
+
+
 @app.route("/api/topics-test")
 def api_topics_test():
     """投資熱門話題診斷：驗證伺服器環境對 Reddit 的匿名連線能力。"""
