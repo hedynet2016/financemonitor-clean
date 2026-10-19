@@ -60,7 +60,8 @@ logger = logging.getLogger(__name__)
 TAIFEX_QUOTE_URL = "https://mis.taifex.com.tw/futures/api/getQuoteList"
 FUT_CIDS = ["TXF", "MXF", "TMF"]            # 大台／小台／微台
 FUT_CONTRACT_SIZE = {"TXF": 200, "MXF": 50, "TMF": 10}  # 每點新台幣（期交所規格）
-FUT_PNL_QTY = 5                              # 小台與微台各五口（多單與空單各自五口）
+FUT_PNL_QTY = 5                              # 多單：小台與微台各五口
+FUT_PNL_SHORT_QTY = 2                        # 空單：小台與微台各兩口（[2026-10-20] 使用者調整）
 # 09:00 下單（進場價 = 當日 09:00 後第一次抓到的報價；多單與空單同進場價）
 FUT_ENTRY_MINUTES = 9 * 60
 # 損益試算顯示時段：09:30 ~ 11:30（以半小時 block 計：block = hour*2 + minute//30）
@@ -1187,7 +1188,7 @@ class StockMonitor:
                 f"（{sign}{d:,.0f} 點 / {sign}{txf['diff_rate']:.2f}%）"
             )
         # 損益試算：09:30 ~ 11:30，小台與微台分開計算
-        # （假設 09:00 進場，多單與空單各五口，[2026-10-19] 新增空單）
+        # （假設 09:00 進場，多單五口／空單兩口，[2026-10-20] 空單改兩口）
         block = now.hour * 2 + now.minute // 30
         if block in FUT_PNL_BLOCKS:
             state = self._load_fut_state()
@@ -1196,9 +1197,11 @@ class StockMonitor:
                 lines.append("")
                 lines.append(
                     f"💰 <b>損益試算</b>（假設 {rec.get('entry_time', '09:00')} 進場，"
-                    f"多／空單各 小台×{FUT_PNL_QTY}、微台×{FUT_PNL_QTY}，每點 50/10 元）"
+                    f"多單 小台×{FUT_PNL_QTY}、微台×{FUT_PNL_QTY}／"
+                    f"空單 小台×{FUT_PNL_SHORT_QTY}、微台×{FUT_PNL_SHORT_QTY}，"
+                    f"每點 50/10 元）"
                 )
-                # [2026-10-19] 多空雙向：09:00 同時模擬買進與賣出各五口，
+                # 多空雙向：09:00 同時模擬買進五口與賣出兩口，
                 # 空單損益與多單相反（點數 × −1）
                 for cid, label in (("MXF", "小台"), ("TMF", "微台")):
                     q = quotes.get(cid)
@@ -1207,10 +1210,13 @@ class StockMonitor:
                         continue
                     pts = q["last"] - float(ep)
                     sign = "+" if pts >= 0 else ""
-                    for side, direction in (("🟢 多單", 1), ("🔴 空單", -1)):
-                        pnl = pts * FUT_CONTRACT_SIZE[cid] * FUT_PNL_QTY * direction
+                    for side, direction, qty in (
+                        ("🟢 多單", 1, FUT_PNL_QTY),
+                        ("🔴 空單", -1, FUT_PNL_SHORT_QTY),
+                    ):
+                        pnl = pts * FUT_CONTRACT_SIZE[cid] * qty * direction
                         lines.append(
-                            f"　{side} {label} {FUT_PNL_QTY}口：{float(ep):,.0f} → "
+                            f"　{side} {label} {qty}口：{float(ep):,.0f} → "
                             f"{q['last']:,.0f}（{sign}{pts:,.0f} 點）→ "
                             f"<b>{'+' if pnl >= 0 else '−'}{abs(pnl):,.0f} 元</b>"
                         )
