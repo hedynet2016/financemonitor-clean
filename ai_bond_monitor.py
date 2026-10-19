@@ -28,12 +28,13 @@ logger = logging.getLogger(__name__)
 # ── 設定 ─────────────────────────────────────────────────────────────
 BT_BASE = "https://bondterminal.com/api/v1"
 BT_LANDING_URL = "https://bondterminal.com/api/landing/top-bonds"
-BT_API_KEY_ENV = "BONDTERMINAL_API_KEY"
+BT_API_KEY_ENV = "BT_API_KEY"                 # 使用者慣用名稱
+BT_API_KEY_ENV_ALT = "BONDTERMINAL_API_KEY"   # 相容別名
 YTW_THRESHOLD = 10.0          # 殖利率門檻：>10% 才列出
 CACHE_FILE = "ai_bond_cache.json"
 CACHE_TTL_HOURS = 12          # 08:00 每日推播，12 小時快取足夠
 REQUEST_TIMEOUT = 20
-SLEEP_BETWEEN = 0.3           # 有金鑰時逐一搜尋的節流（限速 60 req/min）
+SLEEP_BETWEEN = 5.0           # 節流：保守放慢（免費層限速較嚴，429 時另有 Retry-After）
 
 # ── AI 相關發行人清單（搜尋關鍵字, 美股代號, 顯示名稱）─────────────────
 # 內含大型股（債殖利率僅 4~6%，會被 10% 門檻自然濾掉，但保留以利
@@ -148,7 +149,11 @@ def _collect_search_rows(rows: List[Dict], universe: List[Dict]) -> Dict[str, Di
 
 
 def _fetch_with_key(api_key: str) -> Dict:
-    """主模式：逐一搜尋 AI 相關發行人，篩 YTW > 10% 的美元公司債。"""
+    """主模式：逐一搜尋 AI 相關發行人，篩 YTW > 10% 的美元公司債。
+
+    429 時依 Retry-After 等待後重試一次；仍失敗則記錄錯誤繼續下一家
+    （免費層每日 200 read units、每分鐘請求數有限，故搜尋排序高風險優先）。
+    """
     session = requests.Session()
     session.headers.update(_HEADERS)
     session.headers["Authorization"] = f"Bearer {api_key}"
@@ -160,19 +165,32 @@ def _fetch_with_key(api_key: str) -> Dict:
             "filters": {"issuerType": ["corporate"], "ytwMin": YTW_THRESHOLD},
             "page": {"size": 25},
         }
-        try:
-            r = session.post(f"{BT_BASE}/bonds/search", json=payload,
-                             timeout=REQUEST_TIMEOUT)
-            if r.status_code == 200:
-                rows = r.json().get("rows") or []
-                all_rows.extend(rows)
-            else:
+        for attempt in (1, 2):
+            try:
+                r = session.post(f"{BT_BASE}/bonds/search", json=payload,
+                                 timeout=REQUEST_TIMEOUT)
+                if r.status_code == 200:
+                    rows = r.json().get("rows") or []
+                    all_rows.extend(rows)
+                    break
+                if r.status_code == 429:
+                    wait = 60.0
+                    try:
+                        wait = float(r.headers.get("Retry-After", 60))
+                    except (TypeError, ValueError):
+                        pass
+                    logger.warning("[AI_BOND] %s 429 限流，等待 %.0fs 後重試",
+                                   entry["ticker"], wait)
+                    time.sleep(min(wait + 1, 90))
+                    continue
                 errors.append(f"{entry['ticker']}:{r.status_code}")
                 logger.warning("[AI_BOND] 搜尋 %s 失敗 HTTP %d",
                                entry["ticker"], r.status_code)
-        except Exception as e:
-            errors.append(f"{entry['ticker']}:{type(e).__name__}")
-            logger.warning("[AI_BOND] 搜尋 %s 異常：%s", entry["ticker"], e)
+                break
+            except Exception as e:
+                errors.append(f"{entry['ticker']}:{type(e).__name__}")
+                logger.warning("[AI_BOND] 搜尋 %s 異常：%s", entry["ticker"], e)
+                break
         time.sleep(SLEEP_BETWEEN)
     companies = _collect_search_rows(all_rows, AI_BOND_UNIVERSE)
     return {
@@ -244,7 +262,8 @@ def fetch_ai_high_yield_bonds(force: bool = False) -> Dict:
             return file_cache
 
     result: Dict
-    api_key = os.environ.get(BT_API_KEY_ENV, "").strip()
+    api_key = (os.environ.get(BT_API_KEY_ENV)
+               or os.environ.get(BT_API_KEY_ENV_ALT) or "").strip()
     if api_key:
         try:
             result = _fetch_with_key(api_key)
