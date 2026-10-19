@@ -45,31 +45,64 @@ SLEEP_BETWEEN = 5.0           # 節流：保守放慢（免費層限速較嚴，
 # 內含大型股（債殖利率僅 4~6%，會被 10% 門檻自然濾掉，但保留以利
 # 未來信用惡化時及早示警）
 AI_BOND_UNIVERSE: List[Dict] = [
-    {"q": "CoreWeave",        "ticker": "CRWV", "zh": "CoreWeave（AI 雲）"},
-    {"q": "Nebius Group",     "ticker": "NBIS", "zh": "Nebius（AI 雲）"},
-    {"q": "Oracle",           "ticker": "ORCL", "zh": "Oracle"},
-    {"q": "Core Scientific",  "ticker": "CORZ", "zh": "Core Scientific（AI 算力）"},
-    {"q": "Applied Digital",  "ticker": "APLD", "zh": "Applied Digital（AI 資料中心）"},
-    {"q": "TeraWulf",         "ticker": "WULF", "zh": "TeraWulf（AI 算力）"},
-    {"q": "Cipher Mining",    "ticker": "CIFR", "zh": "Cipher Mining（AI 算力）"},
-    {"q": "Hut 8",            "ticker": "HUT",  "zh": "Hut 8（AI 算力）"},
-    {"q": "IREN",             "ticker": "IREN", "zh": "IREN（AI 算力）"},
-    {"q": "Galaxy Digital",   "ticker": "GLXY", "zh": "Galaxy Digital（AI/加密）"},
-    {"q": "Super Micro",      "ticker": "SMCI", "zh": "Super Micro（AI 伺服器）"},
-    {"q": "Dell Technologies","ticker": "DELL", "zh": "Dell（AI 伺服器）"},
-    {"q": "Tesla",            "ticker": "TSLA", "zh": "Tesla（AI/機器人）"},
-    {"q": "Intel",            "ticker": "INTC", "zh": "Intel（AI 晶片）"},
-    {"q": "Microsoft",        "ticker": "MSFT", "zh": "Microsoft"},
-    {"q": "Meta Platforms",   "ticker": "META", "zh": "Meta"},
-    {"q": "Alphabet",         "ticker": "GOOGL", "zh": "Alphabet"},
-    {"q": "Amazon.com",       "ticker": "AMZN", "zh": "Amazon"},
-    {"q": "Apple",            "ticker": "AAPL", "zh": "Apple"},
-    {"q": "NVIDIA",           "ticker": "NVDA", "zh": "NVIDIA"},
-    {"q": "IBM",              "ticker": "IBM",  "zh": "IBM（AI 企業服務）"},
-    {"q": "Palantir",         "ticker": "PLTR", "zh": "Palantir（AI 軟體）"},
-    {"q": "Broadcom",         "ticker": "AVGO", "zh": "Broadcom（AI 晶片）"},
-    {"q": "SoftBank Group",   "ticker": "SFTBY", "zh": "SoftBank（AI 投資）"},
+    {"q": "CoreWeave",        "ticker": "CRWV",  "zh": "CoreWeave（AI 雲）",
+     "full": "CoreWeave, Inc."},
+    {"q": "Nebius Group",     "ticker": "NBIS",  "zh": "Nebius（AI 雲）",
+     "full": "Nebius Group N.V."},
+    {"q": "Oracle",           "ticker": "ORCL",  "zh": "Oracle",
+     "full": "Oracle Corporation"},
+    {"q": "Core Scientific",  "ticker": "CORZ",  "zh": "Core Scientific（AI 算力）",
+     "full": "Core Scientific, Inc."},
+    {"q": "Applied Digital",  "ticker": "APLD",  "zh": "Applied Digital（AI 資料中心）",
+     "full": "Applied Digital Corporation"},
+    {"q": "TeraWulf",         "ticker": "WULF",  "zh": "TeraWulf（AI 算力）",
+     "full": "TeraWulf Inc."},
+    {"q": "Cipher Mining",    "ticker": "CIFR",  "zh": "Cipher Mining（AI 算力）",
+     "full": "Cipher Mining Inc."},
+    {"q": "Hut 8",            "ticker": "HUT",   "zh": "Hut 8（AI 算力）",
+     "full": "Hut 8 Corp."},
+    {"q": "IREN",             "ticker": "IREN",  "zh": "IREN（AI 算力）",
+     "full": "IREN Limited"},
+    {"q": "Galaxy Digital",   "ticker": "GLXY",  "zh": "Galaxy Digital（AI/加密）",
+     "full": "Galaxy Digital Inc."},
+    {"q": "Super Micro",      "ticker": "SMCI",  "zh": "Super Micro（AI 伺服器）",
+     "full": "Super Micro Computer, Inc."},
+    {"q": "Dell Technologies","ticker": "DELL",  "zh": "Dell（AI 伺服器）",
+     "full": "Dell Technologies Inc."},
+    {"q": "Tesla",            "ticker": "TSLA",  "zh": "Tesla（AI/機器人）",
+     "full": "Tesla, Inc."},
+    {"q": "Intel",            "ticker": "INTC",  "zh": "Intel（AI 晶片）",
+     "full": "Intel Corporation"},
+    {"q": "Microsoft",        "ticker": "MSFT",  "zh": "Microsoft",
+     "full": "Microsoft Corporation"},
+    {"q": "Meta Platforms",   "ticker": "META",  "zh": "Meta",
+     "full": "Meta Platforms, Inc."},
+    {"q": "Alphabet",         "ticker": "GOOGL", "zh": "Alphabet",
+     "full": "Alphabet Inc."},
+    {"q": "Amazon.com",       "ticker": "AMZN",  "zh": "Amazon",
+     "full": "Amazon.com, Inc."},
+    {"q": "Apple",            "ticker": "AAPL",  "zh": "Apple",
+     "full": "Apple Inc."},
+    {"q": "NVIDIA",           "ticker": "NVDA",  "zh": "NVIDIA",
+     "full": "NVIDIA Corporation"},
+    {"q": "IBM",              "ticker": "IBM",   "zh": "IBM（AI 企業服務）",
+     "full": "International Business Machines Corporation"},
+    {"q": "Palantir",         "ticker": "PLTR",  "zh": "Palantir（AI 軟體）",
+     "full": "Palantir Technologies Inc."},
+    {"q": "Broadcom",         "ticker": "AVGO",  "zh": "Broadcom（AI 晶片）",
+     "full": "Broadcom Inc."},
+    {"q": "SoftBank Group",   "ticker": "SFTBY", "zh": "SoftBank（AI 投資）",
+     "full": "SoftBank Group Corp."},
 ]
+
+# 完整公司名稱查表（顯示用；快取舊資料缺 full 時的備援）
+_FULL_BY_TICKER = {e["ticker"]: e["full"] for e in AI_BOND_UNIVERSE}
+
+
+def _full_name(item: Dict) -> str:
+    """取顯示用完整公司名稱：資料自带 full → 查表 → 退回 name。"""
+    return (item.get("full") or _FULL_BY_TICKER.get(item.get("ticker"), "")
+            or item.get("name", ""))
 
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -141,6 +174,7 @@ def _collect_search_rows(rows: List[Dict], universe: List[Dict]) -> Dict[str, Di
                 key = entry["ticker"]
                 comp = companies.setdefault(key, {
                     "name": entry["zh"], "ticker": entry["ticker"],
+                    "full": entry["full"],
                     "bonds": [], "max_ytw": 0.0,
                 })
                 comp["bonds"].append({
@@ -233,6 +267,7 @@ def _fetch_landing() -> Dict:
             seen.add(key)
             comp = companies.setdefault(entry["ticker"], {
                 "name": entry["zh"], "ticker": entry["ticker"],
+                "full": entry["full"],
                 "bonds": [], "max_ytw": 0.0,
             })
             comp["bonds"].append({
@@ -463,10 +498,10 @@ def _fetch_cds_alerts() -> Dict:
             if top["bps"] > CDS_THRESHOLD_BPS:
                 alerts.append({
                     "name": entry["zh"], "ticker": entry["ticker"],
+                    "full": entry["full"],
                     "bps": top["bps"], "title": top["title"],
                     "link": top["link"], "published": top["published"],
                 })
-        time.sleep(0.4)   # Bing RSS 節流
         time.sleep(0.4)   # Bing RSS 節流
     alerts.sort(key=lambda a: a["bps"], reverse=True)
     return {"alerts": alerts, "errors": errors,
@@ -485,14 +520,16 @@ def format_cds_section(cds: Optional[Dict]) -> str:
     else:
         for a in alerts:
             bps_str = f"{a['bps']:,.0f} bps"
+            # [2026-10-20] 顯示完整公司名稱＋代號（不可只有代號）
+            disp = f"{_full_name(a)}（{a['ticker']}）"
             if a.get("link"):
                 lines.append(
-                    f"　🔴 <b>{a['name']}（{a['ticker']}）</b>"
+                    f"　🔴 <b>{disp}</b>"
                     f"<a href=\"{a['link']}\">{bps_str}</a>"
                 )
             else:
                 lines.append(
-                    f"　🔴 <b>{a['name']}（{a['ticker']}）</b>{bps_str}"
+                    f"　🔴 <b>{disp}</b>{bps_str}"
                 )
     lines.append("　📍 來源：Bing News 近 7 天報導（Reuters/Bloomberg/FT 等）")
     if cds.get("errors"):
@@ -572,8 +609,9 @@ def format_section(ai_bond: Optional[Dict]) -> str:
             bond_label = best.get("ticker") or ""
             price = best.get("price")
             price_str = f"、價格 {float(price):.2f}" if price else ""
+            # [2026-10-20] 顯示完整公司名稱＋代號（不可只有代號）
             lines.append(
-                f"　🔴 <b>{comp['name']}（{comp['ticker']}）</b>"
+                f"　🔴 <b>{_full_name(comp)}（{comp['ticker']}）</b>"
                 f"最高 <b>{y:.2f}%</b>（{bond_label}{price_str}）"
             )
             # 同公司其他超標債券（最多再列 2 筆）
