@@ -509,7 +509,7 @@ def dashboard():
   <div class="card-header"><i class="bi bi-info-circle me-2"></i>系統資訊</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控（台股時段含台指期）+ 08:00 新聞（含 AI 動能觀察 + 財經行事曆 + 台指期多空指標 + 投資熱門話題）+ 14:00 活動 + 16:00 商品追蹤（雅虎拍賣 固定賣場＋雙北同類店家）+ 09:00 自動備份</td></tr>
+      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控（台股時段含台指期）+ 07:00 早鳥新聞（熱門財經／13F 官方＋媒體／美股財報／投資熱門話題）+ 08:00 財經主推播（VIP／IPO／AI 動能＋公司債＋CDS／經濟指標／財經行事曆／台指期多空指標／自訂多空評分指標）+ 14:00 活動 + 16:00 商品追蹤（雅虎拍賣 固定賣場＋雙北同類店家）+ 09:00 自動備份</td></tr>
       <tr><td class="text-muted">推送管道</td><td>Telegram Bot + Discord Webhook</td></tr>
       <tr><td class="text-muted">Python</td><td>{{py_version}}</td></tr>
       <tr><td class="text-muted">工作目錄</td><td>{{work_dir}}</td></tr>
@@ -847,6 +847,7 @@ def tasks_view():
     tw_mkt = th.get("tw_market", {})
     nw = cfg.get("news", {})
     news_hour = nw.get("daily_hour", 8)
+    morning_hour = nw.get("morning_hour", 7)
     events_hour = nw.get("events_hour", 14)
 
     # Build block info from code constants
@@ -864,7 +865,8 @@ def tasks_view():
   <div class="card-header"><i class="bi bi-clock me-2"></i>排程</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">每日完整推播</td><td><b>{news_hour:02d}:00 台北時間</b> — 熱門財經/VIP交易/13F/IPO/財報/AI動能/經濟指標/財經行事曆/台指期多空指標/投資熱門話題（卡片左側為各區塊啟用日期）</td></tr>
+      <tr><td class="text-muted" style="width:200px">每日早鳥推播</td><td><b>{morning_hour:02d}:00 台北時間</b> — 熱門財經新聞／13F 官方＋媒體報導／美股財報公布／投資熱門話題（2026-10-20 起自 08:00 提前）</td></tr>
+      <tr><td class="text-muted">每日主推播</td><td><b>{news_hour:02d}:00 台北時間</b> — VIP交易/IPO/AI動能（含公司債＋CDS）/經濟指標/財經行事曆/台指期多空指標/自訂多空評分指標（卡片左側為各區塊啟用日期）</td></tr>
       <tr><td class="text-muted">每日活動推播</td><td><b>{events_hour:02d}:00 台北時間</b> — ICT/AI 活動（2026-06-25 啟用，未來90天）</td></tr>
       <tr><td class="text-muted">每日商品追蹤</td><td><b>16:00 台北時間</b> — 雅虎拍賣商品監控（9 關鍵字，價格 $2,000~$15,000，排除NG，刊登 7 天內，上限 30 筆）<br>　① 固定賣場 3 家：樺仔二手電腦 / 點子3C 板橋店 / US3C<br>　② 雙北地區同類店家：台北市・新北市「店鋪型 3C 賣家」（與點子3C同類），條件與固定賣場完全相同，自動納入新店家</td></tr>
       <tr><td class="text-muted">每半小時股市監控</td><td>美股跌幅&gt;3%個股+ETF；台股監控清單（7 檔個股+7 檔 ETF）MIS 即時成交量排行＋跌幅排行，附台指期漲跌與 09:30-11:30 小台、微台各自損益試算（假設 09:00 買進各五口）</td></tr>

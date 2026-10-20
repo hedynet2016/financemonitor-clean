@@ -4887,8 +4887,18 @@ class NewsMonitor:
                                   financial_calendar: List[Dict] = None,
                                   taifex_sentiment: Dict = None,
                                   sentiment_index: Dict = None,
-                                  hot_topics: Dict = None) -> str:
-        """生成Telegram消息"""
+                                  hot_topics: Dict = None,
+                                  part: str = "all") -> str:
+        """生成Telegram消息。
+
+        part="all"：全部區塊（預設，相容舊行為）
+        part="morning"：07:00 早鳥推播（熱門財經／13F 官方＋媒體報導／美股財報／
+                        投資熱門話題）
+        part="main"：08:00 主推播（VIP 交易揭露／IPO／AI 動能＋公司債＋CDS／
+                     經濟指標／財經行事曆／台指期多空指標／自訂多空評分指標）
+        """
+        send_morning = part in ("all", "morning")
+        send_main = part in ("all", "main")
         current_time = datetime.now()
         date_str = current_time.strftime('%Y年%m月%d日')
         time_str = current_time.strftime('%H:%M')
@@ -4956,12 +4966,19 @@ class NewsMonitor:
         except Exception as e:
             logger.warning(f"Translation backfill skipped: {e}")
 
-        message = '\n\U0001f4f0 <b>七巨頭 + OpenAI/SpaceX/Anthropic 熱門新聞 Top10</b>\n'
+        # ── [2026-10-20] 依推播時段分段：07:00 早鳥 / 08:00 主推播 ──────
+        if part == "morning":
+            message = ('\n\U0001f305 <b>早鳥財經推播（07:00）</b>\n'
+                       '\U0001f4f0 <b>七巨頭 + OpenAI/SpaceX/Anthropic 熱門新聞 Top10</b>\n')
+        elif part == "main":
+            message = '\n\U0001f4ca <b>財經主推播（08:00）</b>\n'
+        else:
+            message = '\n\U0001f4f0 <b>七巨頭 + OpenAI/SpaceX/Anthropic 熱門新聞 Top10</b>\n'
         message += '\U0001f4c5 ' + date_str + ' EST\n'
         message += '\U0001f550 生成時間: ' + time_str + '\n'
         message += '========================================\n\n'
-        
-        for article in top_articles:
+
+        for article in (top_articles if send_morning else []):
             # ── 最終防線: 只有 title（原文）是錯誤頁才跳過整篇；
             #    title_zh 翻譯結果是錯誤頁時，改回傳原文 title，不跳過 ──
             if self._is_error_title(article.get('title', '')):
@@ -4987,55 +5004,56 @@ class NewsMonitor:
             message += '   來源: ' + html.escape(article['source']) + '\n'
             message += '   摘要: ' + html.escape(article['summary_zh'][:150]) + '...\n\n'
         
-        message += '========================================\n'
-        message += '\U0001f916 由 WorkBuddy 新聞監控系統自動生成\n'
-        message += '\U0001f4f0 新聞來源: CNBC & Wall Street Journal'
-
         # 附加政治人物交易揭露(媒體報導來源)
-        if politician_trades is not None:
+        if politician_trades is not None and send_main:
             message += self._format_politician_trades_section(politician_trades)
 
         # 附加 SEC 官方 13F 持倉揭露 + CNBC/WSJ 媒體報導(合併在同一區塊)
-        if filings_13f is not None:
+        if filings_13f is not None and send_morning:
             message += self._format_13f_section(filings_13f, media_news=media_13f)
         
         # ―― [2026-06-25] IPO:IPO 重要訊息 ―――――――――――――――――――――――――――――――――
-        if ipo_news is not None:
+        if ipo_news is not None and send_main:
             message += self._format_ipo_section(ipo_news)
         
         # ―― [2026-06-25] 美股財報:美股財報公布(科技七巨頭)――――――――――――――――――――――
-        if earnings_news is not None:
+        if earnings_news is not None and send_morning:
             message += self._format_earnings_section(earnings_news)
         
         # ―― [2026-08-17] AI 動能:AI 動能觀察(資本支出 & Token 需求)―――――――
         # ―― [2026-10-20] AI 相關公司債:殖利率>10% 的公司(併入 AI 動能區塊)――
-        if ai_momentum_news is not None:
+        if ai_momentum_news is not None and send_main:
             message += self._format_ai_momentum_section(ai_momentum_news,
                                                         ai_bond_data=ai_bond_data)
         
         # ―― [2026-06-27] 經濟指標:美國勞工部(BLS) 官方經濟指標 ―――――――――――――――
-        if economic_indicators is not None or economic_news:
+        if (economic_indicators is not None or economic_news) and send_main:
             message += self._format_economic_section(economic_indicators, economic_news=economic_news)
 
         # ―― [2026-06-25] ICT/AI 活動:ICT/AI 活動資訊(美/中/台,未來三個月) ――――――
-        if ict_ai_events is not None:
+        if ict_ai_events is not None and send_main:
             message += self._format_ict_ai_events_section(ict_ai_events)
         
         # ―― [2026-09-01] 財經行事曆:財經行事曆(未來 30 天) ―――――――――――――――
-        if financial_calendar is not None:
+        if financial_calendar is not None and send_main:
             message += self._format_financial_calendar_section(financial_calendar)
 
         # ―― [2026-10-16] 台指期多空指標:三大法人臺股期貨未平倉淨部位 ――――――
-        if taifex_sentiment is not None:
+        if taifex_sentiment is not None and send_main:
             message += self._format_taifex_sentiment_section(taifex_sentiment)
 
         # ―― [2026-10-16] 自訂多空評分指標:五項指標合計分數(做多/做空)――――
-        if sentiment_index is not None:
+        if sentiment_index is not None and send_main:
             message += self._format_sentiment_index_section(sentiment_index)
 
         # ―― [2026-09-30] 投資熱門話題:Reddit 美股×AI 當日熱門前 10 ―――――――
-        if hot_topics is not None:
+        if hot_topics is not None and send_morning:
             message += self._format_hot_topics_section(hot_topics)
+
+        # 統一的結尾（兩個時段各自收尾）
+        message += '\n========================================\n'
+        message += '\U0001f916 由 WorkBuddy 新聞監控系統自動生成\n'
+        message += '\U0001f4f0 新聞來源: CNBC & Wall Street Journal'
 
         return message
 
@@ -5049,19 +5067,27 @@ class NewsMonitor:
         results = self.notification_sender.send_to_all(message, discord_webhook=discord_webhook)
         return any(results.values())
     
-    def run_news_only(self):
-        """執行一次新聞監控檢查(熱門財經/VIP/13F/IPO/財報/AI動能/經濟指標/財經行事曆/台指期多空指標/自訂多空評分指標/投資熱門話題)"""
+    def run_news_only(self, part: str = "all"):
+        """執行一次新聞監控檢查。
+
+        part="all"：全部區塊（預設，相容舊行為）
+        part="morning"：07:00 早鳥（熱門財經／13F 官方＋媒體／美股財報／投資熱門話題）
+        part="main"：08:00 主推播（VIP／IPO／AI 動能＋公司債＋CDS／經濟指標／
+                     財經行事曆／台指期多空指標／自訂多空評分指標）
+        """
+        do_morning = part in ("all", "morning")
+        do_main = part in ("all", "main")
         logger.info("="*50)
-        logger.info("Starting news-only monitor check...")
+        logger.info(f"Starting news-only monitor check (part={part})...")
         logger.info("="*50)
 
         # 重置翻譯引擎斷路器（上一輪失效的引擎可能已恢復）
         NewsMonitor.reset_engine_state()
 
-        # 獲取熱門文章
-        top_articles = self.get_top_articles()
+        # 獲取熱門文章（僅早鳥時段需要）
+        top_articles = self.get_top_articles() if do_morning else []
 
-        if not top_articles:
+        if do_morning and not top_articles:
             logger.warning("No articles available")
             return
 
@@ -5072,116 +5098,133 @@ class NewsMonitor:
         for article in top_articles:
             logger.info(f"#{article['rank']} [{article['source']}] {article['title']}")
 
-        # 抓取名人交易揭露(媒體報導來源,獨立容錯)
+        # 抓取名人交易揭露(媒體報導來源,獨立容錯) —— 08:00 主推播
         politician_trades = []
-        try:
-            logger.info("Fetching VIP trade disclosures (media sources)...")
-            politician_trades = self.fetch_politician_trades()
-        except Exception as e:
-            logger.error(f"VIP trade fetch failed, will skip: {e}")
+        if do_main:
+            try:
+                logger.info("Fetching VIP trade disclosures (media sources)...")
+                politician_trades = self.fetch_politician_trades()
+            except Exception as e:
+                logger.error(f"VIP trade fetch failed, will skip: {e}")
 
-        # 抓取 SEC 官方 13F 持倉申報(獨立容錯)
+        # 抓取 SEC 官方 13F 持倉申報(獨立容錯) —— 07:00 早鳥
         filings_13f = []
-        try:
-            logger.info("Fetching SEC official 13F filings from EDGAR...")
-            filings_13f = self.fetch_all_13f_trades()
-        except Exception as e:
-            logger.error(f"SEC 13F fetch failed, will skip: {e}")
+        if do_morning:
+            try:
+                logger.info("Fetching SEC official 13F filings from EDGAR...")
+                filings_13f = self.fetch_all_13f_trades()
+            except Exception as e:
+                logger.error(f"SEC 13F fetch failed, will skip: {e}")
 
-        # 抓取 CNBC / WSJ 對 13F 機構的媒體報導(獨立容錯)
+        # 抓取 CNBC / WSJ 對 13F 機構的媒體報導(獨立容錯) —— 07:00 早鳥
         media_13f = []
-        try:
-            logger.info("Fetching 13F-related media news from CNBC & WSJ...")
-            media_13f = self.fetch_13f_media_news()
-        except Exception as e:
-            logger.error(f"13F media news fetch failed, will skip: {e}")
+        if do_morning:
+            try:
+                logger.info("Fetching 13F-related media news from CNBC & WSJ...")
+                media_13f = self.fetch_13f_media_news()
+            except Exception as e:
+                logger.error(f"13F media news fetch failed, will skip: {e}")
 
-        # ── [2026-06-25] IPO:IPO 重要訊息 ─────────────────────────────────
+        # ── [2026-06-25] IPO:IPO 重要訊息 ──────── 08:00 主推播 ───────────
         ipo_news = []
-        try:
-            logger.info("Fetching IPO news...")
-            ipo_news = self.fetch_ipo_news()
-        except Exception as e:
-            logger.error(f"IPO news fetch failed, will skip: {e}")
+        if do_main:
+            try:
+                logger.info("Fetching IPO news...")
+                ipo_news = self.fetch_ipo_news()
+            except Exception as e:
+                logger.error(f"IPO news fetch failed, will skip: {e}")
 
-        # ── [2026-06-25] 美股財報:美股財報公布(科技七巨頭)────────────────────
+        # ── [2026-06-25] 美股財報:美股財報公布(科技七巨頭) ── 07:00 早鳥 ──
         earnings_news = []
-        try:
-            logger.info("Fetching US earnings news (Magnificent 7)...")
-            earnings_news = self.fetch_earnings_news()
-        except Exception as e:
-            logger.error(f"Earnings news fetch failed, will skip: {e}")
+        if do_morning:
+            try:
+                logger.info("Fetching US earnings news (Magnificent 7)...")
+                earnings_news = self.fetch_earnings_news()
+            except Exception as e:
+                logger.error(f"Earnings news fetch failed, will skip: {e}")
 
-        # ── [2026-08-17] AI 動能:AI 動能觀察(資本支出 & Token 需求)─────
+        # ── [2026-08-17] AI 動能:AI 動能觀察(資本支出 & Token 需求)───
+        #    08:00 主推播
         ai_momentum_news = []
-        try:
-            logger.info("Fetching AI momentum news (capex & token demand)...")
-            ai_momentum_news = self.fetch_ai_momentum_news()
-        except Exception as e:
-            logger.error(f"AI momentum news fetch failed, will skip: {e}")
+        if do_main:
+            try:
+                logger.info("Fetching AI momentum news (capex & token demand)...")
+                ai_momentum_news = self.fetch_ai_momentum_news()
+            except Exception as e:
+                logger.error(f"AI momentum news fetch failed, will skip: {e}")
 
         # ── [2026-10-20] AI 相關公司債:殖利率>10% 的公司（BondTerminal）──
+        #    08:00 主推播
         ai_bond_data = None
-        try:
-            logger.info("Fetching AI corporate bond high yields (BondTerminal)...")
-            import ai_bond_monitor
-            ai_bond_data = ai_bond_monitor.fetch_ai_high_yield_bonds()
-            logger.info("AI bond data: source=%s, companies=%d",
-                        ai_bond_data.get('source'),
-                        len(ai_bond_data.get('companies') or {}))
-        except Exception as e:
-            logger.error(f"AI bond fetch failed, will skip: {e}")
+        if do_main:
+            try:
+                logger.info("Fetching AI corporate bond high yields (BondTerminal)...")
+                import ai_bond_monitor
+                ai_bond_data = ai_bond_monitor.fetch_ai_high_yield_bonds()
+                logger.info("AI bond data: source=%s, companies=%d",
+                            ai_bond_data.get('source'),
+                            len(ai_bond_data.get('companies') or {}))
+            except Exception as e:
+                logger.error(f"AI bond fetch failed, will skip: {e}")
 
-        # ── [2026-06-27] 經濟指標:經濟指標相關新聞 ─────────────
+        # ── [2026-06-27] 經濟指標:經濟指標相關新聞 ───── 08:00 主推播 ──
         # 改採與熱門財經新聞相同媒體來源，不再使用官方 BLS API
         economic_indicators = []
         economic_news = []
-        try:
-            logger.info("Fetching BLS-related news from financial media (same sources as hot news)...")
-            economic_news = self.fetch_economic_news()
-        except Exception as e:
-            logger.error(f"BLS news fetch failed, will skip: {e}")
+        if do_main:
+            try:
+                logger.info("Fetching BLS-related news from financial media (same sources as hot news)...")
+                economic_news = self.fetch_economic_news()
+            except Exception as e:
+                logger.error(f"BLS news fetch failed, will skip: {e}")
 
-        # ── [2026-09-01] 財經行事曆:財經行事曆(未來 30 天)──────────────
+        # ── [2026-09-01] 財經行事曆:財經行事曆(未來 30 天)── 08:00 主推播 ─
         financial_calendar = []
-        try:
-            logger.info("Fetching financial calendar (next 30 days)...")
-            financial_calendar = self.fetch_financial_calendar(days=30)
-        except Exception as e:
-            logger.error(f"Financial calendar fetch failed, will skip: {e}")
+        if do_main:
+            try:
+                logger.info("Fetching financial calendar (next 30 days)...")
+                financial_calendar = self.fetch_financial_calendar(days=30)
+            except Exception as e:
+                logger.error(f"Financial calendar fetch failed, will skip: {e}")
 
-        # ── [2026-09-30] 投資熱門話題:Reddit 美股×AI 當日熱門前 10 ───────
+        # ── [2026-09-30] 投資熱門話題:Reddit 美股×AI 當日熱門前 10 ──
+        #    07:00 早鳥
         hot_topics = None
-        try:
-            logger.info("Fetching hot topics (Reddit US stocks x AI)...")
-            from topics_monitor import fetch_hot_topics
-            hot_topics = fetch_hot_topics()
-        except Exception as e:
-            logger.error(f"Hot topics fetch failed, will skip: {e}")
+        if do_morning:
+            try:
+                logger.info("Fetching hot topics (Reddit US stocks x AI)...")
+                from topics_monitor import fetch_hot_topics
+                hot_topics = fetch_hot_topics()
+            except Exception as e:
+                logger.error(f"Hot topics fetch failed, will skip: {e}")
 
         # ── [2026-10-16] 台指期多空指標:三大法人臺股期貨未平倉淨部位 ─────
+        #    08:00 主推播
         taifex_sentiment = None
-        try:
-            logger.info("Fetching TAIEX futures institutional positioning...")
-            taifex_sentiment = self.fetch_taifex_sentiment()
-        except Exception as e:
-            logger.error(f"TAIFEX sentiment fetch failed, will skip: {e}")
+        if do_main:
+            try:
+                logger.info("Fetching TAIEX futures institutional positioning...")
+                taifex_sentiment = self.fetch_taifex_sentiment()
+            except Exception as e:
+                logger.error(f"TAIFEX sentiment fetch failed, will skip: {e}")
 
         # ── [2026-10-16] 自訂多空評分指標:五項指標合計分數(做多/做空)─────
-        #    同時寫入 sentiment_index_state.json，供 11:30 台股推播比對命中率
+        #    08:00 主推播；同時寫入 sentiment_index_state.json，
+        #    供 11:30 台股推播比對命中率
         sentiment_index = None
-        try:
-            logger.info("Fetching custom sentiment index (5 user-defined indicators)...")
-            import sentiment_index as senti_mod
-            sentiment_index = senti_mod.fetch_sentiment_index()
-            senti_mod.save_signal(sentiment_index)
-            logger.info("Sentiment index: %s 分 → %s",
-                        sentiment_index.get('total'), sentiment_index.get('direction'))
-        except Exception as e:
-            logger.error(f"Sentiment index fetch failed, will skip: {e}")
+        if do_main:
+            try:
+                logger.info("Fetching custom sentiment index (5 user-defined indicators)...")
+                import sentiment_index as senti_mod
+                sentiment_index = senti_mod.fetch_sentiment_index()
+                senti_mod.save_signal(sentiment_index)
+                logger.info("Sentiment index: %s 分 → %s",
+                            sentiment_index.get('total'), sentiment_index.get('direction'))
+            except Exception as e:
+                logger.error(f"Sentiment index fetch failed, will skip: {e}")
 
         # 發送整合通知(不含[2026-06-25] ICT/AI 活動)
-        logger.info("Sending notification report...")
+        logger.info(f"Sending notification report (part={part})...")
         notification_message = self.generate_telegram_message(
             top_articles,
             politician_trades=politician_trades,
@@ -5198,10 +5241,11 @@ class NewsMonitor:
             taifex_sentiment=taifex_sentiment,
             sentiment_index=sentiment_index,
             hot_topics=hot_topics,
+            part=part,
         )
         self.send_telegram_message(notification_message)
 
-        logger.info("News-only monitor check completed!")
+        logger.info(f"News-only monitor check completed (part={part})!")
         logger.info("="*50 + "\n")
 
     def run_events_only(self):

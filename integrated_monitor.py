@@ -141,6 +141,21 @@ _logging.getLogger('yfinance').setLevel(_logging.CRITICAL)
 
 
 
+def _news_slot_trigger(now, target_hour, until_hour, last_run, today):
+    """新聞推播時段觸發判斷（[2026-10-20] 雙時段：07:00 早鳥／08:00 主推播）。
+
+    回傳 (should_run, is_catch_up)：
+      - 正常觸發：目標小時的前 5 分鐘內
+      - 補發觸發：已過目標小時、仍在 until_hour 之前（重啟後補發）
+      - 當日已執行（last_run == today）一律不再觸發
+    """
+    if last_run == today:
+        return False, False
+    normal = (now.hour == target_hour and now.minute < 5)
+    catch_up = (target_hour <= now.hour < until_hour)
+    return (normal or catch_up), (catch_up and not normal)
+
+
 class IntegratedMonitor:
 
     """综合监控类"""
@@ -310,118 +325,90 @@ class IntegratedMonitor:
     
 
     def news_monitor_worker(self):
+        """新闻监控工作线程 - 每日两时段推播（07:00 早鳥 / 08:00 主推播，含重启补发）
 
-        """新闻监控工作线程 - 每天目标时间执行一次（含重启补发）"""
-
+        [2026-10-20] 使用者指定：熱門財經新聞／13F 官方／13F 媒體報導／美股財報公布／
+        投資熱門話題 改為 07:00 推播，其餘區塊維持 08:00。
+        兩時段各自記錄 last_run（news_morning_last_run / news_main_last_run），
+        互不影響，重啟後各自補發。
+        """
         logger.info("Starting news monitor worker...")
 
-        target_hour = self.news_monitor.news_config.get('daily_hour', 8)
+        morning_hour = int(self.news_monitor.news_config.get('morning_hour', 7) or 7)
+        main_hour = int(self.news_monitor.news_config.get('daily_hour', 8) or 8)
 
-        # 從持久化檔案載入上次執行日期（避免重啟後 catch-up 重複推播）
-        _state = _load_monitor_state()
-        last_run_date_str = _state.get("news_last_run")
-        last_run_date = None
-        if last_run_date_str:
+        # (part, 目標小時, 狀態檔 key, 補發截止小時)
+        #   早鳥補發窗口 morning_hour ~ main_hour（不跨入主推播時段）
+        #   主推播補發窗口 main_hour ~ main_hour+2
+        slots = (
+            ("morning", morning_hour, "news_morning_last_run", main_hour),
+            ("main", main_hour, "news_main_last_run", main_hour + 2),
+        )
+
+        def _parse_date(s):
             try:
                 from datetime import date as _date
-                parts = last_run_date_str.split("-")
-                last_run_date = _date(int(parts[0]), int(parts[1]), int(parts[2]))
+                p = str(s).split("-")
+                return _date(int(p[0]), int(p[1]), int(p[2]))
             except Exception:
-                pass
-        
-        logger.info(f"News monitor: target={target_hour}:00 Taipei, last_run_date={last_run_date}")
+                return None
+
+        _state = _load_monitor_state()
+        last_runs = {part: _parse_date(_state.get(key))
+                     for part, _, key, _ in slots}
+
+        logger.info("News monitor: morning=%02d:00, main=%02d:00 Taipei, last_runs=%s",
+                    morning_hour, main_hour,
+                    {k: str(v) for k, v in last_runs.items()})
         heartbeat_count = 0
-        
-        
-        # 使用明確時區（台北時間）
-        taipei_tz = pytz.timezone('Asia/Taipei')
-        
-
-
 
         while self.running:
-
             try:
-
                 now = datetime.now(TAIPEI_TZ)
-
                 today = now.date()
+                ran_any = False
 
-
-
-                should_run = False
-
-
-
-                # 正常触发：target_hour 点前 5 分钟内
-
-                if now.hour == target_hour and now.minute < 5 and last_run_date != today:
-
-                    should_run = True
-
-
-
-                # 补发触发：程序重启后，当天未发、且时间仍在 target_hour ~ target_hour+2 之间
-
-                elif (
-
-                    last_run_date != today
-
-                    and target_hour <= now.hour < target_hour + 2
-
-                ):
-
-                    logger.info(f"News monitor catch-up: missed {target_hour}:00, running now at {now.strftime('%H:%M')}")
-
-                    should_run = True
-
-
-
-                if should_run:
-
-                    logger.info(f"Triggering news monitor (blocks 1-10) at {now.strftime('%H:%M')}...")
-
+                for part, target_hour, state_key, until_hour in slots:
+                    due, is_catch_up = _news_slot_trigger(
+                        now, target_hour, until_hour,
+                        last_runs.get(part), today)
+                    if not due:
+                        continue
+                    if is_catch_up:
+                        logger.info("News monitor catch-up (%s): missed %02d:00, running now at %s",
+                                    part, target_hour, now.strftime('%H:%M'))
+                    logger.info("Triggering news monitor (part=%s) at %s...",
+                                part, now.strftime('%H:%M'))
                     try:
-                        self.news_monitor.run_news_only()
-                        logger.info(f"News monitor run COMPLETED at {datetime.now(TAIPEI_TZ).strftime('%H:%M:%S')}")
+                        self.news_monitor.run_news_only(part=part)
+                        logger.info("News monitor (part=%s) COMPLETED at %s",
+                                    part, datetime.now(TAIPEI_TZ).strftime('%H:%M:%S'))
                     except Exception as e:
-                        logger.error(f"News monitor run FAILED: {e}", exc_info=True)
-
-                    last_run_date = today
-
-                    # 持久化到檔案，避免重啟後 catch-up 重複推播
+                        logger.error("News monitor (part=%s) FAILED: %s",
+                                     part, e, exc_info=True)
+                    last_runs[part] = today
                     _s = _load_monitor_state()
-                    _s["news_last_run"] = str(today)
+                    _s[state_key] = str(today)
                     _save_monitor_state(_s)
+                    ran_any = True
 
-                    # 等待1小时，避免窗口内重复执行
-
-                    for _ in range(60):
-
-                        if not self.running:
-
-                            break
-
+                if ran_any:
+                    # 执行后短暂等待，避免同一分钟内重复触发
+                    if self.running:
                         time.sleep(60)
-
                 else:
-
                     heartbeat_count += 1
                     if heartbeat_count % 30 == 0:
-                        logger.info(f"[HEARTBEAT] news_monitor_worker alive, "
-                                    f"now={now.strftime('%Y-%m-%d %H:%M:%S %Z')}, "
-                                    f"target_hour={target_hour}, last_run={last_run_date}")
+                        logger.info("[HEARTBEAT] news_monitor_worker alive, "
+                                    "now=%s, morning=%02d:00, main=%02d:00, last_runs=%s",
+                                    now.strftime('%Y-%m-%d %H:%M:%S %Z'),
+                                    morning_hour, main_hour,
+                                    {k: str(v) for k, v in last_runs.items()})
                     time.sleep(60)
 
-
-
             except Exception as e:
-
                 logger.error(f"Error in news monitor worker: {e}")
-
                 time.sleep(60)
-
-    
 
     def events_monitor_worker(self):
 

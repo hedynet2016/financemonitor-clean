@@ -76,6 +76,8 @@ def generate():
             "enabled": True,
             "timezone": "US/Eastern",
             "daily_hour": int(os.environ.get("NEWS_DAILY_HOUR", "8")),
+            # [2026-10-20] 早鳥推播：熱門財經／13F／美股財報／投資熱門話題
+            "morning_hour": int(os.environ.get("NEWS_MORNING_HOUR", "7")),
             "events_hour": int(os.environ.get("NEWS_EVENTS_HOUR", "14")),
             "sources": [
                 {

@@ -619,11 +619,21 @@ def save_state(state: Dict, path: Optional[str] = None) -> None:
         logger.warning('[sentiment] 狀態檔寫入失敗：%s', e)
 
 
-def save_signal(idx: Dict, path: Optional[str] = None) -> None:
-    """08:00 記錄當日評分與建議方向"""
+def save_signal(idx: Dict, path: Optional[str] = None,
+                force: bool = False) -> None:
+    """08:00 記錄當日評分與建議方向。
+
+    [2026-10-20] 同日已有紀錄時預設不覆寫——避免補發/重跑/測試把
+    11:30 命中比對所依據的原始 08:00 訊號蓋掉（需覆寫請傳 force=True）。
+    """
     if not idx or idx.get('total') is None:
         return
     st = load_state(path)
+    existing = (st.get('signals') or {}).get(idx['date'])
+    if existing and existing.get('total') is not None and not force:
+        logger.info('[sentiment] %s 已有評分紀錄（%s 分），保留原紀錄不覆寫',
+                    idx['date'], existing.get('total'))
+        return
     st['signals'][idx['date']] = {
         'date': idx['date'], 'run_time': idx.get('run_time'),
         'total': idx['total'], 'direction': idx['direction'],
