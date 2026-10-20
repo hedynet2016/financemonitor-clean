@@ -1121,6 +1121,27 @@ def api_push_history():
     return jsonify({"history": records, "count": len(records)})
 
 
+@app.route("/api/news-status")
+def api_news_status():
+    """[2026-10-21] 新聞推播 worker 診斷端點：
+    回傳雙時段（07:00 早鳥／08:00 主推播）最後執行日、重試次數與結果"""
+    from pathlib import Path as _P
+    status_file = _P(__file__).resolve().parent / "news_worker_status.json"
+    state_file = _P(__file__).resolve().parent / "monitor_state.json"
+    result = {"worker_status": None, "monitor_state": None}
+    try:
+        if status_file.exists():
+            result["worker_status"] = json.loads(status_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        result["worker_status_error"] = str(e)
+    try:
+        if state_file.exists():
+            result["monitor_state"] = json.loads(state_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        result["monitor_state_error"] = str(e)
+    return jsonify(result)
+
+
 @app.route("/api/diagnostic")
 def api_diagnostic():
     """診斷端點：檢查 GraphQL API、推播設定等"""

@@ -360,6 +360,25 @@ class IntegratedMonitor:
         logger.info("News monitor: morning=%02d:00, main=%02d:00 Taipei, last_runs=%s",
                     morning_hour, main_hour,
                     {k: str(v) for k, v in last_runs.items()})
+
+        # [2026-10-21] 重試計數與診斷狀態檔
+        _push_attempts = {}
+        _push_results = {}
+        _status_file = STATE_FILE.parent / "news_worker_status.json"
+
+        def _write_status(now_dt):
+            try:
+                _status_file.write_text(json.dumps({
+                    "updated": now_dt.strftime('%Y-%m-%d %H:%M:%S'),
+                    "morning_hour": morning_hour,
+                    "main_hour": main_hour,
+                    "last_runs": {k: str(v) for k, v in last_runs.items()},
+                    "attempts": dict(_push_attempts),
+                    "last_result": dict(_push_results),
+                }, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception as e:
+                logger.warning(f"Failed to save news worker status: {e}")
+
         heartbeat_count = 0
 
         while self.running:
@@ -377,19 +396,43 @@ class IntegratedMonitor:
                     if is_catch_up:
                         logger.info("News monitor catch-up (%s): missed %02d:00, running now at %s",
                                     part, target_hour, now.strftime('%H:%M'))
+                    # [2026-10-21] 每日每 slot 最多重試 10 次，避免來源持續故障時空轉
+                    if _push_attempts.get(part, 0) >= 10:
+                        logger.warning("News monitor (part=%s) reached max retries, giving up for today", part)
+                        last_runs[part] = today
+                        _s = _load_monitor_state()
+                        _s[state_key] = str(today)
+                        _save_monitor_state(_s)
+                        continue
                     logger.info("Triggering news monitor (part=%s) at %s...",
                                 part, now.strftime('%H:%M'))
+                    ok = False
+                    _err = None
                     try:
-                        self.news_monitor.run_news_only(part=part)
-                        logger.info("News monitor (part=%s) COMPLETED at %s",
-                                    part, datetime.now(TAIPEI_TZ).strftime('%H:%M:%S'))
+                        ok = bool(self.news_monitor.run_news_only(part=part))
                     except Exception as e:
+                        _err = str(e)
                         logger.error("News monitor (part=%s) FAILED: %s",
                                      part, e, exc_info=True)
-                    last_runs[part] = today
-                    _s = _load_monitor_state()
-                    _s[state_key] = str(today)
-                    _save_monitor_state(_s)
+                    _push_attempts[part] = _push_attempts.get(part, 0) + 1
+                    _push_results[part] = {
+                        "ts": now.strftime('%Y-%m-%d %H:%M:%S'),
+                        "ok": ok,
+                        "error": _err,
+                    }
+                    if ok:
+                        # [2026-10-21] 只有確認推播成功送出才標記當日已執行；
+                        # 失敗時不標記，補發窗口內每分鐘自動重試
+                        last_runs[part] = today
+                        _s = _load_monitor_state()
+                        _s[state_key] = str(today)
+                        _save_monitor_state(_s)
+                        logger.info("News monitor (part=%s) COMPLETED (push sent) at %s",
+                                    part, datetime.now(TAIPEI_TZ).strftime('%H:%M:%S'))
+                    else:
+                        logger.warning("News monitor (part=%s) push not confirmed (attempt %d); will retry while window open",
+                                       part, _push_attempts[part])
+                    _write_status(now)
                     ran_any = True
 
                 if ran_any:

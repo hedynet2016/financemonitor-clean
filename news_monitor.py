@@ -5058,14 +5058,23 @@ class NewsMonitor:
         return message
 
     def send_telegram_message(self, message: str, discord_webhook: str = None) -> bool:
-        """發送通知訊息(超過4000字元自動分段)"""
+        """發送通知訊息(超過4000字元自動分段)，並記錄推播歷史"""
         logger.info(f"Total message length: {len(message)} chars")
         # 超過 4000 字元時使用分段發送,否則走 send_to_all 一次搞定
         if len(message) > 4000:
             logger.info("Message too long, using chunked sending...")
-            return self.notification_sender.send_long_message(message, discord_webhook=discord_webhook)
-        results = self.notification_sender.send_to_all(message, discord_webhook=discord_webhook)
-        return any(results.values())
+            sent = self.notification_sender.send_long_message(message, discord_webhook=discord_webhook)
+            _results = {"telegram": sent, "discord": sent, "email": None}
+        else:
+            _results = self.notification_sender.send_to_all(message, discord_webhook=discord_webhook)
+            sent = any(_results.values())
+        # [2026-10-21] 新聞/活動推播也寫入 push_history，供線上診斷
+        try:
+            from notification_sender import _log_push_history
+            _log_push_history(message, _results)
+        except Exception as _e:
+            logger.warning(f"push history log failed: {_e}")
+        return sent
     
     def run_news_only(self, part: str = "all"):
         """執行一次新聞監控檢查。
@@ -5087,9 +5096,11 @@ class NewsMonitor:
         # 獲取熱門文章（僅早鳥時段需要）
         top_articles = self.get_top_articles() if do_morning else []
 
+        # [2026-10-21] 修復：熱門文章抓取失敗（回空）時，原先直接 return 會
+        # 中止整個早鳥推播且 worker 仍標記當日已執行 → 補發也不觸發。
+        # 改為繼續推送其餘區塊（13F／美股財報／熱門話題）。
         if do_morning and not top_articles:
-            logger.warning("No articles available")
-            return
+            logger.warning("No top articles available — continuing with other morning sections")
 
         # 顯示文章結果
         logger.info("\n" + "="*50)
@@ -5223,30 +5234,53 @@ class NewsMonitor:
             except Exception as e:
                 logger.error(f"Sentiment index fetch failed, will skip: {e}")
 
+        # [2026-10-21] 內容全空時不發送（回傳 False 讓 worker 於補發窗口內重試），
+        # 避免只發出標題的空推播
+        has_morning_content = bool(
+            top_articles or filings_13f or media_13f or earnings_news
+            or (hot_topics or {}).get('reddit'))
+        has_main_content = bool(
+            politician_trades or ipo_news or ai_momentum_news
+            or (ai_bond_data or {}).get('companies')
+            or economic_news or financial_calendar
+            or taifex_sentiment or sentiment_index)
+        if part == 'morning' and not has_morning_content:
+            logger.warning("Morning part has no content at all; skip send (worker will retry)")
+            return False
+        if part == 'main' and not has_main_content:
+            logger.warning("Main part has no content at all; skip send (worker will retry)")
+            return False
+
         # 發送整合通知(不含[2026-06-25] ICT/AI 活動)
         logger.info(f"Sending notification report (part={part})...")
-        notification_message = self.generate_telegram_message(
-            top_articles,
-            politician_trades=politician_trades,
-            filings_13f=filings_13f,
-            media_13f=media_13f,
-            ipo_news=ipo_news,
-            earnings_news=earnings_news,
-            economic_indicators=economic_indicators,
-            economic_news=economic_news,
-            ict_ai_events=None,  # [2026-06-25] ICT/AI 活動 獨立發送
-            ai_momentum_news=ai_momentum_news,
-            ai_bond_data=ai_bond_data,
-            financial_calendar=financial_calendar,
-            taifex_sentiment=taifex_sentiment,
-            sentiment_index=sentiment_index,
-            hot_topics=hot_topics,
-            part=part,
-        )
-        self.send_telegram_message(notification_message)
+        try:
+            notification_message = self.generate_telegram_message(
+                top_articles,
+                politician_trades=politician_trades,
+                filings_13f=filings_13f,
+                media_13f=media_13f,
+                ipo_news=ipo_news,
+                earnings_news=earnings_news,
+                economic_indicators=economic_indicators,
+                economic_news=economic_news,
+                ict_ai_events=None,  # [2026-06-25] ICT/AI 活動 獨立發送
+                ai_momentum_news=ai_momentum_news,
+                ai_bond_data=ai_bond_data,
+                financial_calendar=financial_calendar,
+                taifex_sentiment=taifex_sentiment,
+                sentiment_index=sentiment_index,
+                hot_topics=hot_topics,
+                part=part,
+            )
+        except Exception as e:
+            # [2026-10-21] 訊息產生失敗回傳 False，讓 worker 於窗口內重試
+            logger.error(f"generate_telegram_message (part={part}) failed: {e}", exc_info=True)
+            return False
+        sent = self.send_telegram_message(notification_message)
 
-        logger.info(f"News-only monitor check completed (part={part})!")
+        logger.info(f"News-only monitor check completed (part={part}, sent={sent})!")
         logger.info("="*50 + "\n")
+        return bool(sent)
 
     def run_events_only(self):
         """執行一次活動監控檢查([2026-06-25] ICT/AI 活動 獨立)"""
