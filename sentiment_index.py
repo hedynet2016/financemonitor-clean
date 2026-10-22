@@ -592,6 +592,18 @@ def _state_path(path: Optional[str] = None) -> str:
     return STATE_FILE
 
 
+def _persist_push(reason: str, path: Optional[str] = None) -> None:
+    """[2026-10-22] 狀態檔背景備份到 GitHub（Render 重新部署不遺失月度統計）
+
+    失敗一律靜默，不影響推播；本機未設 GITHUB_PAT 時自動略過。
+    """
+    try:
+        import state_persist
+        state_persist.push_async(_state_path(path), reason=reason)
+    except Exception as e:                      # 絕不讓備份影響主流程
+        logger.debug('[sentiment] 狀態持久化略過：%s', e)
+
+
 def load_state(path: Optional[str] = None) -> Dict:
     try:
         with open(_state_path(path), 'r', encoding='utf-8') as f:
@@ -642,6 +654,7 @@ def save_signal(idx: Dict, path: Optional[str] = None,
                   for i in idx['items']],
     }
     save_state(st, path)
+    _persist_push('08:00 signal', path)
 
 
 def get_signal(date_str: str, path: Optional[str] = None) -> Optional[Dict]:
@@ -709,6 +722,7 @@ def record_hit(date_str: str, ref: float, last: float,
         rec['recorded_at'] = now_tpe().strftime('%Y-%m-%d %H:%M')
         st['history'].append(rec)
         save_state(st, path)
+        _persist_push('11:30 hit', path)
     return rec
 
 

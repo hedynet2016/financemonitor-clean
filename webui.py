@@ -1154,6 +1154,29 @@ def api_news_status():
     return jsonify(result)
 
 
+@app.route("/api/state-persist")
+def api_state_persist():
+    """[2026-10-22] 狀態檔跨部署持久化診斷／手動同步
+
+    參數：
+      ?push=1     立即把本機狀態上傳到備份 repo
+      ?restore=1  立即從備份 repo 還原（依日期合併，本機優先）
+    """
+    from flask import request as _rq
+    try:
+        import state_persist as sp
+        result = {"status": sp.status()}
+        if _rq.args.get("push"):
+            ok, msg = sp.upload("sentiment_index_state.json",
+                                reason="manual push from /api/state-persist")
+            result["push"] = {"ok": ok, "msg": msg}
+        if _rq.args.get("restore"):
+            result["restore"] = sp.restore()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/fut-pnl-test")
 def api_fut_pnl_test():
     """[2026-10-22] 台指期模擬損益診斷（唯讀，不寫狀態檔）
@@ -1970,6 +1993,15 @@ def start_scheduler():
     """
     global SCHEDULER_PROCS, BOT_PROC
     python = shutil.which("python3") or shutil.which("python") or sys.executable
+
+    # 0. [2026-10-22] 還原跨部署狀態（必須在任何 worker 啟動前完成，
+    #    否則 11:30 命中紀錄／月度損益會因重新部署而歸零）
+    try:
+        import state_persist
+        _rs = state_persist.restore()
+        logger.info("State restore: %s", _rs)
+    except Exception as e:
+        logger.warning("State restore skipped: %s", e)
 
     procs = []
     # 1. Monitor scheduler + Telegram Bot (telegram_bot.py --no-webui)
