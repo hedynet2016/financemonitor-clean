@@ -1101,6 +1101,7 @@ def tasks_view():
       <div><small class="text-muted">每日日誌：</small> <code>/api/state-log?days=30</code> 逐日列出建議方向、評分、命中、模擬損益、是否停損</div>
       <div><small class="text-muted">診斷：</small> <code>/api/state-persist</code>（可加 <code>?restore=1</code> 立即還原）</div>
       <div><small class="text-muted">備份憑證：</small> 每日 09:00 日誌備份使用 <code>GITHUB_PAT</code>；失效可用 <code>/api/pat-check?write=1</code> 逐項定位（身分／到期／scope／repo 權限／寫入），本機可跑 <code>python scripts/check_pat.py &lt;token&gt;</code></div>
+      <div><small class="text-muted">手動備份：</small> <code>POST /api/backup-now</code> 立即跑一次日誌備份、<code>GET</code> 查結果（不需等 09:00）</div>
     </div>
   </div>
 </div>
@@ -1280,6 +1281,52 @@ def api_state_log():
                         "records": rows})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+_BACKUP_STATE = {"running": False, "last": None}
+
+
+@app.route("/api/backup-now", methods=["POST", "GET"])
+def api_backup_now():
+    """[2026-10-22] 立即執行每日 09:00 的日誌備份（驗證 GITHUB_PAT 是否修好）
+
+    GET  → 查詢執行狀態與上次結果
+    POST → 背景觸發一次備份（不改動排程，純手動驗證用）
+    """
+    if request.method == "GET":
+        return jsonify(_BACKUP_STATE)
+    if _BACKUP_STATE.get("running"):
+        return jsonify({"ok": False, "error": "備份執行中"}), 409
+
+    def _worker():
+        import io as _io
+        import traceback as _tb
+        from contextlib import redirect_stdout
+        _BACKUP_STATE.update({"running": True, "started": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+        buf = _io.StringIO()
+        code, err = 0, None
+        try:
+            with redirect_stdout(buf):
+                from scripts.render_backup import main as _backup_main
+                code = _backup_main() or 0
+        except Exception as e:
+            err = f"{e}"
+            logger.error("手動備份失敗: %s\n%s", e, _tb.format_exc())
+        out = buf.getvalue()
+        _BACKUP_STATE.update({
+            "running": False,
+            "finished": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "exit_code": code,
+            "error": err,
+            "ok_count": out.count("[OK]"),
+            "fail_count": out.count("[FAIL]"),
+            "output": out[-1500:],
+            "last": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
+
+    threading.Thread(target=_worker, daemon=True, name="manual-backup").start()
+    return jsonify({"ok": True, "started": True,
+                    "note": "背景執行中，稍候以 GET /api/backup-now 查結果"})
 
 
 @app.route("/api/pat-check")
