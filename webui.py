@@ -1154,6 +1154,55 @@ def api_news_status():
     return jsonify(result)
 
 
+@app.route("/api/state-export")
+def api_state_export():
+    """[2026-10-22] 匯出多空評分狀態（給 GitHub Actions 每日同步用，唯讀）
+
+    內容為 sentiment_index_state.json 原樣（訊號 + 每日命中/損益歷史），
+    不含任何憑證或個人資料。
+    """
+    try:
+        import json as _json
+        import sentiment_index as _senti
+        st = _senti.load_state()
+        return _json.dumps({"generated_at": datetime.now().isoformat(timespec="seconds"),
+                            "signals": st.get("signals") or {},
+                            "history": st.get("history") or []},
+                           ensure_ascii=False)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/state-log")
+def api_state_log():
+    """[2026-10-22] 每日建議方向／命中／模擬損益日誌（唯讀，?days=30）"""
+    from flask import request as _rq
+    try:
+        import sentiment_index as _senti
+        days = int(_rq.args.get("days", "30"))
+        hist = (_senti.load_state().get("history") or [])[-days:]
+        rows = []
+        for h in hist:
+            pnl = h.get("pnl")
+            rows.append({
+                "date": h.get("date"),
+                "direction": h.get("direction"),
+                "score": h.get("total"),
+                "hit": h.get("hit"),
+                "pnl": pnl,
+                "pnl_text": (None if pnl is None else
+                             f"{'+' if pnl >= 0 else '-'}{abs(pnl):,.0f}"),
+                "stopped": bool(h.get("stopped")),
+                "sim_mode": h.get("sim_mode"),
+                "recorded_at": h.get("recorded_at"),
+            })
+        total = sum(r["pnl"] for r in rows if r["pnl"] is not None)
+        return jsonify({"days": days, "count": len(rows), "total_pnl": total,
+                        "records": rows})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/state-persist")
 def api_state_persist():
     """[2026-10-22] 狀態檔跨部署持久化診斷／手動同步

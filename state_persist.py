@@ -288,9 +288,13 @@ def upload(path: str, name: Optional[str] = None, reason: str = '') -> Tuple[boo
 
 
 def download(name: str) -> Tuple[Optional[dict], str]:
-    """下載遠端狀態（失敗自動換後端），回傳 (state, backend/err)"""
+    """下載遠端狀態：raw（免憑證）→ repo → gist，回傳 (state, backend/err)"""
     global _backend
     errors = {}
+    st, msg = _download_raw(name)
+    if msg == 'raw':
+        return st, 'raw'
+    errors['raw'] = msg
     for be in _backend_order():
         st, msg = (_download_repo if be == 'repo' else _download_gist)(name)
         if msg == 'ok':
@@ -298,6 +302,34 @@ def download(name: str) -> Tuple[Optional[dict], str]:
             return st, be
         errors[be] = msg
     return None, json.dumps(errors, ensure_ascii=False)
+
+
+# ── 後端 0：公開 repo 的 raw 檔（免憑證讀取）──────────────────────
+def _raw_url(name: str) -> str:
+    """預設從 financemonitor-clean 的 state-store 分支讀取（公開 repo 免 token）
+
+    GitHub Actions 每日把 /api/state-export 的內容 commit 到該分支，
+    Render 開機時直接讀回——不需要任何 PAT，也不會觸發 Render 重新部署。
+    """
+    url = os.environ.get('STATE_RAW_URL')
+    if url:
+        return url
+    owner = _repo_owner() or 'hedynet2016'
+    return (f'https://raw.githubusercontent.com/hedynet2016/financemonitor-clean'
+            f'/state-store/{_dir()}/{name}')
+
+
+def _download_raw(name: str) -> Tuple[Optional[dict], str]:
+    url = _raw_url(name)
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'financemonitor-state-persist',
+                                                   'Cache-Control': 'no-cache'})
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            return json.loads(resp.read().decode('utf-8')), 'raw'
+    except urllib.error.HTTPError as e:
+        return None, ('not_found' if e.code == 404 else f'HTTP {e.code}')
+    except Exception as e:
+        return None, str(e)
 
 
 # ── 合併 / 還原 ────────────────────────────────────────────────────
@@ -327,11 +359,12 @@ def merge_states(local: Optional[dict], remote: Optional[dict],
 def restore(name: str = 'sentiment_index_state.json',
             path: Optional[str] = None,
             history_max: int = 60) -> Dict:
-    """開機還原：取遠端狀態與本機合併後寫回（本機優先）"""
+    """開機還原：取遠端狀態與本機合併後寫回（本機優先）
+
+    不需 GITHUB_PAT：優先讀公開 repo 的 raw 檔（state-store 分支）。
+    """
     global _restored
     p = path or name
-    if not available():
-        return {'ok': False, 'reason': 'no_token'}
     if not _eligible(p):
         return {'ok': False, 'reason': 'not_eligible'}
 
@@ -415,6 +448,11 @@ def status(name: str = 'sentiment_index_state.json',
             info['last_date'] = hist[-1].get('date') if hist else None
         except Exception as e:
             info['local_error'] = str(e)
+    info['raw_url'] = _raw_url(name)
+    _rst, _rmsg = _download_raw(name)
+    info['raw'] = {'ok': _rmsg == 'raw',
+                   'history': len((_rst or {}).get('history') or []) if _rst else None,
+                   'error': None if _rmsg == 'raw' else _rmsg}
     if info['token']:
         info['repo_probe'] = repo_ok()
         gid, gerr = _gist_find()

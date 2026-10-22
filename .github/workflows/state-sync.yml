@@ -1,0 +1,84 @@
+name: State Sync
+
+# 2026-10-22 — 台指期多空評分狀態跨部署持久化（免 PAT）
+# 由 GitHub Actions 每日從線上服務抓 /api/state-export，commit 到 state-store 分支。
+# Render 開機時 state_persist.restore() 直接讀 raw 網址（公開 repo，免憑證）。
+# 注意：只推 state-store 分支，Render 追蹤 main，因此不會觸發重新部署。
+
+on:
+  schedule:
+    - cron: "5 0 * * *"    # 08:05 台北（08:00 評分寫入後）
+    - cron: "35 3 * * *"   # 11:35 台北（11:30 命中比對後）
+    - cron: "31 4 * * *"   # 12:31 台北（補抓，避免前兩次遇冷啟動失敗）
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: state-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EXPORT_URL: https://workbuddy-fjyd.onrender.com/api/state-export
+      STATE_FILE: state/sentiment_index_state.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch state from Render
+        run: |
+          set -euo pipefail
+          mkdir -p state
+          ok=0
+          for i in 1 2 3; do
+            code=$(curl -sS -o "$STATE_FILE" -w "%{http_code}" \
+                   --max-time 120 --retry 1 "$EXPORT_URL" || true)
+            echo "attempt $i -> HTTP ${code:-none}"
+            if [ "${code:-000}" = "200" ] && \
+               python3 -c "import json;json.load(open('$STATE_FILE'))" 2>/dev/null; then
+              ok=1
+              break
+            fi
+            sleep 20
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::無法取得線上狀態（Render 可能仍在冷啟動）"
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json, os
+          p = os.environ["STATE_FILE"]
+          d = json.load(open(p, encoding="utf-8"))
+          out = {"signals": d.get("signals") or {}, "history": d.get("history") or []}
+          json.dump(out, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+          hist = out["history"]
+          print(f"signals={len(out['signals'])} history={len(hist)}")
+          if hist:
+              print("range:", hist[0].get("date"), "->", hist[-1].get("date"))
+          PY
+
+      - name: Commit to state-store branch
+        run: |
+          set -euo pipefail
+          git config user.name  "state-sync-bot"
+          git config user.email "actions@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin state-store >/dev/null 2>&1; then
+            git fetch --depth=1 origin state-store
+            git checkout -B state-store FETCH_HEAD
+          else
+            git checkout -B state-store
+          fi
+          git add -f "$STATE_FILE"
+          if git diff --cached --quiet; then
+            echo "no change, skip commit"
+            exit 0
+          fi
+          git commit -m "state: sync $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push origin state-store
