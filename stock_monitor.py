@@ -61,15 +61,15 @@ TAIFEX_QUOTE_URL = "https://mis.taifex.com.tw/futures/api/getQuoteList"
 FUT_CIDS = ["TXF", "MXF", "TMF"]            # 大台／小台／微台
 FUT_CONTRACT_SIZE = {"TXF": 200, "MXF": 50, "TMF": 10}  # 每點新台幣（期交所規格）
 # [2026-10-22] 使用者指定模擬單規格：一律小台（每點 50 元）
-#   多單：一日五口，停損 20 點 → 5 × 20 × 50 = 5,000 元
-#   空單：一日兩口，停損 50 點 → 2 × 50 × 50 = 5,000 元
-#   即單一方向當日最大虧損 5,000 元
+#   多單：一日三口，停損 20 點 → 3 × 20 × 50 = 3,000 元
+#   空單：一日一口，停損 50 點 → 1 × 50 × 50 = 2,500 元
 FUT_PNL_CID = "MXF"                          # 模擬單商品：小台
-FUT_PNL_QTY = 5                              # 多單五口
-FUT_PNL_SHORT_QTY = 2                        # 空單兩口（[2026-10-20] 使用者調整）
+FUT_PNL_QTY = 3                              # 多單三口
+FUT_PNL_SHORT_QTY = 1                        # 空單一口（[2026-10-22] 使用者調整）
 FUT_STOP_PTS_LONG = 20                       # 多單停損點數
 FUT_STOP_PTS_SHORT = 50                      # 空單停損點數
-FUT_MAX_LOSS = FUT_PNL_QTY * FUT_STOP_PTS_LONG * FUT_CONTRACT_SIZE[FUT_PNL_CID]  # 5,000 元
+FUT_MAX_LOSS_LONG = FUT_PNL_QTY * FUT_STOP_PTS_LONG * FUT_CONTRACT_SIZE[FUT_PNL_CID]      # 3,000 元
+FUT_MAX_LOSS_SHORT = FUT_PNL_SHORT_QTY * FUT_STOP_PTS_SHORT * FUT_CONTRACT_SIZE[FUT_PNL_CID]  # 2,500 元
 # 09:00 下單（進場價 = 當日 09:00 後第一次抓到的報價；多單與空單同進場價）
 FUT_ENTRY_MINUTES = 9 * 60
 # 損益試算顯示時段：09:30 ~ 11:30（以半小時 block 計：block = hour*2 + minute//30）
@@ -1261,7 +1261,7 @@ class StockMonitor:
                 f"（{sign}{d:,.0f} 點 / {sign}{txf['diff_rate']:.2f}%）"
             )
         # 損益試算：09:30 ~ 11:30
-        # [2026-10-22] 改為小台單一商品：多單 5 口（停損 20 點）／空單 2 口（停損 50 點）
+        # [2026-10-22] 改為小台單一商品：多單 3 口（停損 20 點）／空單 1 口（停損 50 點）
         block = now.hour * 2 + now.minute // 30
         sim = None
         if block in FUT_PNL_BLOCKS or block == FUT_HIT_BLOCK:
@@ -1275,7 +1275,8 @@ class StockMonitor:
                         f"💰 <b>損益試算</b>（{sim['entry_time']} 進場，小台 多單"
                         f"{FUT_PNL_QTY}口／空單{FUT_PNL_SHORT_QTY}口，停損 "
                         f"{FUT_STOP_PTS_LONG}／{FUT_STOP_PTS_SHORT} 點，"
-                        f"單向上限 {FUT_MAX_LOSS:,.0f} 元）"
+                        f"多單上限 {FUT_MAX_LOSS_LONG:,.0f}／"
+                        f"空單上限 {FUT_MAX_LOSS_SHORT:,.0f} 元）"
                     )
                     for side, key in (("🟢 多單", "long"), ("🔴 空單", "short")):
                         s = sim[key]
@@ -1302,10 +1303,6 @@ class StockMonitor:
                 lines.append("")
                 lines.append(senti_mod.format_hitrate_section(
                     txf or {}, now, sim=sim).strip("\n"))
-                # [2026-10-22] 台指期月結算日（第三個星期三）11:30 追加當月總盈虧
-                if senti_mod.is_settlement_day(now):
-                    lines.append("")
-                    lines.append(senti_mod.format_settlement_section(now).strip("\n"))
             except Exception as e:
                 logger.warning("[TAIFEX] 自訂多空評分命中比對失敗：%s", e)
         return "\n".join(lines) + "\n\n"

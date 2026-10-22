@@ -29,7 +29,6 @@
   - WTI 油價參考：      Yahoo CL=F（僅供顯示，不計分）
 """
 
-import calendar
 import html
 import json
 import logging
@@ -735,106 +734,6 @@ def hit_stats(n: int = HIT_STATS_N, path: Optional[str] = None) -> Dict:
     return {'hits': hits, 'total': total,
             'rate': (hits / total * 100) if total else None,
             'records': hist}
-
-
-# ── 月結算日總盈虧（2026-10-22）────────────────────────────────────
-def is_settlement_day(d: Optional[datetime] = None) -> bool:
-    """台指期結算日：該月第三個星期三（遇假日順延不在此處理）"""
-    d = d or now_tpe()
-    weds = [day for day in range(1, calendar.monthrange(d.year, d.month)[1] + 1)
-            if datetime(d.year, d.month, day).weekday() == 2]
-    if len(weds) < 3:
-        return False
-    return d.day == weds[2]
-
-
-def settlement_date(year: int, month: int) -> Optional[str]:
-    """該月結算日（YYYY-MM-DD）"""
-    try:
-        weds = [day for day in range(1, calendar.monthrange(year, month)[1] + 1)
-                if datetime(year, month, day).weekday() == 2]
-        return f"{year:04d}-{month:02d}-{weds[2]:02d}" if len(weds) >= 3 else None
-    except Exception:
-        return None
-
-
-def month_summary(year: int, month: int, path: Optional[str] = None) -> Dict:
-    """統計某月依建議方向的模擬損益總盈虧（資料來源：命中歷史）
-
-    只累計有模擬損益的紀錄（做多／做空）；觀望不下單不計損益，另計次數。
-    """
-    prefix = f"{year:04d}-{month:02d}"
-    hist = [h for h in (load_state(path).get('history') or [])
-            if str(h.get('date', '')).startswith(prefix)]
-    traded = [h for h in hist if h.get('pnl') is not None]
-    pending = [h for h in hist if h.get('hit') is None]
-    total = sum(float(h.get('pnl') or 0) for h in traded)
-    wins = sum(1 for h in traded if float(h.get('pnl') or 0) > 0)
-    losses = sum(1 for h in traded if float(h.get('pnl') or 0) < 0)
-    best = max(traded, key=lambda h: float(h.get('pnl') or 0)) if traded else None
-    worst = min(traded, key=lambda h: float(h.get('pnl') or 0)) if traded else None
-    by_dir = {}
-    for h in traded:
-        d = h.get('direction') or '—'
-        by_dir[d] = by_dir.get(d, 0) + float(h.get('pnl') or 0)
-    return {
-        'month': prefix,
-        'settlement_date': settlement_date(year, month),
-        'days': len(hist),
-        'traded': len(traded),
-        'wins': wins,
-        'losses': losses,
-        'watch': len(pending),
-        'total_pnl': total,
-        'best': ({'date': best.get('date'), 'pnl': float(best.get('pnl') or 0)} if best else None),
-        'worst': ({'date': worst.get('date'), 'pnl': float(worst.get('pnl') or 0)} if worst else None),
-        'by_direction': by_dir,
-        'records': [{'date': h.get('date'), 'direction': h.get('direction'),
-                     'pnl': h.get('pnl'), 'stopped': h.get('stopped'),
-                     'sim_mode': h.get('sim_mode')} for h in traded],
-    }
-
-
-def format_settlement_section(run_time: Optional[datetime] = None,
-                              path: Optional[str] = None) -> str:
-    """[2026-10-22] 台指期月結算日（第三個星期三）11:30 的當月總盈虧區塊"""
-    run_time = run_time or now_tpe()
-    st = month_summary(run_time.year, run_time.month, path)
-    lines = ["", "🏁 <b>台指期結算日｜本月模擬總盈虧</b>",
-             f"　📅 結算日 {st['settlement_date']}（每月第三個星期三）"
-             f"｜統計至 {run_time.strftime('%m/%d %H:%M')}"]
-    if not st['traded'] and not st['watch']:
-        lines.append("　📭 本月尚無 08:00 評分紀錄，無法統計")
-        return "\n".join(lines) + "\n"
-
-    pnl = st['total_pnl']
-    lines.append(f"　💰 依建議方向累計模擬損益："
-                 f"<b>{'+' if pnl >= 0 else '−'}{abs(pnl):,.0f} 元</b>")
-    if st['traded']:
-        rate = st['wins'] / st['traded'] * 100
-        lines.append(f"　📊 出單 {st['traded']} 次：✅ 獲利 {st['wins']}／❌ 虧損 {st['losses']}"
-                     f"（勝率 {rate:.0f}%）")
-        for d, v in sorted(st['by_direction'].items(),
-                           key=lambda kv: -abs(kv[1])):
-            lines.append(f"　　{d}合計：{'+' if v >= 0 else '−'}{abs(v):,.0f} 元")
-        if st['best']:
-            _bd = st['best']['date'][5:].replace('-', '/')
-            _wd = st['worst']['date'][5:].replace('-', '/')
-            lines.append(f"　📈 最佳 {_bd}："
-                         f"{'+' if st['best']['pnl'] >= 0 else '−'}{abs(st['best']['pnl']):,.0f} 元"
-                         f"｜📉 最差 {_wd}："
-                         f"{'+' if st['worst']['pnl'] >= 0 else '−'}{abs(st['worst']['pnl']):,.0f} 元")
-        stopped = sum(1 for h in st['records'] if h.get('stopped'))
-        if stopped:
-            lines.append(f"　⛔ 停損出場 {stopped} 次（每次鎖定 −5,000 元）")
-        legacy = sum(1 for h in st['records'] if not h.get('sim_mode'))
-        if legacy:
-            lines.append(f"　ℹ️ 其中 {legacy} 次為 10/22 前舊制（小台×5＋微台×5）")
-    if st['watch']:
-        lines.append(f"　⚪ 觀望不下單 {st['watch']} 次（不計損益）")
-    lines.append(f"　📌 口數規格：多單 5 口停損 20 點／空單 2 口停損 50 點"
-                 f"（單向上限 5,000 元）")
-    return "\n".join(lines) + "\n"
 
 
 # ── Telegram 區塊（08:00）──────────────────────────────────────────

@@ -1374,7 +1374,7 @@ def api_fut_pnl_test():
     """[2026-10-22] 台指期模擬損益診斷（唯讀，不寫狀態檔）
 
     回傳 09:00 進場基準、當日取樣高低點，以及依使用者規格計算的多空模擬損益：
-    多單 5 口停損 20 點／空單 2 口停損 50 點（小台每點 50 元，單向上限 5,000 元）。
+    多單 3 口停損 20 點／空單 1 口停損 50 點（小台每點 50 元）。
     """
     try:
         import stock_monitor as sm_mod
@@ -1384,14 +1384,8 @@ def api_fut_pnl_test():
         today = _dt.now().strftime('%Y-%m-%d')
         rec = (mon._load_fut_state() or {}).get(today)
         sim = mon._simulate_fut_pnl(rec, quotes) if rec else None
-        import sentiment_index as _senti
-        _now = _dt.now()
-        _ms = _senti.month_summary(_now.year, _now.month)
-        _ms.pop('records', None)
         return jsonify({
             "date": today,
-            "is_settlement_day": _senti.is_settlement_day(_now),
-            "month_summary": _ms,
             "spec": {
                 "cid": sm_mod.FUT_PNL_CID,
                 "point_value": sm_mod.FUT_CONTRACT_SIZE[sm_mod.FUT_PNL_CID],
@@ -1399,7 +1393,8 @@ def api_fut_pnl_test():
                 "long_stop_pts": sm_mod.FUT_STOP_PTS_LONG,
                 "short_qty": sm_mod.FUT_PNL_SHORT_QTY,
                 "short_stop_pts": sm_mod.FUT_STOP_PTS_SHORT,
-                "max_loss_per_side": sm_mod.FUT_MAX_LOSS,
+                "max_loss_long": sm_mod.FUT_MAX_LOSS_LONG,
+                "max_loss_short": sm_mod.FUT_MAX_LOSS_SHORT,
             },
             "quotes": {k: {kk: v[kk] for kk in ("name", "last", "diff", "ref") if kk in v}
                        for k, v in (quotes or {}).items()},
