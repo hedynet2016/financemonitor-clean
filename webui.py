@@ -1002,6 +1002,18 @@ def tasks_view():
 
 <div class="block-card">
   <div class="d-flex align-items-start gap-3">
+    <span class="block-date">📅 2026-10-22</span>
+    <div class="flex-grow-1">
+      <div class="fw-bold mb-1">台指期結算日｜本月模擬總盈虧</div>
+      <div class="mb-2"><span class="source-tag">11:30 台股推播</span> <span class="filter-tag">每月第三個星期三</span> <span class="filter-tag">依 08:00 建議方向累計</span></div>
+      <div><small class="text-muted">內容：</small> 當月累計模擬損益 &bull; 出單次數 &bull; 獲利／虧損次數與勝率 &bull; 做多與做空分項合計 &bull; 最佳／最差單日 &bull; 停損次數 &bull; 觀望次數</div>
+      <div><small class="text-muted">診斷：</small> <code>/api/fut-pnl-test</code></div>
+    </div>
+  </div>
+</div>
+
+<div class="block-card">
+  <div class="d-flex align-items-start gap-3">
     <span class="block-date">📅 2026-10-16</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">自訂多空評分指標（每日 08:00）</div>
@@ -1157,8 +1169,14 @@ def api_fut_pnl_test():
         today = _dt.now().strftime('%Y-%m-%d')
         rec = (mon._load_fut_state() or {}).get(today)
         sim = mon._simulate_fut_pnl(rec, quotes) if rec else None
+        import sentiment_index as _senti
+        _now = _dt.now()
+        _ms = _senti.month_summary(_now.year, _now.month)
+        _ms.pop('records', None)
         return jsonify({
             "date": today,
+            "is_settlement_day": _senti.is_settlement_day(_now),
+            "month_summary": _ms,
             "spec": {
                 "cid": sm_mod.FUT_PNL_CID,
                 "point_value": sm_mod.FUT_CONTRACT_SIZE[sm_mod.FUT_PNL_CID],

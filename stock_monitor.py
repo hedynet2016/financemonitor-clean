@@ -1302,6 +1302,10 @@ class StockMonitor:
                 lines.append("")
                 lines.append(senti_mod.format_hitrate_section(
                     txf or {}, now, sim=sim).strip("\n"))
+                # [2026-10-22] 台指期月結算日（第三個星期三）11:30 追加當月總盈虧
+                if senti_mod.is_settlement_day(now):
+                    lines.append("")
+                    lines.append(senti_mod.format_settlement_section(now).strip("\n"))
             except Exception as e:
                 logger.warning("[TAIFEX] 自訂多空評分命中比對失敗：%s", e)
         return "\n".join(lines) + "\n\n"
