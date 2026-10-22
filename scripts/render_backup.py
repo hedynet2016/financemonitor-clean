@@ -27,7 +27,11 @@ LOG_FILES = [
 ]
 
 # 狀態檔（額外納入備份的檔案；每日報告功能已於 2026-09-23 移除）
-EXTRA_FILES = []
+# [2026-10-22] Render 的 .log 檔多半是空的（日誌走 stdout），真正每天會變的是
+#             推播歷史，故加入 push_history.json 每日快照（含 Telegram/Discord 送達狀態）
+EXTRA_FILES = [
+    BASE_DIR / "push_history.json",
+]
 
 # ── GitHub 設定 ──
 TOKEN = os.environ.get("GITHUB_PAT", "")
@@ -127,15 +131,16 @@ def main():
             print(f"  [FAIL] {remote_path}")
             failed += 1
 
-    # 2. 上傳報告副本（如果有）
+    # 2. 上傳狀態檔副本（push_history.json 每日快照）
     for extra in EXTRA_FILES:
         if not extra.exists():
+            print(f"  [SKIP] {extra.name} (不存在)")
             continue
         content = extra.read_bytes()
         remote_path = f"render-logs/{TODAY_STR}/{extra.name}"
         ok = upload_file(remote_path, content, f"Backup {TODAY_STR}: {extra.name}")
         if ok:
-            print(f"  [OK]   {remote_path}")
+            print(f"  [OK]   {remote_path} ({len(content) / 1024:.1f} KB)")
             success += 1
         else:
             print(f"  [FAIL] {remote_path}")
@@ -148,7 +153,20 @@ def main():
         "platform": "render",
         "log_files": [f.name for f in LOG_FILES if f.exists()],
         "log_sizes": {f.name: f.stat().st_size for f in LOG_FILES if f.exists()},
+        "extra_files": {f.name: f.stat().st_size for f in EXTRA_FILES if f.exists()},
     }
+    ph = BASE_DIR / "push_history.json"
+    if ph.exists():
+        try:
+            hist = json.loads(ph.read_text(encoding="utf-8"))
+            if isinstance(hist, list) and hist:
+                status["push_history"] = {
+                    "count": len(hist),
+                    "first_ts": (hist[0] or {}).get("ts"),
+                    "last_ts": (hist[-1] or {}).get("ts"),
+                }
+        except Exception as e:
+            status["push_history"] = {"error": str(e)}
     status_json = json.dumps(status, indent=2, ensure_ascii=False).encode("utf-8")
     remote_path = f"render-logs/{TODAY_STR}/_status.json"
     ok = upload_file(remote_path, status_json, f"Backup {TODAY_STR}: container status")
