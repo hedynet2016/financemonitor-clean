@@ -1100,6 +1100,7 @@ def tasks_view():
       <div><small class="text-muted">機制：</small> GitHub Actions（<code>state-sync.yml</code>）每日抓 <code>/api/state-export</code> 並 commit 到 <code>state-store</code> 分支（不觸發 Render 部署）；開機時 <code>state_persist.restore()</code> 從 raw 網址讀回並<b>依日期合併（本機優先）</b>，全程不需任何 token</div>
       <div><small class="text-muted">每日日誌：</small> <code>/api/state-log?days=30</code> 逐日列出建議方向、評分、命中、模擬損益、是否停損</div>
       <div><small class="text-muted">診斷：</small> <code>/api/state-persist</code>（可加 <code>?restore=1</code> 立即還原）</div>
+      <div><small class="text-muted">備份憑證：</small> 每日 09:00 日誌備份使用 <code>GITHUB_PAT</code>；失效可用 <code>/api/pat-check?write=1</code> 逐項定位（身分／到期／scope／repo 權限／寫入），本機可跑 <code>python scripts/check_pat.py &lt;token&gt;</code></div>
     </div>
   </div>
 </div>
@@ -1278,6 +1279,23 @@ def api_state_log():
         return jsonify({"days": days, "count": len(rows), "total_pnl": total,
                         "records": rows})
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/pat-check")
+def api_pat_check():
+    """[2026-10-22] 診斷 GITHUB_PAT：身分驗證／到期時間／scope／repo 權限
+
+    參數：
+      ?write=1  額外做一次實際寫入 probe（PUT 後立即刪除）
+    """
+    from flask import request as _rq
+    try:
+        import state_persist as sp
+        write_test = (_rq.args.get("write") or "").lower() in ("1", "true", "yes")
+        return jsonify(sp.pat_diagnose(write_test=write_test))
+    except Exception as e:
+        logger.error("pat-check 失敗: %s", e, exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 

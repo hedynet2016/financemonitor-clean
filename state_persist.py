@@ -429,6 +429,147 @@ def push_async(path: str, name: Optional[str] = None, reason: str = '',
     return True
 
 
+def _request_verbose(method: str, url: str,
+                     timeout: int = 20) -> Tuple[Optional[dict], Dict, Optional[str], int]:
+    """帶回應標頭的請求（診斷 PAT 用），回傳 (payload, headers, error, code)"""
+    tok = _token()
+    if not tok:
+        return None, {}, 'no_token', 0
+    headers = {
+        'Authorization': f'token {tok}',
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'financemonitor-pat-check',
+    }
+    req = urllib.request.Request(url, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+            hdrs = {k.lower(): v for k, v in resp.headers.items()}
+            return (json.loads(raw) if raw else {}), hdrs, None, resp.status
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode('utf-8', errors='replace')[:200].replace('\n', ' ')
+        hdrs = {k.lower(): v for k, v in (e.headers or {}).items()}
+        return None, hdrs, f'HTTP {e.code}: {detail}', e.code
+    except Exception as e:
+        return None, {}, str(e), 0
+
+
+def pat_diagnose(write_test: bool = False) -> Dict:
+    """診斷 GITHUB_PAT 是否可用，逐項指出失敗原因（唯讀，write_test 才寫 probe）
+
+    檢查順序對應常見故障：token 不存在 → token 失效/過期 → 缺 scope →
+    repo 不存在或無權限 → 權限足夠但只有讀（無 push）→ 可寫。
+    """
+    tok = _token()
+    out: Dict = {
+        'token_present': bool(tok),
+        'token_hint': (f'{tok[:4]}…{tok[-4:]} (len={len(tok)})' if len(tok) > 12
+                       else ('set' if tok else '')),
+        'token_source': ('GITHUB_PAT' if os.environ.get('GITHUB_PAT')
+                         else 'GITHUB_TOKEN' if os.environ.get('GITHUB_TOKEN') else None),
+        'repo': _repo(), 'branch': _branch(), 'dir': _dir(),
+        'checks': [],
+    }
+    if not tok:
+        out['verdict'] = 'no_token'
+        out['advice'] = '尚未設定 GITHUB_PAT（Render → Environment 新增後重新部署）'
+        return out
+
+    checks = out['checks']
+
+    # 1) token 身分（驗證是否失效/過期）
+    me, hdrs, err, code = _request_verbose('GET', f'{API_ROOT}/user')
+    scopes = hdrs.get('x-oauth-scopes')
+    expiry = hdrs.get('github-authentication-token-expiration')
+    if code == 200 and me:
+        checks.append({'step': 'token_identity', 'ok': True,
+                       'user': me.get('login'), 'type': me.get('type')})
+    else:
+        checks.append({'step': 'token_identity', 'ok': False,
+                       'http': code, 'error': err})
+        out['verdict'] = 'invalid_token' if code == 401 else 'token_check_failed'
+        out['advice'] = ('Token 無效或已過期（GitHub 回 401 Bad credentials）'
+                         '—請重新產生 PAT 並更新 Render 環境變數')
+        out['token_expiry'] = expiry
+        return out
+    out['token_expiry'] = expiry
+    out['scopes'] = scopes if scopes else '(無 scope 標頭，通常為 fine-grained token)'
+    if expiry:
+        checks.append({'step': 'token_expiry', 'ok': True, 'expires_at': expiry,
+                       'note': '此欄位為 GitHub 回報的到期時間'})
+
+    # 2) repo 讀取與權限
+    repo = _repo()
+    payload, _h, rerr, rcode = _request_verbose('GET', f'{API_ROOT}/repos/{repo}')
+    if rcode == 200 and payload:
+        perms = payload.get('permissions') or {}
+        can_push = bool(perms.get('push'))
+        checks.append({'step': 'repo_access', 'ok': True, 'repo': payload.get('full_name'),
+                       'private': payload.get('private'), 'permissions': perms})
+        if not can_push:
+            out['verdict'] = 'read_only'
+            out['advice'] = ('Token 可讀取 repo 但無寫入權限（permissions.push=false）'
+                             '—classic 需 repo scope，fine-grained 需 Contents: Read and write')
+            return out
+    elif rcode == 404:
+        checks.append({'step': 'repo_access', 'ok': False, 'http': 404, 'repo': repo,
+                       'error': 'not_found_or_no_permission'})
+        out['verdict'] = 'repo_not_found'
+        out['advice'] = (f'Token 看不到 {repo}（repo 不存在，或 fine-grained token 未授權此 repo）'
+                         '—請在 token 的 Repository access 加入該 repo，或確認 repo 名稱')
+        return out
+    else:
+        checks.append({'step': 'repo_access', 'ok': False, 'http': rcode, 'error': rerr})
+        out['verdict'] = 'repo_check_failed'
+        out['advice'] = 'repo 檢查失敗（非 404/200），請看 checks 的 error'
+        return out
+
+    # 3) 實際寫入（可選）：PUT 再 DELETE 一個 probe 檔
+    if write_test:
+        probe = f'{_remote_path("_pat_check.json")}'
+        body = json.dumps({'probe': 'pat-check',
+                           'ts': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}).encode()
+        url = f'{API_ROOT}/repos/{repo}/contents/{probe}'
+        headers = {'Authorization': f'token {tok}', 'Accept': 'application/vnd.github+json',
+                   'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json',
+                   'User-Agent': 'financemonitor-pat-check'}
+        import base64 as _b64
+        req_body = json.dumps({'message': 'pat-check probe', 'branch': _branch(),
+                               'content': _b64.b64encode(body).decode()}).encode()
+        wreq = urllib.request.Request(url, data=req_body, headers=headers, method='PUT')
+        try:
+            with urllib.request.urlopen(wreq, timeout=25) as resp:
+                put_ok = resp.status in (200, 201)
+            checks.append({'step': 'write_test', 'ok': put_ok, 'file': probe})
+            # 清掉 probe（失敗不影響結論）
+            try:
+                g2, _h2, _e2, _c2 = _request_verbose('GET', url + f'?ref={_branch()}')
+                sha = (g2 or {}).get('sha')
+                if sha:
+                    del_body = json.dumps({'message': 'pat-check cleanup', 'sha': sha,
+                                           'branch': _branch()}).encode()
+                    dreq = urllib.request.Request(url, data=del_body, headers=headers, method='DELETE')
+                    urllib.request.urlopen(dreq, timeout=25).read()
+            except Exception:
+                pass
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode('utf-8', errors='replace')[:160].replace('\n', ' ')
+            checks.append({'step': 'write_test', 'ok': False, 'http': e.code, 'error': detail})
+            out['verdict'] = 'write_denied'
+            out['advice'] = ('寫入被拒（Contents API 403/404）—classic 需 repo scope；'
+                             'fine-grained 需 Contents: Read and write')
+            return out
+        except Exception as e:
+            checks.append({'step': 'write_test', 'ok': False, 'error': str(e)})
+            out['verdict'] = 'write_check_failed'
+            return out
+
+    out['verdict'] = 'ok'
+    out['advice'] = 'Token 可用，repo 可讀寫，每日 09:00 備份與狀態持久化應可正常運作'
+    return out
+
+
 def status(name: str = 'sentiment_index_state.json',
            path: Optional[str] = None) -> Dict:
     """唯讀診斷：本機筆數、兩個後端可用性"""
