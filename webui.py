@@ -869,7 +869,7 @@ def tasks_view():
       <tr><td class="text-muted">每日主推播</td><td><b>{news_hour:02d}:00 台北時間</b> — VIP交易/IPO/AI動能（含公司債＋CDS）/經濟指標/財經行事曆/台指期多空指標/自訂多空評分指標（卡片左側為各區塊啟用日期）</td></tr>
       <tr><td class="text-muted">每日活動推播</td><td><b>{events_hour:02d}:00 台北時間</b> — ICT/AI 活動（2026-06-25 啟用，未來90天）</td></tr>
       <tr><td class="text-muted">每日商品追蹤</td><td><b>16:00 台北時間</b> — 雅虎拍賣商品監控（9 關鍵字，價格 $2,000~$15,000，排除NG，刊登 7 天內，上限 30 筆）<br>　① 固定賣場 3 家：樺仔二手電腦 / 點子3C 板橋店 / US3C<br>　② 雙北地區同類店家：台北市・新北市「店鋪型 3C 賣家」（與點子3C同類），條件與固定賣場完全相同，自動納入新店家</td></tr>
-      <tr><td class="text-muted">每半小時股市監控</td><td>美股跌幅&gt;3%個股+ETF；台股監控清單（7 檔個股+7 檔 ETF）MIS 即時成交量排行＋跌幅排行，附台指期漲跌與 09:30-11:30 小台、微台各自損益試算（假設 09:00 買進各五口）</td></tr>
+      <tr><td class="text-muted">每半小時股市監控</td><td>美股跌幅&gt;3%個股+ETF；台股監控清單（7 檔個股+7 檔 ETF）MIS 即時成交量排行＋跌幅排行，附台指期漲跌與 09:30-11:30 小台損益試算（09:00 進場：多單 5 口停損 20 點／空單 2 口停損 50 點，單向最大虧損 5,000 元）</td></tr>
       <tr><td class="text-muted">每日自動備份</td><td><b>09:00 台北時間</b> — 推送 logs 到 GitHub（render_scheduler.py）</td></tr>
     </table>
   </div>
@@ -1057,7 +1057,7 @@ def tasks_view():
         <small class="text-muted ms-2">{tw_mkt.get('start_hour',9):02d}:{tw_mkt.get('start_minute',0):02d} - {tw_mkt.get('end_hour',13):02d}:{tw_mkt.get('end_minute',30):02d} (Asia/Taipei)</small>
       </div>
       <div><small class="text-muted">來源：證交所 MIS 即時行情（範圍固定為下方監控清單，量價即時、每半小時重排）</small></div>
-      <div class="mt-1"><small class="text-muted">推播內容：個股/ETF 成交量排行 ＋ 跌幅排行（監控標的、跌幅 &gt;3%）＋ 台指期（09:30-11:30 附小台/微台各五口損益試算）；MIS 失效時退回 Yahoo/證交所 OpenAPI</small></div>
+      <div class="mt-1"><small class="text-muted">推播內容：個股/ETF 成交量排行 ＋ 跌幅排行（監控標的、跌幅 &gt;3%）＋ 台指期（09:30-11:30 附小台損益試算：多單 5 口停損 20 點、空單 2 口停損 50 點，單向最大虧損 5,000 元）；MIS 失效時退回 Yahoo/證交所 OpenAPI</small></div>
       <div class="mt-2"><small class="text-muted">監控標的（排行範圍固定於此）：</small></div>
       <div><small class="text-muted">{len(tw_stocks)} 個股：</small><br><code>{" ".join([s.replace('.TWO','').replace('.TW','') for s in tw_stocks])}</code></div>
       <div class="mt-1"><small class="text-muted">{len(tw_etfs)} ETF：</small><br><code>{" ".join([s.replace('.TWO','').replace('.TW','') for s in tw_etfs])}</code></div>
@@ -1140,6 +1140,41 @@ def api_news_status():
     except Exception as e:
         result["monitor_state_error"] = str(e)
     return jsonify(result)
+
+
+@app.route("/api/fut-pnl-test")
+def api_fut_pnl_test():
+    """[2026-10-22] 台指期模擬損益診斷（唯讀，不寫狀態檔）
+
+    回傳 09:00 進場基準、當日取樣高低點，以及依使用者規格計算的多空模擬損益：
+    多單 5 口停損 20 點／空單 2 口停損 50 點（小台每點 50 元，單向上限 5,000 元）。
+    """
+    try:
+        import stock_monitor as sm_mod
+        from datetime import datetime as _dt
+        mon = sm_mod.StockMonitor.__new__(sm_mod.StockMonitor)
+        quotes = sm_mod.StockMonitor.get_taiex_quotes(mon)
+        today = _dt.now().strftime('%Y-%m-%d')
+        rec = (mon._load_fut_state() or {}).get(today)
+        sim = mon._simulate_fut_pnl(rec, quotes) if rec else None
+        return jsonify({
+            "date": today,
+            "spec": {
+                "cid": sm_mod.FUT_PNL_CID,
+                "point_value": sm_mod.FUT_CONTRACT_SIZE[sm_mod.FUT_PNL_CID],
+                "long_qty": sm_mod.FUT_PNL_QTY,
+                "long_stop_pts": sm_mod.FUT_STOP_PTS_LONG,
+                "short_qty": sm_mod.FUT_PNL_SHORT_QTY,
+                "short_stop_pts": sm_mod.FUT_STOP_PTS_SHORT,
+                "max_loss_per_side": sm_mod.FUT_MAX_LOSS,
+            },
+            "quotes": {k: {kk: v[kk] for kk in ("name", "last", "diff", "ref") if kk in v}
+                       for k, v in (quotes or {}).items()},
+            "state": rec,
+            "sim": sim,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/diagnostic")

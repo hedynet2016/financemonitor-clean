@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 import time
 import json
 import logging
-from typing import List, Dict
+from typing import List, Dict, Optional
 import pytz
 import urllib3
 from notification_sender import NotificationSender
@@ -60,8 +60,16 @@ logger = logging.getLogger(__name__)
 TAIFEX_QUOTE_URL = "https://mis.taifex.com.tw/futures/api/getQuoteList"
 FUT_CIDS = ["TXF", "MXF", "TMF"]            # 大台／小台／微台
 FUT_CONTRACT_SIZE = {"TXF": 200, "MXF": 50, "TMF": 10}  # 每點新台幣（期交所規格）
-FUT_PNL_QTY = 5                              # 多單：小台與微台各五口
-FUT_PNL_SHORT_QTY = 2                        # 空單：小台與微台各兩口（[2026-10-20] 使用者調整）
+# [2026-10-22] 使用者指定模擬單規格：一律小台（每點 50 元）
+#   多單：一日五口，停損 20 點 → 5 × 20 × 50 = 5,000 元
+#   空單：一日兩口，停損 50 點 → 2 × 50 × 50 = 5,000 元
+#   即單一方向當日最大虧損 5,000 元
+FUT_PNL_CID = "MXF"                          # 模擬單商品：小台
+FUT_PNL_QTY = 5                              # 多單五口
+FUT_PNL_SHORT_QTY = 2                        # 空單兩口（[2026-10-20] 使用者調整）
+FUT_STOP_PTS_LONG = 20                       # 多單停損點數
+FUT_STOP_PTS_SHORT = 50                      # 空單停損點數
+FUT_MAX_LOSS = FUT_PNL_QTY * FUT_STOP_PTS_LONG * FUT_CONTRACT_SIZE[FUT_PNL_CID]  # 5,000 元
 # 09:00 下單（進場價 = 當日 09:00 後第一次抓到的報價；多單與空單同進場價）
 FUT_ENTRY_MINUTES = 9 * 60
 # 損益試算顯示時段：09:30 ~ 11:30（以半小時 block 計：block = hour*2 + minute//30）
@@ -1147,15 +1155,34 @@ class StockMonitor:
 
     def _update_fut_baseline(self, quotes: Dict[str, Dict],
                              now: datetime) -> Dict:
-        """確保當日 09:00 後有進場基準價（假設 09:00 下單，多單與空單各五口）。
+        """確保當日 09:00 後有進場基準價，並累計 09:00 之後的取樣高低點。
 
-        當日第一次抓到報價時記錄各商品進場價（多空同價）；若監控 09:00 才
-        啟動或 Render 重啟（狀態檔消失），則以當時報價為進場價並註明實際時間。
+        [2026-10-22] 模擬單改為小台五口（多）／兩口（空）並加入停損（20／50 點），
+        停損判定需要 09:00 進場後的最高／最低取樣價（每半小時一筆），
+        因此每次呼叫都更新 rec['hi'] / rec['lo']，供停損判斷使用。
+
+        當日第一次抓到報價時記錄進場價（多空同價）；若監控 09:00 才啟動或
+        Render 重啟（狀態檔消失），則以當時報價為進場價並註明實際時間。
         """
         state = self._load_fut_state()
         today_key = now.strftime("%Y-%m-%d")
+
+        # 已進場：更新當日取樣高低點（09:00 進場後才開始累計）
         if today_key in state:
-            return state[today_key]
+            rec = state[today_key]
+            q = quotes.get(FUT_PNL_CID) or quotes.get("TXF")
+            if q and q.get("last"):
+                last = float(q["last"])
+                # 舊版狀態檔沒有 hi/lo，以進場價與現價為起始值，避免漏記既有區間
+                base = float((rec.get("entry") or {}).get(FUT_PNL_CID) or last)
+                rec["hi"] = max(float(rec.get("hi") or base), last)
+                rec["lo"] = min(float(rec.get("lo") or base), last)
+                rec["last_seen"] = last
+                rec["last_time"] = now.strftime("%H:%M")
+                state[today_key] = rec
+                self._save_fut_state(state)
+            return rec
+
         if now.hour * 60 + now.minute < FUT_ENTRY_MINUTES:
             return None  # 尚未到 09:00
         entry = {}
@@ -1165,12 +1192,58 @@ class StockMonitor:
                 entry[cid] = q["last"]
         if not entry:
             return None
-        rec = {"entry_time": now.strftime("%H:%M"), "entry": entry}
+        ref_last = entry.get(FUT_PNL_CID) or entry.get("TMF")
+        rec = {"entry_time": now.strftime("%H:%M"), "entry": entry,
+               "hi": ref_last, "lo": ref_last}
         state[today_key] = rec
         self._save_fut_state(state)
         logger.info("[TAIFEX] 建立當日進場基準（%s）：%s",
                     rec["entry_time"], entry)
         return rec
+
+    def _simulate_fut_pnl(self, rec: Dict, quotes: Dict[str, Dict]) -> Optional[Dict]:
+        """[2026-10-22] 依使用者規格模擬當日多空單損益（小台、含停損鎖定）
+
+        規格：多單一日五口、停損 20 點；空單一日兩口、停損 50 點；
+              單一方向當日最大虧損 5,000 元（5×20×50 = 2×50×50 = 5,000）。
+        停損判定以 09:00 進場後每半小時取樣價累計的高低點為準：
+              多單：取樣最低 ≤ 進場價−20 → 停損，損失鎖定 −5,000 元
+              空單：取樣最高 ≥ 進場價+50 → 停損，損失鎖定 −5,000 元
+        """
+        if not rec or not rec.get("entry"):
+            return None
+        q = quotes.get(FUT_PNL_CID) or {}
+        ep = float((rec.get("entry") or {}).get(FUT_PNL_CID) or 0)
+        last = float(q.get("last") or 0)
+        if ep <= 0 or last <= 0:
+            return None
+        hi = float(rec.get("hi") or max(ep, last))
+        lo = float(rec.get("lo") or min(ep, last))
+        pv = FUT_CONTRACT_SIZE[FUT_PNL_CID]
+        sim = {
+            "entry": ep, "last": last, "hi": hi, "lo": lo,
+            "entry_time": rec.get("entry_time", "09:00"),
+            "point_value": pv,
+        }
+        # 多單（做多）：跌 20 點停損
+        long_stop = ep - FUT_STOP_PTS_LONG
+        long_stopped = lo <= long_stop
+        long_pts = -float(FUT_STOP_PTS_LONG) if long_stopped else (last - ep)
+        sim["long"] = {
+            "qty": FUT_PNL_QTY, "stop": long_stop, "stop_pts": FUT_STOP_PTS_LONG,
+            "stopped": long_stopped, "pts": long_pts,
+            "pnl": long_pts * pv * FUT_PNL_QTY,
+        }
+        # 空單（做空）：漲 50 點停損
+        short_stop = ep + FUT_STOP_PTS_SHORT
+        short_stopped = hi >= short_stop
+        short_pts = -float(FUT_STOP_PTS_SHORT) if short_stopped else (ep - last)
+        sim["short"] = {
+            "qty": FUT_PNL_SHORT_QTY, "stop": short_stop, "stop_pts": FUT_STOP_PTS_SHORT,
+            "stopped": short_stopped, "pts": short_pts,
+            "pnl": short_pts * pv * FUT_PNL_SHORT_QTY,
+        }
+        return sim
 
     def _format_fut_section(self, quotes: Dict[str, Dict],
                             now: datetime) -> str:
@@ -1187,48 +1260,48 @@ class StockMonitor:
                 f"{emoji} {txf['name']}：<b>{txf['last']:,.0f}</b>"
                 f"（{sign}{d:,.0f} 點 / {sign}{txf['diff_rate']:.2f}%）"
             )
-        # 損益試算：09:30 ~ 11:30，小台與微台分開計算
-        # （假設 09:00 進場，多單五口／空單兩口，[2026-10-20] 空單改兩口）
+        # 損益試算：09:30 ~ 11:30
+        # [2026-10-22] 改為小台單一商品：多單 5 口（停損 20 點）／空單 2 口（停損 50 點）
         block = now.hour * 2 + now.minute // 30
-        if block in FUT_PNL_BLOCKS:
+        sim = None
+        if block in FUT_PNL_BLOCKS or block == FUT_HIT_BLOCK:
             state = self._load_fut_state()
             rec = state.get(now.strftime("%Y-%m-%d"))
-            if rec and rec.get("entry"):
-                lines.append("")
-                lines.append(
-                    f"💰 <b>損益試算</b>（假設 {rec.get('entry_time', '09:00')} 進場，"
-                    f"多單 小台×{FUT_PNL_QTY}、微台×{FUT_PNL_QTY}／"
-                    f"空單 小台×{FUT_PNL_SHORT_QTY}、微台×{FUT_PNL_SHORT_QTY}，"
-                    f"每點 50/10 元）"
-                )
-                # 多空雙向：09:00 同時模擬買進五口與賣出兩口，
-                # 空單損益與多單相反（點數 × −1）
-                for cid, label in (("MXF", "小台"), ("TMF", "微台")):
-                    q = quotes.get(cid)
-                    ep = rec["entry"].get(cid)
-                    if not q or not ep:
-                        continue
-                    pts = q["last"] - float(ep)
-                    sign = "+" if pts >= 0 else ""
-                    for side, direction, qty in (
-                        ("🟢 多單", 1, FUT_PNL_QTY),
-                        ("🔴 空單", -1, FUT_PNL_SHORT_QTY),
-                    ):
-                        pnl = pts * FUT_CONTRACT_SIZE[cid] * qty * direction
+            sim = self._simulate_fut_pnl(rec, quotes) if rec else None
+            if block in FUT_PNL_BLOCKS:
+                if sim:
+                    lines.append("")
+                    lines.append(
+                        f"💰 <b>損益試算</b>（{sim['entry_time']} 進場，小台 多單"
+                        f"{FUT_PNL_QTY}口／空單{FUT_PNL_SHORT_QTY}口，停損 "
+                        f"{FUT_STOP_PTS_LONG}／{FUT_STOP_PTS_SHORT} 點，"
+                        f"單向上限 {FUT_MAX_LOSS:,.0f} 元）"
+                    )
+                    for side, key in (("🟢 多單", "long"), ("🔴 空單", "short")):
+                        s = sim[key]
+                        if s["stopped"]:
+                            # 停損後部位已出場，損益固定為停損點數（不再隨現價變動）
+                            pts_txt = f"⛔停損 {s['pts']:+,.0f} 點"
+                        else:
+                            pts_txt = f"{s['pts']:+,.0f} 點"
                         lines.append(
-                            f"　{side} {label} {qty}口：{float(ep):,.0f} → "
-                            f"{q['last']:,.0f}（{sign}{pts:,.0f} 點）→ "
-                            f"<b>{'+' if pnl >= 0 else '−'}{abs(pnl):,.0f} 元</b>"
+                            f"　{side} {s['qty']}口：{sim['entry']:,.0f} → "
+                            f"{sim['last']:,.0f}（{pts_txt}）→ "
+                            f"<b>{'+' if s['pnl'] >= 0 else '−'}{abs(s['pnl']):,.0f} 元</b>"
                         )
-            else:
-                lines.append("（今日尚無進場基準價）")
+                    lines.append(
+                        f"　（09:00 後取樣 高 {sim['hi']:,.0f}／低 {sim['lo']:,.0f}）"
+                    )
+                else:
+                    lines.append("（今日尚無進場基準價）")
 
         # [2026-10-16] 11:30 命中比對：08:00 自訂多空評分指標 vs 台指期走勢
         if block == FUT_HIT_BLOCK:
             try:
                 import sentiment_index as senti_mod
                 lines.append("")
-                lines.append(senti_mod.format_hitrate_section(txf or {}, now).strip("\n"))
+                lines.append(senti_mod.format_hitrate_section(
+                    txf or {}, now, sim=sim).strip("\n"))
             except Exception as e:
                 logger.warning("[TAIFEX] 自訂多空評分命中比對失敗：%s", e)
         return "\n".join(lines) + "\n\n"

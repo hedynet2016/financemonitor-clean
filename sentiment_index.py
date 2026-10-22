@@ -648,11 +648,17 @@ def get_signal(date_str: str, path: Optional[str] = None) -> Optional[Dict]:
 
 
 def evaluate_signal(date_str: str, ref: float, last: float,
-                    path: Optional[str] = None) -> Optional[Dict]:
+                    path: Optional[str] = None,
+                    sim: Optional[Dict] = None) -> Optional[Dict]:
     """依 08:00 建議方向計算當日命中結果（不寫檔）
 
     命中定義：建議做多且台指期上漲，或建議做空且台指期下跌；
-    觀望（50 ~ 60 分）不列入命中率。模擬損益以昨結算為基準、小台×5＋微台×5。
+    觀望（50 ~ 60 分）不列入命中率。
+
+    [2026-10-22] 模擬損益改為使用者指定規格（由 stock_monitor 傳入 sim）：
+      多單 5 口、停損 20 點；空單 2 口、停損 50 點；單向最大虧損 5,000 元
+      （小台每點 50 元）。sim 為 stock_monitor._simulate_fut_pnl() 的結果。
+      未傳 sim 時沿用舊制（昨結算基準、小台×5＋微台×5）。
     """
     sig = get_signal(date_str, path)
     if not sig:
@@ -664,18 +670,36 @@ def evaluate_signal(date_str: str, ref: float, last: float,
         hit = diff > 0
     elif direction == '做空':
         hit = diff < 0
-    pnl = diff * 50 * 5 + diff * 10 * 5   # 小台每點 50 元、微台每點 10 元，各 5 口
-    if direction == '做空':
-        pnl = -pnl
-    return {'date': date_str, 'total': sig.get('total'), 'direction': direction,
-            'ref': ref, 'last': last, 'diff': diff, 'hit': hit,
-            'pnl': (None if hit is None else pnl)}
+    pnl = None
+    sim_side = None
+    if hit is not None:
+        if sim:
+            sim_side = sim.get('long' if direction == '做多' else 'short') or {}
+            pnl = sim_side.get('pnl')
+        else:
+            pnl = diff * 50 * 5 + diff * 10 * 5   # 舊制：小台每點 50 元、微台每點 10 元，各 5 口
+            if direction == '做空':
+                pnl = -pnl
+    rec = {'date': date_str, 'total': sig.get('total'), 'direction': direction,
+           'ref': ref, 'last': last, 'diff': diff, 'hit': hit, 'pnl': pnl}
+    if sim:
+        rec.update({
+            'entry': sim.get('entry'), 'entry_time': sim.get('entry_time'),
+            'hi': sim.get('hi'), 'lo': sim.get('lo'),
+            'stop': (sim_side or {}).get('stop'),
+            'stop_pts': (sim_side or {}).get('stop_pts'),
+            'qty': (sim_side or {}).get('qty'),
+            'stopped': (sim_side or {}).get('stopped'),
+            'sim_mode': 'stop_loss',
+        })
+    return rec
 
 
 def record_hit(date_str: str, ref: float, last: float,
-               path: Optional[str] = None) -> Optional[Dict]:
+               path: Optional[str] = None,
+               sim: Optional[Dict] = None) -> Optional[Dict]:
     """11:30 比對並寫入命中歷史（同一日僅記錄第一次，回傳本次計算結果）"""
-    rec = evaluate_signal(date_str, ref, last, path)
+    rec = evaluate_signal(date_str, ref, last, path, sim=sim)
     if rec is None:
         return None
     st = load_state(path)
@@ -788,12 +812,15 @@ def format_section(idx: Dict) -> str:
 
 
 # ── 11:30 命中率比對區塊（由 stock_monitor 呼叫）──────────────────
-def format_hitrate_section(taifex: Dict, run_time: Optional[datetime] = None) -> str:
+def format_hitrate_section(taifex: Dict, run_time: Optional[datetime] = None,
+                           sim: Optional[Dict] = None) -> str:
     """以台指期（TXF）漲跌比對 08:00 建議方向
 
     Args:
         taifex: stock_monitor.get_taiex_quotes() 取得的 TXF 報價
                 {symbol,name,last,diff,diff_rate,ref,volume,date,time}
+        sim:    stock_monitor._simulate_fut_pnl() 的模擬結果（含停損規格）；
+                [2026-10-22] 有傳入時，模擬損益改以 09:00 進場價與停損計算
     """
     run_time = run_time or now_tpe()
     date_str = run_time.strftime('%Y-%m-%d')
@@ -812,7 +839,7 @@ def format_hitrate_section(taifex: Dict, run_time: Optional[datetime] = None) ->
     last = taifex.get('last')
     if ref <= 0:
         ref = last - (taifex.get('diff') or 0)
-    rec = record_hit(date_str, ref, last)
+    rec = record_hit(date_str, ref, last, sim=sim)
     direction = sig.get('direction')
     lines.append(f"　📊 08:00 評分 <b>{sig.get('total')} 分</b> → 建議 <b>{direction}</b>")
     lines.append(f"　基準：昨結算 {ref:,.0f} → 11:30 <b>{last:,.0f}</b>"
@@ -825,8 +852,15 @@ def format_hitrate_section(taifex: Dict, run_time: Optional[datetime] = None) ->
         lines.append("　⚪ 觀望（50 ~ 60 分），不列入命中率")
     if rec and rec.get('pnl') is not None:
         pnl = rec['pnl']
-        lines.append(f"　💰 依建議方向模擬損益（小台×5＋微台×5）："
+        side = (sim or {}).get('long' if direction == '做多' else 'short') or {}
+        spec = (f"{rec.get('entry_time') or '09:00'} 進場 小台×{side.get('qty')}、"
+                f"停損 {side.get('stop_pts')} 點")
+        if rec.get('stopped'):
+            lines.append(f"　⛔ <b>已觸及停損</b>（{spec}，停損價 {rec.get('stop'):,.0f}）")
+        lines.append(f"　💰 依建議方向模擬損益（{spec}）："
                      f"<b>{'+' if pnl >= 0 else '−'}{abs(pnl):,.0f} 元</b>")
+    elif rec and rec.get('hit') is None:
+        lines.append("　💰 觀望不下單（模擬損益 0 元）")
     st = hit_stats()
     if st['total']:
         lines.append(f"　📈 近 {st['total']} 次命中率：<b>{st['rate']:.0f}%</b>"
