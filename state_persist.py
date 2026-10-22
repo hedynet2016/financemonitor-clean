@@ -376,13 +376,34 @@ def restore(name: str = 'sentiment_index_state.json',
             logger.warning('[state-persist] 本機狀態檔解析失敗（視為空）：%s', e)
             local = None
 
-    remote, src = download(name)
-    if remote is None:
+    # [2026-10-22] 改為「全部來源取聯集」：raw 存在但內容為空時（state-store 尚未
+    # 同步、或 bootstrap 空快照），舊寫法會用空資料遮蔽 repo 裡的真紀錄。
+    sources = []
+    raw_st, raw_msg = _download_raw(name)
+    if raw_msg == 'raw' and raw_st is not None:
+        sources.append(('raw', raw_st))
+    errs = {'raw': raw_msg}
+    if available():
+        repo_st, repo_msg = _download_repo(name)
+        errs['repo'] = repo_msg
+        if repo_msg == 'ok' and repo_st is not None:
+            sources.append(('repo', repo_st))
+        gist_st, gist_msg = _download_gist(name)
+        errs['gist'] = gist_msg
+        if gist_st is not None:
+            sources.append(('gist', gist_st))
+    src = '+'.join(s for s, _ in sources) or json.dumps(errs, ensure_ascii=False)
+
+    if not sources:
         logger.warning('[state-persist] 無法取得遠端 %s（%s），沿用本機狀態', name, src)
         return {'ok': False, 'reason': src,
                 'local_history': len((local or {}).get('history') or [])}
 
-    merged = merge_states(local, remote, history_max=history_max)
+    merged = local or {'signals': {}, 'history': []}
+    remote_total = 0
+    for _s, st in sources:
+        remote_total += len((st or {}).get('history') or [])
+        merged = merge_states(merged, st, history_max=history_max)
     before = len((local or {}).get('history') or [])
     after = len(merged.get('history') or [])
     changed = merged != (local or {})
@@ -398,9 +419,9 @@ def restore(name: str = 'sentiment_index_state.json',
 
     _restored = True
     logger.info('[state-persist] 還原 %s（%s）：遠端 %d 筆 / 本機 %d 筆 → 合併 %d 筆',
-                name, src, len((remote or {}).get('history') or []), before, after)
+                name, src, remote_total, before, after)
     return {'ok': True, 'backend': src,
-            'remote_history': len((remote or {}).get('history') or []),
+            'remote_history': remote_total,
             'local_history': before, 'merged_history': after, 'changed': changed}
 
 
