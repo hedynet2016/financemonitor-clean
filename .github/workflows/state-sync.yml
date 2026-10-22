@@ -67,14 +67,19 @@ jobs:
       - name: Commit to state-store branch
         run: |
           set -euo pipefail
+          cp "$STATE_FILE" /tmp/state_new.json
+          rm -rf state
           git config user.name  "state-sync-bot"
           git config user.email "actions@users.noreply.github.com"
           if git ls-remote --exit-code --heads origin state-store >/dev/null 2>&1; then
-            git fetch --depth=1 origin state-store
-            git checkout -B state-store FETCH_HEAD
+            git fetch origin +refs/heads/state-store:refs/remotes/origin/state-store
+            git checkout -B state-store origin/state-store
           else
-            git checkout -B state-store
+            git checkout --orphan state-store
+            git rm -rf . >/dev/null 2>&1 || true
           fi
+          mkdir -p state
+          cp /tmp/state_new.json "$STATE_FILE"
           git add -f "$STATE_FILE"
           if git diff --cached --quiet; then
             echo "no change, skip commit"

@@ -1021,7 +1021,21 @@ def tasks_view():
       <div><small class="text-muted">五項指標：</small> ① 最新美股表現（市值前 20 大平均漲跌；來源失效時自動改用科技七巨頭）&bull; ② 美國 CPI（實際 vs 預期）&bull; ③ 美國非農就業（實際 vs 預期）&bull; ④ 國際油價（Brent 布蘭特單日漲跌 ±3%）&bull; ⑤ 前一日台股（加權指數漲跌點數）</div>
       <div><small class="text-muted">判定：</small> 合計 &gt; 60 分 → 建議做多 🔴；&lt; 50 分 → 建議做空 🟢；50 ~ 60 分 → 觀望 ⚪</div>
       <div><small class="text-muted">比對：</small> 11:30 台股推播以台指期（TXF 對昨結算）比對方向命中率並累計近 10 次勝率</div>
-      <div><small class="text-muted">診斷：</small> <code>/api/sentiment-test</code></div>
+      <div><small class="text-muted">診斷：</small> <code>/api/sentiment-test</code> &bull; <code>/api/state-log</code></div>
+    </div>
+  </div>
+</div>
+
+<div class="block-card">
+  <div class="d-flex align-items-start gap-3">
+    <span class="block-date">📅 2026-10-22</span>
+    <div class="flex-grow-1">
+      <div class="fw-bold mb-1">評分狀態跨部署持久化（免 PAT）</div>
+      <div class="mb-2"><span class="source-tag">GitHub Actions</span> <span class="source-tag">raw.githubusercontent.com</span> <span class="filter-tag">每日 08:05 / 11:35 / 12:31</span></div>
+      <div><small class="text-muted">問題：</small> Render 免費版容器為臨時檔案系統，<code>sentiment_index_state.json</code> 每次重新部署即清空，導致月結算總盈虧歸零</div>
+      <div><small class="text-muted">機制：</small> GitHub Actions（<code>state-sync.yml</code>）每日抓 <code>/api/state-export</code> 並 commit 到 <code>state-store</code> 分支（不觸發 Render 部署）；開機時 <code>state_persist.restore()</code> 從 raw 網址讀回並<b>依日期合併（本機優先）</b>，全程不需任何 token</div>
+      <div><small class="text-muted">每日日誌：</small> <code>/api/state-log?days=30</code> 逐日列出建議方向、評分、命中、模擬損益、是否停損</div>
+      <div><small class="text-muted">診斷：</small> <code>/api/state-persist</code>（可加 <code>?restore=1</code> 立即還原）</div>
     </div>
   </div>
 </div>
