@@ -743,6 +743,43 @@ def history_view():
     if not records:
         rows_html = '<tr><td colspan="6" class="text-center text-muted py-4">尚無推播記錄</td></tr>'
 
+    # [2026-10-22] 台指期建議方向日誌（近 30 筆）
+    try:
+        import sentiment_index as _senti
+        _hist = (_senti.load_state().get("history") or [])[-30:]
+    except Exception:
+        _hist = []
+    signal_rows_html = ""
+    _sum_pnl = 0.0
+    for h in reversed(_hist):
+        _pnl = h.get("pnl")
+        _hit = h.get("hit")
+        if _hit is True:
+            hit_html = '<span class="text-success">✅ 命中</span>'
+        elif _hit is False:
+            hit_html = '<span class="text-danger">❌ 未命中</span>'
+        else:
+            hit_html = '<span class="text-muted">⚪ 觀望</span>'
+        if _pnl is None:
+            pnl_html = '<span class="text-muted">不下單</span>'
+        else:
+            _sum_pnl += _pnl
+            _cls = "text-danger" if _pnl >= 0 else "text-success"   # 台股慣例：紅漲綠跌
+            pnl_html = (f'<span class="{_cls} fw-bold">'
+                        f'{"+" if _pnl >= 0 else "−"}{abs(_pnl):,.0f}</span>')
+        stop_html = "⛔ 停損" if h.get("stopped") else ""
+        signal_rows_html += (
+            f'<tr><td style="white-space:nowrap">{h.get("date", "")}</td>'
+            f'<td class="text-center">{h.get("total", "-")}</td>'
+            f'<td>{h.get("direction", "-")}</td>'
+            f'<td class="text-center">{hit_html}</td>'
+            f'<td class="text-end">{pnl_html}</td>'
+            f'<td class="text-muted" style="font-size:0.8rem">{stop_html}</td></tr>'
+        )
+    if not signal_rows_html:
+        signal_rows_html = ('<tr><td colspan="6" class="text-center text-muted py-4">'
+                            '尚無建議方向紀錄（每日 11:30 產生）</td></tr>')
+
     body = f"""\
 <h4 class="mb-3 d-flex justify-content-between align-items-center">
   <span><i class="bi bi-broadcast me-2"></i>推播歷史</span>
@@ -777,6 +814,33 @@ def history_view():
       <div class="fw-bold">雙管道失敗</div>
       <div class="fs-4">{total_fail}</div>
     </div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-bullseye me-2"></i>台指期建議方向日誌（近 {len(_hist)} 筆）</span>
+    <span class="text-muted" style="font-size:0.85rem">累計模擬損益：
+      <span class="{'text-danger' if _sum_pnl >= 0 else 'text-success'} fw-bold">{'+' if _sum_pnl >= 0 else '−'}{abs(_sum_pnl):,.0f} 元</span>
+      &bull; <a href="/api/state-log?days=30" target="_blank" class="link-light">JSON</a>
+    </span>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-dark table-hover mb-0">
+      <thead>
+        <tr>
+          <th style="width:110px">日期</th>
+          <th class="text-center" style="width:80px">評分</th>
+          <th style="width:90px">建議</th>
+          <th class="text-center" style="width:100px">命中</th>
+          <th class="text-end" style="width:110px">模擬損益</th>
+          <th style="width:80px">備註</th>
+        </tr>
+      </thead>
+      <tbody>
+        {signal_rows_html}
+      </tbody>
+    </table>
   </div>
 </div>
 
