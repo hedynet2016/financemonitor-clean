@@ -1,4 +1,64 @@
 {
-  "signals": {},
-  "history": []
+  "signals": {
+    "2026-10-23": {
+      "date": "2026-10-23",
+      "run_time": "2026-10-23 08:12",
+      "total": 45,
+      "direction": "做空",
+      "items": [
+        {
+          "key": "us",
+          "name": "最新美股表現",
+          "score": 5,
+          "why": "市值前 20 大平均跌幅 -3.35%（跌逾 3%）"
+        },
+        {
+          "key": "cpi",
+          "name": "最新美國 CPI",
+          "score": 5,
+          "why": "超出市場預期"
+        },
+        {
+          "key": "nfp",
+          "name": "最新美國非農就業",
+          "score": 15,
+          "why": "低於市場預期"
+        },
+        {
+          "key": "oil",
+          "name": "最新國際油價（Brent 布蘭特）",
+          "score": 5,
+          "why": "Brent 布蘭特單日漲 +3.94%（漲逾 3%，通膨壓力）"
+        },
+        {
+          "key": "tw",
+          "name": "前一日台股表現",
+          "score": 15,
+          "why": "加權指數跌 846 點（跌逾 500 點）"
+        }
+      ]
+    }
+  },
+  "history": [
+    {
+      "date": "2026-10-23",
+      "total": 45,
+      "direction": "做空",
+      "ref": 47013.0,
+      "last": 46272.0,
+      "diff": -741.0,
+      "hit": true,
+      "pnl": 0.0,
+      "entry": 46262.0,
+      "entry_time": "09:00",
+      "hi": 46262.0,
+      "lo": 46262.0,
+      "stop": 46322.0,
+      "stop_pts": 60,
+      "qty": 1,
+      "stopped": false,
+      "sim_mode": "stop_loss",
+      "recorded_at": "2026-10-23 11:30"
+    }
+  ]
 }
