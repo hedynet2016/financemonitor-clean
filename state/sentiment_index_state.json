@@ -173,6 +173,26 @@
       "stopped": false,
       "sim_mode": "stop_loss",
       "recorded_at": "2026-10-23 11:30"
+    },
+    {
+      "date": "2026-10-26",
+      "total": 60,
+      "direction": "觀望",
+      "ref": 47013.0,
+      "last": 46272.0,
+      "diff": -741.0,
+      "hit": null,
+      "pnl": null,
+      "entry": 46262.0,
+      "entry_time": "09:00",
+      "hi": 46262.0,
+      "lo": 46262.0,
+      "stop": null,
+      "stop_pts": null,
+      "qty": null,
+      "stopped": null,
+      "sim_mode": "stop_loss",
+      "recorded_at": "2026-10-26 11:30"
     }
   ]
 }
