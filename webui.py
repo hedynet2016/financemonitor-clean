@@ -34,6 +34,11 @@ HISTORY_FILE = SCRIPT_DIR / "push_history.json"
 SCHEDULER_PROCS = []   # child processes started by start_scheduler()
 BOT_PROC = None        # telegram_bot.py 子程序（供 /api/bot-status 診斷）
 STATUS_FILE = SCRIPT_DIR / ".webui_status.json"
+# [2026-10-27] 看門狗：排程器全住在 telegram_bot.py 子程序裡，該子程序曾於
+# 2026-10-27 凌晨被 OOM SIGKILL（exit -9）且無重生機制 → 全日推播停擺。
+_WATCHDOG_FILE = SCRIPT_DIR / "logs" / "scheduler_watchdog.json"
+_WATCHDOG = {"checks": 0, "last_check": None, "respawns": []}
+_SCHED_SLOTS = []      # 與 start_scheduler 啟動順序對齊：[{name, args, proc, spawned_at}]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [WEBUI] %(message)s")
 logger = logging.getLogger("webui")
@@ -2031,6 +2036,18 @@ def api_bot_status():
                 info["runtime"] = json.load(f)
     except Exception as e:
         info["runtime_error"] = str(e)
+    # [2026-10-27] 看門狗狀態（checks／respawns 紀錄）
+    try:
+        info["watchdog"] = dict(_WATCHDOG)
+        info["watchdog"]["slots"] = [
+            {"name": s.get("name"),
+             "alive": bool(s.get("proc") is not None and s["proc"].poll() is None),
+             "pid": (s["proc"].pid if s.get("proc") is not None else None),
+             "uptime_h": (round((datetime.now() - s["spawned_at"]).total_seconds() / 3600, 2)
+                          if s.get("spawned_at") else None)}
+            for s in _SCHED_SLOTS]
+    except Exception as e:
+        info["watchdog_error"] = str(e)
     return jsonify(info)
 
 
@@ -2122,6 +2139,9 @@ def main():
     # ── Render keep-alive: ping own /health every 10 min to prevent free-tier sleep ──
     start_keepalive()
 
+    # ── [2026-10-27] 排程子程序看門狗：死亡自動重啟＋每日 04:15 回收防 OOM ──
+    threading.Thread(target=scheduler_watchdog, daemon=True).start()
+
 
     # Register atexit handler to clean up child processes
     def cleanup_child_processes():
@@ -2191,6 +2211,7 @@ def start_scheduler():
         logger.warning("State restore skipped: %s", e)
 
     procs = []
+    _SCHED_SLOTS.clear()
     # 1. Monitor scheduler + Telegram Bot (telegram_bot.py --no-webui)
     #    --no-webui: prevent circular webui.py startup (webui.py already running)
     #    2026-10-17: 移除 --no-bot，啟用 Telegram Bot 輪詢（指令 + AI 自由對話）
@@ -2203,27 +2224,112 @@ def start_scheduler():
         )
         procs.append(p1)
         BOT_PROC = p1
+        _SCHED_SLOTS.append({"name": "monitor_bot", "args": [python, str(SCRIPT_DIR / "telegram_bot.py"), "--no-webui"],
+                             "proc": p1, "spawned_at": datetime.now()})
         logger.info(f"Monitor scheduler + Telegram Bot started (PID={p1.pid})")
     except Exception as e:
+        _SCHED_SLOTS.append({"name": "monitor_bot", "args": [python, str(SCRIPT_DIR / "telegram_bot.py"), "--no-webui"],
+                             "proc": None, "spawned_at": None})
         logger.error(f"Failed to start monitor scheduler: {e}")
 
     # 2. Backup scheduler (render_scheduler.py)
     render_sched = SCRIPT_DIR / "scripts" / "render_scheduler.py"
-    if render_sched.exists():
-        try:
-            p2 = subprocess.Popen(
-                [python, str(render_sched)],
-                cwd=str(SCRIPT_DIR),
-            )
-            procs.append(p2)
-            logger.info(f"Render scheduler started (PID={p2.pid})")
-        except Exception as e:
-            logger.error(f"Failed to start render scheduler: {e}")
-    else:
-        logger.warning(f"render_scheduler.py not found at {render_sched}")
+    try:
+        p2 = subprocess.Popen(
+            [python, str(render_sched)],
+            cwd=str(SCRIPT_DIR),
+        )
+        procs.append(p2)
+        _SCHED_SLOTS.append({"name": "render_backup", "args": [python, str(render_sched)],
+                             "proc": p2, "spawned_at": datetime.now()})
+        logger.info(f"Render scheduler started (PID={p2.pid})")
+    except Exception as e:
+        _SCHED_SLOTS.append({"name": "render_backup", "args": [python, str(render_sched)],
+                             "proc": None, "spawned_at": None})
+        logger.error(f"Failed to start render scheduler: {e}")
 
     # Store in global variable for shutdown cleanup
     SCHEDULER_PROCS = procs
+
+
+def _watchdog_save():
+    """把看門狗狀態寫入 logs/scheduler_watchdog.json（供 /api/bot-status 診斷）"""
+    try:
+        _WATCHDOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = str(_WATCHDOG_FILE) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_WATCHDOG, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, _WATCHDOG_FILE)
+    except Exception as e:
+        logger.warning("[Watchdog] 狀態檔寫入失敗：%s", e)
+
+
+def scheduler_watchdog():
+    """[2026-10-27] 排程子程序看門狗（每 60 秒檢查）
+
+    背景：所有排程（新聞／台股／活動／商品）都住在 telegram_bot.py 子程序，
+    該子程序 2026-10-27 凌晨被 OOM SIGKILL（exit -9）後無人重生，造成全日推播停擺。
+
+    1. 子程序死亡（含 OOM 被殺）→ 立即重新 spawn
+    2. 每天台北 04:10~04:30（美股已收盤、07:00 早鳥前的安全時段），
+       對運行超過 20 小時的子程序主動回收重啟，防止記憶體慢性累積再觸發 OOM
+    """
+    global SCHEDULER_PROCS, BOT_PROC
+    logger.info("[Watchdog] started — 每 60 秒檢查排程子程序")
+    while True:
+        time.sleep(60)
+        try:
+            now = datetime.now()
+            restarted = False
+            for slot in _SCHED_SLOTS:
+                p = slot.get("proc")
+                alive = p is not None and p.poll() is None
+                spawned_at = slot.get("spawned_at")
+                uptime_h = ((now - spawned_at).total_seconds() / 3600
+                            if spawned_at else 0.0)
+                old_exit = p.poll() if p is not None else "never_started"
+                need = False
+                reason = ""
+                if not alive:
+                    need = True
+                    reason = f"process dead (exit={old_exit})"
+                elif (uptime_h >= 20 and now.hour == 4
+                      and 10 <= now.minute < 30):
+                    need = True
+                    reason = f"daily recycle (uptime {uptime_h:.1f}h)"
+                    try:
+                        p.terminate()
+                        p.wait(timeout=10)
+                    except Exception:
+                        pass
+                if not need:
+                    continue
+                try:
+                    np = subprocess.Popen(slot["args"], cwd=str(SCRIPT_DIR))
+                    slot["proc"] = np
+                    slot["spawned_at"] = now
+                    if slot["name"] == "monitor_bot":
+                        BOT_PROC = np
+                    restarted = True
+                    entry = {"ts": now.strftime("%Y-%m-%d %H:%M:%S"),
+                             "name": slot["name"], "reason": reason,
+                             "old_exit": str(old_exit), "new_pid": np.pid}
+                    _WATCHDOG["respawns"] = ([entry] + _WATCHDOG["respawns"])[:20]
+                    logger.warning("[Watchdog] %s 重啟：%s → 新 PID=%s",
+                                   slot["name"], reason, np.pid)
+                except Exception as e:
+                    _WATCHDOG["respawns"] = ([{
+                        "ts": now.strftime("%Y-%m-%d %H:%M:%S"),
+                        "name": slot["name"], "reason": reason,
+                        "error": str(e)}] + _WATCHDOG["respawns"])[:20]
+                    logger.error("[Watchdog] %s 重啟失敗：%s", slot["name"], e)
+            SCHEDULER_PROCS = [s["proc"] for s in _SCHED_SLOTS if s.get("proc")]
+            _WATCHDOG["checks"] += 1
+            _WATCHDOG["last_check"] = now.strftime("%Y-%m-%d %H:%M:%S")
+            if restarted or _WATCHDOG["checks"] % 5 == 0:
+                _watchdog_save()
+        except Exception as e:
+            logger.warning("[Watchdog] 檢查失敗：%s", e)
 
 
 if __name__ == "__main__":
