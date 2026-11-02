@@ -514,7 +514,7 @@ def dashboard():
   <div class="card-header"><i class="bi bi-info-circle me-2"></i>系統資訊</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控（台股時段含台指期）+ 07:00 早鳥新聞（熱門財經／13F 官方＋媒體／美股財報／投資熱門話題）+ 08:00 財經主推播（VIP／IPO／AI 動能＋公司債＋CDS／經濟指標／財經行事曆／台指期多空指標／自訂多空評分指標）+ 14:00 活動 + 16:00 商品追蹤（雅虎拍賣 固定賣場＋雙北同類店家）+ 09:00 自動備份</td></tr>
+      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控（台股時段含台指期）+ 07:00 早鳥新聞（熱門財經／13F 官方＋媒體／美股財報／投資熱門話題）+ 08:00 財經主推播（VIP／IPO／AI 動能＋公司債＋CDS／經濟指標／財經行事曆／自訂多空評分指標）+ 14:00 活動 + 16:00 商品追蹤（雅虎拍賣 固定賣場＋雙北同類店家）+ 09:00 自動備份</td></tr>
       <tr><td class="text-muted">推送管道</td><td>Telegram Bot + Discord Webhook</td></tr>
       <tr><td class="text-muted">Python</td><td>{{py_version}}</td></tr>
       <tr><td class="text-muted">工作目錄</td><td>{{work_dir}}</td></tr>
@@ -639,7 +639,7 @@ def settings():
         </thead>
         <tbody>
           <tr><td><b>每半小時</b></td><td>股市監控（美股跌幅 &gt;3% 個股 + ETF；台股監控清單 7+7 檔個股/ETF 即時成交量排行＋跌幅排行＋台指期）</td><td><span class="badge bg-secondary">監控</span></td></tr>
-          <tr><td><b>{{'%02d:00' % dc.news_hour}}</b></td><td>新聞 + 經濟指標 + AI 動能觀察 + 財經行事曆 + 台指期多空指標 + 投資熱門話題 推播</td><td><span class="badge bg-secondary">監控</span></td></tr>
+          <tr><td><b>{{'%02d:00' % dc.news_hour}}</b></td><td>新聞 + 經濟指標 + AI 動能觀察 + 財經行事曆 + 投資熱門話題 推播</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>{{'%02d:00' % dc.events_hour}}</b></td><td>活動推播（ICT/AI 活動，2026-06-25 啟用）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>16:00</b></td><td>商品追蹤（雅虎拍賣 9 關鍵字：固定 3 賣場 + 雙北地區同類 3C 店家）</td><td><span class="badge bg-secondary">監控</span></td></tr>
           <tr><td><b>09:00</b></td><td>自動備份 logs → GitHub</td><td><span class="badge bg-info">排程器</span></td></tr>
@@ -935,7 +935,7 @@ def tasks_view():
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
       <tr><td class="text-muted" style="width:200px">每日早鳥推播</td><td><b>{morning_hour:02d}:00 台北時間</b> — 熱門財經新聞／13F 官方＋媒體報導／美股財報公布／投資熱門話題（2026-10-20 起自 08:00 提前）</td></tr>
-      <tr><td class="text-muted">每日主推播</td><td><b>{news_hour:02d}:00 台北時間</b> — VIP交易/IPO/AI動能（含公司債＋CDS）/經濟指標/財經行事曆/台指期多空指標/自訂多空評分指標（卡片左側為各區塊啟用日期）</td></tr>
+      <tr><td class="text-muted">每日主推播</td><td><b>{news_hour:02d}:00 台北時間</b> — VIP交易/IPO/AI動能（含公司債＋CDS）/經濟指標/財經行事曆/自訂多空評分指標（卡片左側為各區塊啟用日期；台指期多空指標已於 2026-11-02 移除）</td></tr>
       <tr><td class="text-muted">每日活動推播</td><td><b>{events_hour:02d}:00 台北時間</b> — ICT/AI 活動（2026-06-25 啟用，未來90天）</td></tr>
       <tr><td class="text-muted">每日商品追蹤</td><td><b>16:00 台北時間</b> — 雅虎拍賣商品監控（9 關鍵字，價格 $2,000~$15,000，排除NG，刊登 7 天內，上限 30 筆）<br>　① 固定賣場 3 家：樺仔二手電腦 / 點子3C 板橋店 / US3C<br>　② 雙北地區同類店家：台北市・新北市「店鋪型 3C 賣家」（與點子3C同類），條件與固定賣場完全相同，自動納入新店家</td></tr>
       <tr><td class="text-muted">每半小時股市監控</td><td>美股跌幅&gt;3%個股+ETF；台股監控清單（7 檔個股+7 檔 ETF）MIS 即時成交量排行＋跌幅排行，附台指期漲跌與 09:30-11:30 小台損益試算（09:00 進場：多單 5 口停損 20 點／空單 2 口停損 50 點，單向最大虧損 5,000 元）</td></tr>
@@ -1057,14 +1057,14 @@ def tasks_view():
   </div>
 </div>
 
-<div class="block-card">
+<div class="block-card" style="opacity:.55">
   <div class="d-flex align-items-start gap-3">
     <span class="block-date">📅 2026-10-16</span>
     <div class="flex-grow-1">
-      <div class="fw-bold mb-1">台指期多空指標（三大法人未平倉）</div>
+      <div class="fw-bold mb-1">台指期多空指標（三大法人未平倉）<span class="badge bg-secondary ms-2">已停用 2026-11-02</span></div>
       <div class="mb-2"><span class="source-tag">期交所 OpenAPI</span> <span class="filter-tag">臺股期貨（TX）</span> <span class="filter-tag">盤後公布前一交易日</span></div>
       <div><small class="text-muted">內容：</small> 外資及陸資 &bull; 投信 &bull; 自營商 未平倉淨部位（口）＋ 當日進出 ＋ 三大法人合計多空判定</div>
-      <div><small class="text-muted">診斷：</small> <code>/api/taifex-test</code></div>
+      <div><small class="text-muted">狀態：</small> 已自 08:00 主推播移除（不再抓取、不再發送）；診斷端點 <code>/api/taifex-test</code> 保留可用</div>
     </div>
   </div>
 </div>

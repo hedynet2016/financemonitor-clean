@@ -4895,7 +4895,9 @@ class NewsMonitor:
         part="morning"：07:00 早鳥推播（熱門財經／13F 官方＋媒體報導／美股財報／
                         投資熱門話題）
         part="main"：08:00 主推播（VIP 交易揭露／IPO／AI 動能＋公司債＋CDS／
-                     經濟指標／財經行事曆／台指期多空指標／自訂多空評分指標）
+                     經濟指標／財經行事曆／自訂多空評分指標）
+                     [2026-11-02] 台指期多空指標（三大法人未平倉）已自推播移除，
+                     診斷端點 /api/taifex-test 保留可用。
         """
         send_morning = part in ("all", "morning")
         send_main = part in ("all", "main")
@@ -5039,8 +5041,7 @@ class NewsMonitor:
             message += self._format_financial_calendar_section(financial_calendar)
 
         # ―― [2026-10-16] 台指期多空指標:三大法人臺股期貨未平倉淨部位 ――――――
-        if taifex_sentiment is not None and send_main:
-            message += self._format_taifex_sentiment_section(taifex_sentiment)
+        # ―― [2026-11-02] 依用戶指示自 08:00 主推播移除此區塊（保留診斷端點）―
 
         # ―― [2026-10-16] 自訂多空評分指標:五項指標合計分數(做多/做空)――――
         if sentiment_index is not None and send_main:
@@ -5082,7 +5083,7 @@ class NewsMonitor:
         part="all"：全部區塊（預設，相容舊行為）
         part="morning"：07:00 早鳥（熱門財經／13F 官方＋媒體／美股財報／投資熱門話題）
         part="main"：08:00 主推播（VIP／IPO／AI 動能＋公司債＋CDS／經濟指標／
-                     財經行事曆／台指期多空指標／自訂多空評分指標）
+                     財經行事曆／自訂多空評分指標）[2026-11-02 台指期多空指標已移除]
         """
         do_morning = part in ("all", "morning")
         do_main = part in ("all", "main")
@@ -5210,14 +5211,8 @@ class NewsMonitor:
                 logger.error(f"Hot topics fetch failed, will skip: {e}")
 
         # ── [2026-10-16] 台指期多空指標:三大法人臺股期貨未平倉淨部位 ─────
-        #    08:00 主推播
-        taifex_sentiment = None
-        if do_main:
-            try:
-                logger.info("Fetching TAIEX futures institutional positioning...")
-                taifex_sentiment = self.fetch_taifex_sentiment()
-            except Exception as e:
-                logger.error(f"TAIFEX sentiment fetch failed, will skip: {e}")
+        #    [2026-11-02] 已自 08:00 主推播移除（不再抓取、不再隨訊息發送）；
+        #    fetch_taifex_sentiment() 保留供 WebUI /api/taifex-test 診斷使用。
 
         # ── [2026-10-16] 自訂多空評分指標:五項指標合計分數(做多/做空)─────
         #    08:00 主推播；同時寫入 sentiment_index_state.json，
@@ -5243,7 +5238,7 @@ class NewsMonitor:
             politician_trades or ipo_news or ai_momentum_news
             or (ai_bond_data or {}).get('companies')
             or economic_news or financial_calendar
-            or taifex_sentiment or sentiment_index)
+            or sentiment_index)
         if part == 'morning' and not has_morning_content:
             logger.warning("Morning part has no content at all; skip send (worker will retry)")
             return False
@@ -5267,7 +5262,7 @@ class NewsMonitor:
                 ai_momentum_news=ai_momentum_news,
                 ai_bond_data=ai_bond_data,
                 financial_calendar=financial_calendar,
-                taifex_sentiment=taifex_sentiment,
+                taifex_sentiment=None,  # [2026-11-02] 已自推播移除
                 sentiment_index=sentiment_index,
                 hot_topics=hot_topics,
                 part=part,
