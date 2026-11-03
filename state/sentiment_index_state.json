@@ -379,6 +379,44 @@
           "why": "加權指數跌 1,156 點（跌逾 500 點）"
         }
       ]
+    },
+    "2026-11-03": {
+      "date": "2026-11-03",
+      "run_time": "2026-11-03 08:07",
+      "total": 55,
+      "direction": "觀望",
+      "items": [
+        {
+          "key": "us",
+          "name": "最新美股表現",
+          "score": 10,
+          "why": "市值前 20 大平均漲跌 -1.53%（未達 ±3%）"
+        },
+        {
+          "key": "cpi",
+          "name": "最新美國 CPI",
+          "score": 5,
+          "why": "超出市場預期"
+        },
+        {
+          "key": "nfp",
+          "name": "最新美國非農就業",
+          "score": 15,
+          "why": "低於市場預期"
+        },
+        {
+          "key": "oil",
+          "name": "最新國際油價（Brent 布蘭特）",
+          "score": 15,
+          "why": "Brent 布蘭特單日跌 -11.25%（跌逾 3%）"
+        },
+        {
+          "key": "tw",
+          "name": "前一日台股表現",
+          "score": 10,
+          "why": "加權指數 -292 點（未達 ±500 點）"
+        }
+      ]
     }
   },
   "history": [
@@ -501,6 +539,26 @@
       "stopped": null,
       "sim_mode": "stop_loss",
       "recorded_at": "2026-11-02 11:31"
+    },
+    {
+      "date": "2026-11-03",
+      "total": 55,
+      "direction": "觀望",
+      "ref": 45227.0,
+      "last": 44037.0,
+      "diff": -1190.0,
+      "hit": null,
+      "pnl": null,
+      "entry": 44285.0,
+      "entry_time": "09:00",
+      "hi": 44622.0,
+      "lo": 44039.0,
+      "stop": null,
+      "stop_pts": null,
+      "qty": null,
+      "stopped": null,
+      "sim_mode": "stop_loss",
+      "recorded_at": "2026-11-03 11:30"
     }
   ]
 }
