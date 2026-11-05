@@ -3713,6 +3713,13 @@ class NewsMonitor:
         )
         return section
 
+    # ■ [2026-11-06] 費半表現  SOX 指數收盤＋成分股漲跌幅前五名
+    # ════════════════════════════════════════════════════════════════
+    def _format_sox_section(self, data: Dict) -> str:
+        """格式化費半表現區塊（SOX 指數收盤＋成分股漲跌幅各前五名與股價）"""
+        import sox_monitor
+        return sox_monitor.format_sox_section(data)
+
     # ■ [2026-10-16] 台指期多空指標  三大法人臺股期貨未平倉淨部位
     # ════════════════════════════════════════════════════════════════
     TAIFEX_FUT_URL = (
@@ -4888,12 +4895,13 @@ class NewsMonitor:
                                   taifex_sentiment: Dict = None,
                                   sentiment_index: Dict = None,
                                   hot_topics: Dict = None,
+                                  sox_data: Dict = None,
                                   part: str = "all") -> str:
         """生成Telegram消息。
 
         part="all"：全部區塊（預設，相容舊行為）
         part="morning"：07:00 早鳥推播（熱門財經／13F 官方＋媒體報導／美股財報／
-                        投資熱門話題）
+                        投資熱門話題／費半表現 SOX＋成分股漲跌幅各前五名）
         part="main"：08:00 主推播（VIP 交易揭露／IPO／AI 動能＋公司債＋CDS／
                      經濟指標／財經行事曆／自訂多空評分指標）
                      [2026-11-02] 台指期多空指標（三大法人未平倉）已自推播移除，
@@ -5051,6 +5059,10 @@ class NewsMonitor:
         if hot_topics is not None and send_morning:
             message += self._format_hot_topics_section(hot_topics)
 
+        # ―― [2026-11-06] 費半表現:SOX 指數收盤＋成分股漲跌幅各前五名 ――――
+        if sox_data is not None and send_morning:
+            message += self._format_sox_section(sox_data)
+
         # 統一的結尾（兩個時段各自收尾）
         message += '\n========================================\n'
         message += '\U0001f916 由 WorkBuddy 新聞監控系統自動生成\n'
@@ -5081,7 +5093,8 @@ class NewsMonitor:
         """執行一次新聞監控檢查。
 
         part="all"：全部區塊（預設，相容舊行為）
-        part="morning"：07:00 早鳥（熱門財經／13F 官方＋媒體／美股財報／投資熱門話題）
+        part="morning"：07:00 早鳥（熱門財經／13F 官方＋媒體／美股財報／投資熱門話題／
+                        費半表現 SOX 指數＋成分股漲跌幅各前五名）
         part="main"：08:00 主推播（VIP／IPO／AI 動能＋公司債＋CDS／經濟指標／
                      財經行事曆／自訂多空評分指標）[2026-11-02 台指期多空指標已移除]
         """
@@ -5210,6 +5223,20 @@ class NewsMonitor:
             except Exception as e:
                 logger.error(f"Hot topics fetch failed, will skip: {e}")
 
+        # ── [2026-11-06] 費半表現:SOX 指數收盤＋成分股漲跌幅各前五名 ─────
+        #    07:00 早鳥
+        sox_data = None
+        if do_morning:
+            try:
+                logger.info("Fetching SOX index & component performance...")
+                import sox_monitor
+                sox_data = sox_monitor.fetch_sox_performance()
+                if not sox_monitor.has_sox_content(sox_data):
+                    logger.warning("SOX performance data insufficient, will skip section")
+                    sox_data = None
+            except Exception as e:
+                logger.error(f"SOX performance fetch failed, will skip: {e}")
+
         # ── [2026-10-16] 台指期多空指標:三大法人臺股期貨未平倉淨部位 ─────
         #    [2026-11-02] 已自 08:00 主推播移除（不再抓取、不再隨訊息發送）；
         #    fetch_taifex_sentiment() 保留供 WebUI /api/taifex-test 診斷使用。
@@ -5233,7 +5260,8 @@ class NewsMonitor:
         # 避免只發出標題的空推播
         has_morning_content = bool(
             top_articles or filings_13f or media_13f or earnings_news
-            or (hot_topics or {}).get('reddit'))
+            or (hot_topics or {}).get('reddit')
+            or sox_data)
         has_main_content = bool(
             politician_trades or ipo_news or ai_momentum_news
             or (ai_bond_data or {}).get('companies')
@@ -5265,6 +5293,7 @@ class NewsMonitor:
                 taifex_sentiment=None,  # [2026-11-02] 已自推播移除
                 sentiment_index=sentiment_index,
                 hot_topics=hot_topics,
+                sox_data=sox_data,
                 part=part,
             )
         except Exception as e:
