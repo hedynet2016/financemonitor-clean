@@ -4,8 +4,9 @@
 
 使用者自訂的五項指標，每項 5 / 10 / 15 分，合計 25 ~ 75 分（基準 50 分）：
 
-  1. 最新美股表現        市值前 20 大公司平均漲跌幅
-                         跌 > 3% → 5 分；漲 > 3% → 15 分；其他 → 10 分
+  1. 最新費半表現        費城半導體指數（^SOX）單日漲跌幅
+                         [2026-11-06] 自「美股前 20 大平均漲跌 ±3%」改為：
+                         跌 > 5% → 5 分；漲 > 5% → 15 分；±5% 之間 → 10 分
   2. 最新美國 CPI 表現   實際 vs 市場預期
                          超出預期 → 5 分；低於預期 → 15 分；無最新數據 → 10 分
   3. 最新美國非農就業    實際 vs 市場預期（同上）
@@ -19,10 +20,7 @@
 比對：11:30 以台指期（TXF）漲跌比對方向命中率（見 format_hitrate_section）
 
 資料來源（皆免 API key）：
-  - 美股市值前 20 大： Yahoo predefined screener（most_actives 取 250 檔後依市值排序）
-                       2026-10-18 起該端點回 200 但 quotes 為空 → 自動備援
-                       「科技七巨頭」Apple/Microsoft/Nvidia/Alphabet/Amazon/Meta/Tesla
-                       平均漲跌幅（Yahoo spark v7，一次請求）
+  - 費半指數：          Yahoo spark v8（^SOX 日線，一次請求）
   - CPI / 非農：        TradingView 經濟行事曆（含 forecast / actual）
   - 布蘭特油價：        Yahoo BZ=F 日線（最新收盤 vs 前一交易日漲跌幅）
   - 前一日台股：        證交所 FMTQIK（發行量加權股價指數＋漲跌點數），Yahoo ^TWII 備援
@@ -57,30 +55,20 @@ SENTI_MAX_AGE_DAYS = 45          # CPI / 非農：約 1.5 個月，確保月度�
 HISTORY_MAX = 60                 # 命中率歷史保留筆數
 HIT_STATS_N = 10                 # 顯示近 N 次命中率
 HIT_BLOCK = 23                   # 11:30（block = hour*2 + minute//30）
-US_TOP_N = 20
-
-# 科技七巨頭（screener 失效時的備援；2026-10-18 起 Yahoo predefined screener 回空）
-MAG7_SYMBOLS = ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA']
-MAG7_LABELS = {'AAPL': '蘋果', 'MSFT': '微軟', 'NVDA': '輝達', 'GOOGL': '谷歌',
-               'AMZN': '亞馬遜', 'META': 'Meta', 'TSLA': '特斯拉'}
-
-MOVEMENT_THRESHOLD_PCT = 3.0     # 美股前 20 大平均漲跌幅門檻（%）
 OIL_MOVEMENT_THRESHOLD_PCT = 3.0 # Brent 布蘭特油價單日漲跌幅門檻（%）
 TAIEX_THRESHOLD_PTS = 500.0      # 前一日台股漲跌門檻（點）
+SOX_INDEX_SYMBOL = '^SOX'        # 費城半導體指數（第 1 項計分來源）
+SOX_MOVEMENT_THRESHOLD_PCT = 5.0 # 費半指數單日漲跌幅門檻（%）
 
 _UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
        '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36')
 _HEADERS = {'User-Agent': _UA, 'Accept': 'application/json, text/plain, */*'}
 
 TV_CAL_URL = 'https://economic-calendar.tradingview.com/events'
-YAHOO_SCREENER_URL = 'https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved'
 # v8 回扁平格式（{"BZ=F": {timestamp, close, previousClose…}}），Render 已實證可用；
 # 解析一律走 _spark_response()（同時相容 v7 的 spark.result 嵌套格式）
 YAHOO_SPARK_URL = 'https://query1.finance.yahoo.com/v8/finance/spark'
 TWSE_FMTQIK_URL = 'https://www.twse.com.tw/exchangeReport/FMTQIK'
-
-# 同一公司多種股票代號：保留左邊（市值較大者）為代表，避免重複計權
-SHARE_CLASS_DUP = {'GOOG': 'GOOGL', 'FOX': 'FOXA', 'NWS': 'NWSA'}
 
 # TradingView 事件標題偏好（依序取第一個命中；採精確比對避免誤抓子項）
 CPI_TITLES = ['CPI y/y', 'CPI m/m', 'CPI']
@@ -129,7 +117,59 @@ def _score_label(score: int) -> str:
     return {SCORE_BULL: '15 分', SCORE_NEUTRAL: '10 分', SCORE_BEAR: '5 分'}.get(score, f'{score} 分')
 
 
-# ── 1. 美股市值前 20 大（screener，失效則科技七巨頭備援）──────────
+# ── 1. 費半指數（^SOX 單日漲跌幅 ±5%，2026-11-06 起取代美股前 20 大）──
+def fetch_sox_index() -> Dict:
+    """費城半導體指數（^SOX）最新收盤與前一交易日漲跌幅（Yahoo spark 日線）"""
+    out = {'symbol': SOX_INDEX_SYMBOL, 'label': '費城半導體指數（SOX）',
+           'date': None, 'last': None, 'prev': None, 'pct': None,
+           'source': None, 'error': None}
+    try:
+        d = _spark_response([SOX_INDEX_SYMBOL], '1mo').get(SOX_INDEX_SYMBOL) or {}
+    except Exception as e:
+        out['error'] = f'Yahoo ^SOX {type(e).__name__}: {e}'
+        return out
+
+    # 主要路徑：日線最後兩個有效收盤（08:00 台北時美股已收盤，即最新交易日）
+    seq = [(t, c) for t, c in zip(d.get('timestamp') or [], d.get('closes') or []) if c]
+    if len(seq) >= 2:
+        _, prev = seq[-2]
+        ct, last = seq[-1]
+        out.update({'prev': float(prev), 'last': float(last),
+                    'pct': (float(last) / float(prev) - 1) * 100,
+                    'date': _ts_to_dt(ct).astimezone(TPE).strftime('%Y-%m-%d') if ct else None,
+                    'source': 'Yahoo Finance ^SOX（費城半導體指數）'})
+        return out
+
+    # 備援：meta 現價與官方漲跌幅
+    meta = d.get('meta') or {}
+    pct = meta.get('regularMarketChangePercent')
+    last = meta.get('regularMarketPrice')
+    if pct is not None and last is not None:
+        ct = meta.get('regularMarketTime')
+        out.update({'last': float(last),
+                    'pct': float(pct),
+                    'date': _ts_to_dt(ct).astimezone(TPE).strftime('%Y-%m-%d') if ct else None,
+                    'source': 'Yahoo Finance ^SOX（費城半導體指數）'})
+        return out
+
+    out['error'] = 'Yahoo ^SOX 日線資料不足（<2 筆）'
+    return out
+
+
+def score_sox_index(data: Dict) -> Tuple[int, str]:
+    """費半指數單日漲跌幅計分（[2026-11-06] 使用者指定規格）：
+       漲 > 5% → 15 分；跌 > 5% → 5 分；±5% 之間（含無資料）→ 10 分
+    """
+    pct = (data or {}).get('pct')
+    if pct is None:
+        return SCORE_NEUTRAL, '無法取得費半指數資料（視為無最新數據）'
+    if pct > SOX_MOVEMENT_THRESHOLD_PCT:
+        return SCORE_BULL, f'費半指數漲 {pct:+.2f}%（漲逾 5%）'
+    if pct < -SOX_MOVEMENT_THRESHOLD_PCT:
+        return SCORE_BEAR, f'費半指數跌 {pct:+.2f}%（跌逾 5%）'
+    return SCORE_NEUTRAL, f'費半指數漲跌 {pct:+.2f}%（±5% 之間）'
+
+
 def _spark_response(symbols: List[str], rng: str = '5d') -> Dict[str, Dict]:
     """Yahoo spark 一次取多檔，回傳統一結構 {sym: {meta, timestamp, closes}}
 
@@ -163,129 +203,6 @@ def _spark_response(symbols: List[str], rng: str = '5d') -> Dict[str, Dict]:
                 out[sym.upper()] = {'meta': {}, 'timestamp': d.get('timestamp') or [],
                                     'closes': d.get('close') or []}
     return out
-
-
-def _spark_quotes(symbols: List[str], rng: str = '5d') -> Dict:
-    """由 spark 取漲跌幅，回傳 {symbol: {'chg': %, 'price': 現價}}"""
-    out = {}
-    for sym, d in _spark_response(symbols, rng).items():
-        meta = d['meta']
-        chg = meta.get('regularMarketChangePercent')
-        price = meta.get('regularMarketPrice')
-        closes = [c for c in d['closes'] if c is not None]
-        if chg is None or price is None:
-            if len(closes) >= 2:
-                chg = (closes[-1] / closes[-2] - 1) * 100
-                price = closes[-1]
-        if chg is not None:
-            out[sym] = {'chg': float(chg), 'price': price}
-    return out
-
-
-def fetch_us_mag7() -> Dict:
-    """科技七巨頭平均漲跌幅（Yahoo spark，一次請求）"""
-    out = {'avg': None, 'items': [], 'source': None, 'error': None,
-           'count': 0, 'kind': 'mag7'}
-    try:
-        quotes = _spark_quotes(MAG7_SYMBOLS)
-    except Exception as e:
-        out['error'] = f'Yahoo spark {type(e).__name__}: {e}'
-        return out
-    items = []
-    for sym in MAG7_SYMBOLS:
-        q = quotes.get(sym)
-        if not q:
-            continue
-        items.append({'symbol': sym, 'name': MAG7_LABELS.get(sym, sym),
-                      'cap': 0.0, 'chg': q['chg']})
-    if not items:
-        out['error'] = 'Yahoo spark 無有效漲跌幅資料'
-        return out
-    out['items'] = items
-    out['count'] = len(items)
-    out['avg'] = sum(r['chg'] for r in items) / len(items)
-    out['source'] = f'Yahoo Finance spark（科技七巨頭 {len(items)} 檔）'
-    return out
-
-
-def _fetch_us_screener_top20() -> Dict:
-    """Yahoo predefined screener 取市值前 20 大（2026-10-18 起常回空 quotes）"""
-    out = {'avg': None, 'items': [], 'source': None, 'error': None,
-           'count': 0, 'kind': 'top20'}
-    try:
-        resp = requests.get(
-            YAHOO_SCREENER_URL,
-            params={'formatted': 'false', 'lang': 'en-US', 'region': 'US',
-                    'scrIds': 'most_actives', 'count': '250'},
-            headers={'User-Agent': _UA}, timeout=25)
-        resp.raise_for_status()
-        results = resp.json().get('finance', {}).get('result') or []
-        if not results:
-            out['error'] = 'Yahoo screener 回傳空結果'
-            return out
-        quotes = results[0].get('quotes') or []
-        if not quotes:
-            out['error'] = 'Yahoo screener 回傳 0 檔（端點已失效）'
-            return out
-    except Exception as e:
-        out['error'] = f'Yahoo screener {type(e).__name__}: {e}'
-        return out
-
-    rows = []
-    for q in quotes:
-        if q.get('quoteType') != 'EQUITY':
-            continue
-        cap = q.get('marketCap') or 0
-        chg = q.get('regularMarketChangePercent')
-        if cap <= 0 or chg is None:
-            continue
-        rows.append({'symbol': str(q.get('symbol', '')).upper(),
-                     'name': q.get('shortName') or q.get('symbol'),
-                     'cap': float(cap), 'chg': float(chg)})
-    if not rows:
-        out['error'] = 'Yahoo screener 無有效市值資料'
-        return out
-
-    rows.sort(key=lambda r: r['cap'], reverse=True)
-    picked, seen = [], set()
-    for r in rows:
-        primary = SHARE_CLASS_DUP.get(r['symbol'], r['symbol'])
-        if primary in seen:
-            continue
-        seen.add(primary)
-        picked.append(r)
-        if len(picked) >= US_TOP_N:
-            break
-
-    out['items'] = picked
-    out['count'] = len(picked)
-    out['avg'] = sum(r['chg'] for r in picked) / len(picked)
-    out['source'] = f'Yahoo Finance screener（市值前 {len(picked)} 大）'
-    return out
-
-
-def fetch_us_top20() -> Dict:
-    """美股市值前 20 大平均漲跌幅；screener 失效時自動改用科技七巨頭"""
-    top = _fetch_us_screener_top20()
-    if top.get('avg') is not None and top.get('count', 0) >= 5:
-        return top
-    mag7 = fetch_us_mag7()
-    mag7['screen_error'] = top.get('error')
-    if mag7.get('avg') is None:
-        mag7['error'] = f"{mag7.get('error')}／screener: {top.get('error')}"
-    return mag7
-
-
-def score_us_top20(data: Dict) -> Tuple[int, str]:
-    avg = (data or {}).get('avg')
-    label = '科技七巨頭' if (data or {}).get('kind') == 'mag7' else '市值前 20 大'
-    if avg is None:
-        return SCORE_NEUTRAL, '無法取得美股資料（視為無最新數據）'
-    if avg < -MOVEMENT_THRESHOLD_PCT:
-        return SCORE_BEAR, f'{label}平均跌幅 {avg:.2f}%（跌逾 3%）'
-    if avg > MOVEMENT_THRESHOLD_PCT:
-        return SCORE_BULL, f'{label}平均漲幅 {avg:.2f}%（漲逾 3%）'
-    return SCORE_NEUTRAL, f'{label}平均漲跌 {avg:+.2f}%（未達 ±3%）'
 
 
 # ── 2/3/4. 經濟事件（實際 vs 市場預期）────────────────────────────
@@ -547,11 +464,11 @@ def fetch_sentiment_index(run_time: Optional[datetime] = None) -> Dict:
            'items': [], 'total': None, 'direction': None,
            'error': None, 'debug': {}}
 
-    # 1. 最新美股表現
-    us = fetch_us_top20()
-    s, why = score_us_top20(us)
-    idx['items'].append({'key': 'us', 'name': '最新美股表現', 'score': s, 'why': why,
-                         'data': us})
+    # 1. 最新費半表現（[2026-11-06] 自美股前 20 大改為費半指數漲跌幅 ±5%）
+    sox = fetch_sox_index()
+    s, why = score_sox_index(sox)
+    idx['items'].append({'key': 'us', 'name': '最新費半表現', 'score': s, 'why': why,
+                         'data': sox})
 
     # 2/3. CPI / 非農（實際 vs 市場預期）
     econ = fetch_econ_events()
@@ -752,20 +669,17 @@ def format_section(idx: Dict) -> str:
         key, data = it['key'], it.get('data') or {}
         section += f"{emoji.get(key, '▪️')} <b>{it['name']}</b>\n"
         if key == 'us':
-            items = data.get('items') or []
-            if items:
-                worst = min(items, key=lambda r: r['chg'])
-                best = max(items, key=lambda r: r['chg'])
-                label = ('科技七巨頭' if data.get('kind') == 'mag7'
-                         else f"前 {len(items)} 大")
-                section += (f"   {label}平均：<b>{data['avg']:+.2f}%</b>"
-                            f"（{html.escape(str(worst['symbol']))} {worst['chg']:+.2f}% ／ "
-                            f"{html.escape(str(best['symbol']))} {best['chg']:+.2f}%）\n")
-                if data.get('kind') == 'mag7':
-                    section += "   ⚠️ Yahoo 市值排行來源目前無法取得，已改用科技七巨頭\n"
-                section += f"   資料：{html.escape(str(data.get('source') or '—'))}\n"
+            if data.get('pct') is not None:
+                date_disp = data.get('date') or '最新交易日'
+                close_txt = (f"　收盤 <b>{data['last']:,.2f}</b>"
+                             if data.get('last') is not None else '')
+                section += (f"   {date_disp} 漲跌幅 <b>{data['pct']:+.2f}%</b>"
+                            f"{close_txt}\n")
+                if data.get('source'):
+                    section += f"   來源：{html.escape(str(data['source']))}\n"
             else:
-                section += f"   ⚠️ {html.escape(str(data.get('error') or '無資料'))[:120]}\n"
+                section += (f"   ⚠️ {html.escape(str(data.get('error') or '無費半資料'))[:120]}"
+                            f"（視為 10 分）\n")
         elif key in ('cpi', 'nfp'):
             if data:
                 pub = data['dt'].astimezone(TPE).strftime('%Y/%m/%d %H:%M')
@@ -818,9 +732,9 @@ def format_section(idx: Dict) -> str:
         section += f"（{st['hits']}/{st['total']}）\n"
     section += "🕦 11:30 台股推播將以台指期比對方向命中率\n"
     section += f"{'='*40}\n"
-    section += ("📐 評分：美股（前 20 大／科技七巨頭）｜CPI｜非農｜Brent 布蘭特油價｜前一日台股，"
+    section += ("📐 評分：費半指數漲跌 ±5%｜CPI｜非農｜Brent 布蘭特油價｜前一日台股，"
                 "各 5/10/15 分（合計 25~75）\n")
-    section += "📋 來源: Yahoo Finance（BZ=F） / TradingView 經濟行事曆 / 台灣證交所\n"
+    section += "📋 來源: Yahoo Finance（^SOX / BZ=F） / TradingView 經濟行事曆 / 台灣證交所\n"
     section += "🔴 偏多 ／ 🟢 偏空（台股慣例）\n"
     return section
 
