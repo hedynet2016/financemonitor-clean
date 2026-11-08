@@ -141,7 +141,8 @@ class NewsMonitor:
             {
                 # Yahoo Finance:涵蓋廣,常轉載 Reuters/AP 財經電訊
                 'name': 'Yahoo Finance',
-                'rss_url': 'https://finance.yahoo.com/rss/topstories',
+                'rss_url': 'https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5EGSPC&region=US&lang=en-US',
+                # [2026-11-09] finance.yahoo.com/rss/topstories 已 404，改用 feeds headline 端點
                 'base_url': 'https://finance.yahoo.com'
             },
             {
@@ -2898,8 +2899,12 @@ class NewsMonitor:
           2. WSJ Markets RSS
           3. Bloomberg Markets RSS
           4. MarketWatch Top Stories RSS
-          5. Financial Times Markets RSS
-          6. Seeking Alpha RSS
+          5. Yahoo Finance RSS（[2026-11-09] 補上）
+          6. Financial Times Markets RSS
+          7. Seeking Alpha RSS
+          8. 科技新報 TechNews RSS（繁體中文）
+          9. MacroMicro 財經M平方 RSS（繁體中文）
+          10. Digitimes RSS（中文科技產業）
 
         以 IPO 關鍵字過濾,7 日內同一標題(SHA256 前16位)不重複推播.
 
@@ -2953,6 +2958,11 @@ class NewsMonitor:
             {
                 'name': 'MarketWatch',
                 'url':  'https://feeds.marketwatch.com/marketwatch/topstories/',   # MarketWatch Top
+            },
+            {
+                'name': 'Yahoo Finance',
+                'url':  'https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5EGSPC&region=US&lang=en-US',
+                # [2026-11-09] finance.yahoo.com/rss/* 已 404，改用 feeds headline 端點
             },
             {
                 'name': 'Financial Times',
@@ -3109,10 +3119,16 @@ class NewsMonitor:
         section += f"{'='*40}\n"
         section += (
             "📋 資料來源: "
-            "<a href=\"https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=S-1\">SEC EDGAR S-1 申報</a> ／ "
+            "<a href=\"https://www.cnbc.com/markets/\">CNBC</a> ／ "
+            "<a href=\"https://www.wsj.com/markets\">WSJ</a> ／ "
+            "<a href=\"https://www.bloomberg.com/markets\">Bloomberg</a> ／ "
+            "<a href=\"https://www.marketwatch.com/\">MarketWatch</a> ／ "
             "<a href=\"https://finance.yahoo.com\">Yahoo Finance</a> ／ "
-            "<a href=\"https://seekingalpha.com\">Seeking Alpha</a> ／ "
-            "<a href=\"https://www.marketwatch.com\">MarketWatch</a>\n"
+            "<a href=\"https://www.ft.com/\">Financial Times</a> ／ "
+            "<a href=\"https://seekingalpha.com/\">Seeking Alpha</a> ／ "
+            "<a href=\"https://technews.tw/\">科技新報</a> ／ "
+            "<a href=\"https://www.macromicro.me/\">財經M平方</a> ／ "
+            "<a href=\"https://www.digitimes.com.tw/\">Digitimes</a>\n"
         )
         section += "⚠️ 同一 IPO 訊息不重複推播\n"
         return section
@@ -3127,12 +3143,13 @@ class NewsMonitor:
           2. WSJ Markets RSS
           3. Bloomberg Markets RSS
           4. MarketWatch Top Stories RSS
-          5. Financial Times Markets RSS
-          6. Seeking Alpha RSS
-          7. 科技新報 TechNews RSS（繁體中文）
-          8. MacroMicro 財經M平方 RSS（繁體中文）
-          9. Digitimes RSS（中文科技產業）
-        [2026-11-09] 確認中文三來源（7/8/9）均納入主抓取清單，
+          5. Yahoo Finance RSS（[2026-11-09] 補上）
+          6. Financial Times Markets RSS
+          7. Seeking Alpha RSS
+          8. 科技新報 TechNews RSS（繁體中文）
+          9. MacroMicro 財經M平方 RSS（繁體中文）
+          10. Digitimes RSS（中文科技產業）
+        [2026-11-09] 確認中文三來源（8/9/10）均納入主抓取清單，
         並移除原本重複抓取 MacroMicro 的補充區塊。
 
         以財報關鍵字 + 科技七巨頭名稱過濾,7 日內同一標題不重複推播.
@@ -3188,6 +3205,12 @@ class NewsMonitor:
             {
                 'name': 'MarketWatch',
                 'url':  'https://feeds.marketwatch.com/marketwatch/topstories/',
+            },
+            {
+                'name': 'Yahoo Finance',
+                'url':  'https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5EGSPC&region=US&lang=en-US',
+                # [2026-11-09] finance.yahoo.com/rss/* 已 404，改用 feeds headline 端點
+                #（^GSPC 大盤頭條，常含 Reuters/AP 財報電訊）
             },
             {
                 'name': 'Financial Times',
@@ -3353,6 +3376,7 @@ class NewsMonitor:
             "<a href=\"https://www.wsj.com/markets\">WSJ</a> ／ "
             "<a href=\"https://www.bloomberg.com/markets\">Bloomberg</a> ／ "
             "<a href=\"https://www.marketwatch.com/\">MarketWatch</a> ／ "
+            "<a href=\"https://finance.yahoo.com\">Yahoo Finance</a> ／ "
             "<a href=\"https://www.ft.com/\">Financial Times</a> ／ "
             "<a href=\"https://seekingalpha.com/\">Seeking Alpha</a> ／ "
             "<a href=\"https://technews.tw/\">科技新報</a> ／ "
