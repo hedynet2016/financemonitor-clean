@@ -3129,6 +3129,11 @@ class NewsMonitor:
           4. MarketWatch Top Stories RSS
           5. Financial Times Markets RSS
           6. Seeking Alpha RSS
+          7. 科技新報 TechNews RSS（繁體中文）
+          8. MacroMicro 財經M平方 RSS（繁體中文）
+          9. Digitimes RSS（中文科技產業）
+        [2026-11-09] 確認中文三來源（7/8/9）均納入主抓取清單，
+        並移除原本重複抓取 MacroMicro 的補充區塊。
 
         以財報關鍵字 + 科技七巨頭名稱過濾,7 日內同一標題不重複推播.
 
@@ -3292,52 +3297,8 @@ class NewsMonitor:
             except Exception as e:
                 logger.warning(f"  [Earnings] {src['name']} RSS error: {e}")
 
-        # ── 補充 MacroMicro 財經M平方財報相關文章 ────────────────────────
-        try:
-            mm_feed = feedparser.parse('https://www.macromicro.me/feed')
-            for entry in mm_feed.entries[:40]:
-                title_raw = entry.get('title', '')
-                # ── 過濾錯誤頁標題 ──────────────────────────────────────
-                if self._is_error_title(title_raw):
-                    continue
-                combined  = title_raw.lower()
-                if not any(kw in combined for kw in earnings_keywords):
-                    continue
-                # 檢查是否匹配科技七巨頭
-                matched_company = None
-                for ticker, info in self.magnificent7.items():
-                    patterns = [ticker.lower(), info['name'].lower()]
-                    if any(p in combined for p in patterns):
-                        matched_company = ticker
-                        break
-                key = _hs.sha256(title_raw.encode()).hexdigest()[:16]
-                if key in seen_keys or key in self._earnings_sent:
-                    continue
-                seen_keys.add(key)
-                try:
-                    title_zh = self.translate_text(title_raw)
-                except Exception:
-                    title_zh = title_raw
-                pub_dt = now
-                try:
-                    if entry.get('published_parsed'):
-                        pub_dt = datetime(*entry.published_parsed[:6])
-                except Exception:
-                    pass
-                results.append({
-                    'title':      title_raw,
-                    'title_zh':   title_zh,
-                    'summary':    '',
-                    'summary_zh': '',
-                    'source':     'MacroMicro 財經M平方',
-                    'link':       entry.get('link', ''),
-                    'published':  pub_dt,
-                    'key':        key,
-                    'company':    matched_company,
-                })
-                self._earnings_sent[key] = now
-        except Exception as e:
-            logger.warning(f"  [MacroMicro Earnings] error: {e}")
+        # [2026-11-09] 原補充抓取 MacroMicro 的區塊已移除——
+        # MacroMicro 財經M平方已列入上方 earnings_rss_sources 主清單，避免重複請求。
 
         # 按時間降序,優先顯示科技七巨頭相關
         results.sort(key=lambda x: (x['company'] is None, x['published']), reverse=True)
@@ -3393,7 +3354,10 @@ class NewsMonitor:
             "<a href=\"https://www.bloomberg.com/markets\">Bloomberg</a> ／ "
             "<a href=\"https://www.marketwatch.com/\">MarketWatch</a> ／ "
             "<a href=\"https://www.ft.com/\">Financial Times</a> ／ "
-            "<a href=\"https://seekingalpha.com/\">Seeking Alpha</a>\n"
+            "<a href=\"https://seekingalpha.com/\">Seeking Alpha</a> ／ "
+            "<a href=\"https://technews.tw/\">科技新報</a> ／ "
+            "<a href=\"https://www.macromicro.me/\">財經M平方</a> ／ "
+            "<a href=\"https://www.digitimes.com.tw/\">Digitimes</a>\n"
         )
         section += "⚠️ 同一財報訊息不重複推播\n"
         return section
