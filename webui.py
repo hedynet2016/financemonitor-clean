@@ -1006,7 +1006,7 @@ def tasks_view():
     <span class="block-date">📅 2026-06-25</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">美股財報公布（科技七巨頭）</div>
-      <div class="mb-2"><span class="source-tag">10 來源</span> <span class="filter-tag">Mag 7 公司名</span> <span class="filter-tag">1 週內</span> <span class="filter-tag">12h 快取</span></div>
+      <div class="mb-2"><span class="source-tag">10 來源</span> <span class="filter-tag">Mag 7 公司名</span> <span class="filter-tag">1 週內</span> <span class="filter-tag">12h 快取</span> <span class="filter-tag">僅重點財報（2026-11-09 起取消其他重要財報）</span></div>
       <div><small class="text-muted">監控公司：</small> {" &bull; ".join(mag7)}</div>
     </div>
   </div>

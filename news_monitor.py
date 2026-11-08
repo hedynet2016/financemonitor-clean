@@ -3359,8 +3359,13 @@ class NewsMonitor:
             return section
 
         # 分類顯示:科技七巨頭優先
+        # [2026-11-09] 依用戶指示取消「其他重要財報」，僅保留重點財報（科技七巨頭）
         mag7_news = [n for n in earnings_news if n['company']]
-        other_news = [n for n in earnings_news if not n['company']]
+
+        if not mag7_news:
+            section += "📭 今日無重點財報（科技七巨頭）新聞\n"
+            section += f"{'='*40}\n"
+            return section
 
         if mag7_news:
             section += "🌟 <b>【科技七巨頭】</b>\n"
@@ -3372,22 +3377,6 @@ class NewsMonitor:
                 section += (
                     f"#{idx} 📌 <b>{company_zh} ({item['company']})</b>\n"
                     f"   <b><a href=\"{html.escape(item['link'])}\">{html.escape(title_show)}</a></b>\n"
-                    f"   🔤 {html.escape(item['title'])}\n"
-                )
-                if sum_show:
-                    section += f"   📝 {html.escape(sum_show[:180])}\n"
-                section += (
-                    f"   🕐 {pub_str}  ▪  來源: {html.escape(item['source'])}\n\n"
-                )
-
-        if other_news:
-            section += "📈 <b>【其他重要財報】</b>\n"
-            for idx, item in enumerate(other_news, 1):
-                pub_str    = item['published'].strftime('%m/%d %H:%M')
-                title_show = self._safe_title_zh(item)
-                sum_show   = self._safe_summary_zh(item)
-                section += (
-                    f"#{idx} 📌 <b><a href=\"{html.escape(item['link'])}\">{html.escape(title_show)}</a></b>\n"
                     f"   🔤 {html.escape(item['title'])}\n"
                 )
                 if sum_show:
