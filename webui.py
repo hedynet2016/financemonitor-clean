@@ -514,7 +514,7 @@ def dashboard():
   <div class="card-header"><i class="bi bi-info-circle me-2"></i>系統資訊</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控（台股時段含台指期）+ 07:00 早鳥新聞（熱門財經／13F 官方＋媒體／美股財報／投資熱門話題／費半表現）+ 08:00 財經主推播（VIP／IPO／AI 動能＋公司債＋CDS／經濟指標／財經行事曆／自訂多空評分指標）+ 14:00 活動 + 16:00 商品追蹤（雅虎拍賣 固定賣場＋雙北同類店家）+ 09:00 自動備份</td></tr>
+      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控（台股時段含台指期）+ 07:00 早鳥新聞（熱門財經／13F 官方＋媒體／美股財報／投資熱門話題／費半表現）＋各區塊 YouTube 影片+ 08:00 財經主推播（VIP／IPO／AI 動能＋公司債＋CDS／經濟指標／財經行事曆／自訂多空評分指標）+ 14:00 活動 + 16:00 商品追蹤（雅虎拍賣 固定賣場＋雙北同類店家）+ 09:00 自動備份</td></tr>
       <tr><td class="text-muted">推送管道</td><td>Telegram Bot + Discord Webhook</td></tr>
       <tr><td class="text-muted">Python</td><td>{{py_version}}</td></tr>
       <tr><td class="text-muted">工作目錄</td><td>{{work_dir}}</td></tr>
@@ -934,8 +934,8 @@ def tasks_view():
   <div class="card-header"><i class="bi bi-clock me-2"></i>排程</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">每日早鳥推播</td><td><b>{morning_hour:02d}:00 台北時間</b> — 熱門財經新聞／13F 官方＋媒體報導／美股財報公布／投資熱門話題／費半表現（SOX 指數＋成分股漲跌幅前五名，2026-11-06 啟用；2026-10-20 起自 08:00 提前）</td></tr>
-      <tr><td class="text-muted">每日主推播</td><td><b>{news_hour:02d}:00 台北時間</b> — VIP交易/IPO/AI動能（含公司債＋CDS）/經濟指標/財經行事曆/自訂多空評分指標（卡片左側為各區塊啟用日期；台指期多空指標已於 2026-11-02 移除）</td></tr>
+      <tr><td class="text-muted" style="width:200px">每日早鳥推播</td><td><b>{morning_hour:02d}:00 台北時間</b> — 熱門財經新聞／13F 官方＋媒體報導／美股財報公布／投資熱門話題／費半表現（SOX 指數＋成分股漲跌幅前五名，2026-11-06 啟用）＋各區塊 YouTube 影片（2026-11-12 新增）</td></tr>
+      <tr><td class="text-muted">每日主推播</td><td><b>{news_hour:02d}:00 台北時間</b> — VIP交易/IPO/AI動能（含公司債＋CDS）/經濟指標/財經行事曆/自訂多空評分指標＋各區塊 YouTube 影片（卡片左側為各區塊啟用日期；台指期多空指標已於 2026-11-02 移除）</td></tr>
       <tr><td class="text-muted">每日活動推播</td><td><b>{events_hour:02d}:00 台北時間</b> — ICT/AI 活動（2026-06-25 啟用，未來90天）</td></tr>
       <tr><td class="text-muted">每日商品追蹤</td><td><b>16:00 台北時間</b> — 雅虎拍賣商品監控（9 關鍵字，價格 $2,000~$15,000，排除NG，刊登 7 天內，上限 30 筆）<br>　① 固定賣場 3 家：樺仔二手電腦 / 點子3C 板橋店 / US3C<br>　② 雙北地區同類店家：台北市・新北市「店鋪型 3C 賣家」（與點子3C同類），條件與固定賣場完全相同，自動納入新店家</td></tr>
       <tr><td class="text-muted">每半小時股市監控</td><td>美股跌幅&gt;3%個股+ETF；台股監控清單（7 檔個股+7 檔 ETF）MIS 即時成交量排行＋跌幅排行，附台指期漲跌與 09:30-11:30 小台損益試算（09:00 進場：多單 5 口停損 20 點／空單 2 口停損 50 點，單向最大虧損 5,000 元）</td></tr>
@@ -1010,6 +1010,20 @@ def tasks_view():
       <div class="mb-2"><span class="source-tag">10 來源</span> <span class="filter-tag">Mag 7 公司名</span> <span class="filter-tag">1 週內</span> <span class="filter-tag">12h 快取</span> <span class="filter-tag">僅重點財報（2026-11-09 起取消其他重要財報）</span></div>
       <div><small class="text-muted">抓取來源（10）：</small> CNBC &bull; WSJ &bull; Bloomberg &bull; MarketWatch &bull; Yahoo Finance &bull; Financial Times &bull; Seeking Alpha &bull; 科技新報 TechNews &bull; 財經M平方 MacroMicro &bull; Digitimes</div>
       <div><small class="text-muted">監控公司：</small> {" &bull; ".join(mag7)}</div>
+    </div>
+  </div>
+</div>
+
+<div class="block-card">
+  <div class="d-flex align-items-start gap-3">
+    <span class="block-date">📅 2026-11-12</span>
+    <div class="flex-grow-1">
+      <div class="fw-bold mb-1">📺 YouTube 影片來源（各區塊附加）</div>
+      <div class="mb-2"><span class="source-tag">YouTube 搜尋</span> <span class="filter-tag">本週上傳</span> <span class="filter-tag">≥100 萬優先／不足取 ≥30 萬</span> <span class="filter-tag">每區塊最多 2 支</span> <span class="filter-tag">6h 快取</span></div>
+      <div><small class="text-muted">內容：</small> 標題翻譯為繁體中文＋影片超連結、觀看次數、頻道、上傳時間（🚀 百萬點閱／🔥 30 萬以上）</div>
+      <div><small class="text-muted">附加區塊：</small> 熱門財經、13F、美股財報、投資熱門話題、費半、VIP 交易、IPO、AI 動能、經濟指標、財經行事曆、自訂多空評分、ICT 活動</div>
+      <div><small class="text-muted">診斷：</small> <code>/api/youtube-test?block=earnings</code>（可換 top_news／sox／ipo 等）</div>
+      <div><small class="text-muted">開關：</small> 環境變數 <code>YOUTUBE_VIDEOS=0</code> 可整體停用</div>
     </div>
   </div>
 </div>
@@ -1986,6 +2000,25 @@ def api_taifex_test():
         out["debug"] = senti.get("debug", {})
         out["error"] = senti.get("error")
         out["section"] = nm._format_taifex_sentiment_section(senti)
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"
+    return jsonify(out)
+
+
+@app.route("/api/youtube-test")
+def api_youtube_test():
+    """YouTube 影片來源診斷：實抓指定區塊，回報原始命中數與格式化結果。
+
+    ?block=earnings（預設）｜top_news / sox / ipo / economic …
+    """
+    import youtube_monitor as yt
+    block = (request.args.get("block") or "earnings").strip()
+    out = {"block": block, "available_blocks": list(yt.BLOCK_KEYS),
+           "diagnose": None, "section": "", "error": None}
+    try:
+        out["diagnose"] = yt.diagnose(block)
+        vids = yt.fetch_block(block, translate_fn=None)
+        out["section"] = yt.format_section(vids, yt.BLOCK_QUERIES.get(block, ["YouTube"])[0])
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {e}"
     return jsonify(out)

@@ -39,3 +39,6 @@ taiex_state.json
 tw_universe.json
 sentiment_index_state.json
 ai_bond_cache.json
+
+# YouTube 影片快取（本機/容器暫存，不入版控）
+yt_cache.json
