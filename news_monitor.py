@@ -5122,7 +5122,7 @@ class NewsMonitor:
         message += '\n========================================\n'
         if getattr(self, '_yt_added', False):
             message += ('📺 YouTube 影片：優先取近 7 天 ≥100 萬觀看（🚀），'
-                        '該區塊不足時放寬至 ≥30 萬（🔥）\n')
+                        '該區塊不足時放寬至 ≥30 萬（🔥）；同級距內以正規財經媒體優先\n')
         message += '\U0001f916 由 WorkBuddy 新聞監控系統自動生成\n'
         message += '\U0001f4f0 新聞來源: CNBC & Wall Street Journal'
 

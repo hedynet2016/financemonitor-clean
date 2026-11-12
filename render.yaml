@@ -29,3 +29,6 @@ services:
         value: Asia/Taipei
       - key: PYTHONUNBUFFERED
         value: "1"
+      # YouTube Data API v3（2026-11-12）：值只在 Render Dashboard 填，不進版控
+      - key: YOUTUBE_API_KEY
+        sync: false

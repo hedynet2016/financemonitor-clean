@@ -1019,10 +1019,11 @@ def tasks_view():
     <span class="block-date">📅 2026-11-12</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">📺 YouTube 影片來源（各區塊附加）</div>
-      <div class="mb-2"><span class="source-tag">YouTube 搜尋</span> <span class="filter-tag">本週上傳</span> <span class="filter-tag">≥100 萬優先／不足取 ≥30 萬</span> <span class="filter-tag">每區塊最多 2 支</span> <span class="filter-tag">6h 快取</span></div>
+      <div class="mb-2"><span class="source-tag">YouTube Data API v3</span> <span class="source-tag">網頁抓取（備援）</span> <span class="filter-tag">近 7 天（不足放寬 30 天）</span> <span class="filter-tag">≥100 萬優先／不足取 ≥30 萬</span> <span class="filter-tag">每區塊最多 2 支</span> <span class="filter-tag">6h 快取</span></div>
       <div><small class="text-muted">內容：</small> 標題翻譯為繁體中文＋影片超連結、觀看次數、頻道、上傳時間（🚀 百萬點閱／🔥 30 萬以上）</div>
+      <div><small class="text-muted">取得方式：</small> <code>YOUTUBE_API_KEY</code> 有值 → 官方 API（<code>order=viewCount</code> 真正依觀看數排序）；無 key 或配額用完 → 自動退回網頁抓取</div>
       <div><small class="text-muted">附加區塊：</small> 熱門財經、13F、美股財報、投資熱門話題、費半、VIP 交易、IPO、AI 動能、經濟指標、財經行事曆、自訂多空評分、ICT 活動</div>
-      <div><small class="text-muted">診斷：</small> <code>/api/youtube-test?block=earnings</code>（可換 top_news／sox／ipo 等）</div>
+      <div><small class="text-muted">診斷：</small> <code>/api/youtube-test?block=earnings</code>（可換 top_news／sox／ipo 等，會回報 mode 與 API 配額用量）</div>
       <div><small class="text-muted">開關：</small> 環境變數 <code>YOUTUBE_VIDEOS=0</code> 可整體停用</div>
     </div>
   </div>
