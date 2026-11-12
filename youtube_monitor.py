@@ -84,7 +84,7 @@ BLOCK_QUERIES: Dict[str, List[str]] = {
     'top_news':     ['stock market today', 'nvidia stock news'],
     'filings_13f':  ['warren buffett stock', 'berkshire hathaway 13f'],
     'earnings':     ['nvidia earnings', 'tsmc earnings'],
-    'ipo':          ['spacex ipo', 'ipo stock 2026'],
+    'ipo':          ['initial public offering', 'ipo 上市'],
     'politician':   ['congress stock trades', 'pelosi stock trades'],
     'ai_momentum':  ['ai data center', 'nvidia ai chip'],
     'economic':     ['fed rate cut', 'cpi inflation report'],
@@ -96,6 +96,13 @@ BLOCK_QUERIES: Dict[str, List[str]] = {
 }
 
 BLOCK_KEYS = tuple(BLOCK_QUERIES.keys())
+
+# 標題關鍵字驗證（僅對容易誤命的區塊啟用）
+# 例：'spacex ipo' 會命中 SpaceX 自家頻道的火箭發射影片（287 萬點閱），與 IPO 無關
+BLOCK_KEYWORDS: Dict[str, List[str]] = {
+    'ipo': ['ipo', 'i.p.o', 'initial public offering', 'direct listing', 'spac',
+            '上市', '掛牌', '首次公開發行', '公開發行', '新股'],
+}
 
 # 正規財經／新聞媒體（同級距內優先）——order=viewCount 會把點閱農場的假新聞排到最前面，
 # 例：'黃仁勳將辭職？' 300 萬點閱（印度頻道）會被排在新聞台之前。
@@ -426,6 +433,27 @@ def _is_trusted(channel: str) -> bool:
     return any(t in c for t in TRUSTED_CHANNELS)
 
 
+def _has_keyword(key: str, video: Dict) -> bool:
+    """標題／頻道是否含該區塊的必備關鍵字（未設定關鍵字的區塊一律通過）"""
+    kws = BLOCK_KEYWORDS.get(key)
+    if not kws:
+        return True
+    text = f"{video.get('title', '')} {video.get('channel', '')}".lower()
+    return any(k in text for k in kws)
+
+
+def _apply_keyword_filter(key: str, items: List[Dict]) -> List[Dict]:
+    """套用區塊關鍵字驗證；若全數不符，只留下正規媒體（避免完全無關的影片）"""
+    if key not in BLOCK_KEYWORDS:
+        return items
+    kept = [v for v in items if _has_keyword(key, v)]
+    if kept:
+        return kept
+    trusted = [v for v in items if _is_trusted(v.get('channel'))]
+    logger.info(f"[YouTube] '{key}' 關鍵字全數不符，僅保留正規媒體 {len(trusted)} 支")
+    return trusted
+
+
 def _select(items: List[Dict]) -> List[Dict]:
     """時間窗 × 觀看門檻的兩層挑選
 
@@ -472,7 +500,8 @@ def _fetch_block_raw(key: str) -> List[Dict]:
         if ids:
             for v in _stats_api(sorted(set(ids))):
                 merged.setdefault(v['id'], v)
-        items = sorted(merged.values(), key=lambda v: v['views'], reverse=True)
+        all_items = sorted(merged.values(), key=lambda v: v['views'], reverse=True)
+        items = _apply_keyword_filter(key, all_items)
         picked = _select(items)[:MAX_ITEMS]
 
         # 近 7 天無合格影片 → 放寬到 30 天重搜一次（API 才有 publishedAfter）
@@ -484,7 +513,8 @@ def _fetch_block_raw(key: str) -> List[Dict]:
                 merged2: Dict[str, Dict] = {}
                 for v in _stats_api(sorted(set(ids2))):
                     merged2.setdefault(v['id'], v)
-                items2 = sorted(merged2.values(), key=lambda v: v['views'], reverse=True)
+                items2 = _apply_keyword_filter(
+                    key, sorted(merged2.values(), key=lambda v: v['views'], reverse=True))
                 picked = _select(items2)[:MAX_ITEMS]
         if picked:
             with _lock:
@@ -497,7 +527,8 @@ def _fetch_block_raw(key: str) -> List[Dict]:
     for q in queries:
         for v in _search_once(q):
             merged3.setdefault(v['id'], v)
-    items3 = sorted(merged3.values(), key=lambda v: v['views'], reverse=True)
+    items3 = _apply_keyword_filter(
+        key, sorted(merged3.values(), key=lambda v: v['views'], reverse=True))
     picked = _select(items3)[:MAX_ITEMS]
     with _lock:
         _cache[key] = {'ts': time.time(), 'items': picked, 'mode': 'page'}
