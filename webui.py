@@ -1144,10 +1144,13 @@ def tasks_view():
   <div class="d-flex align-items-start gap-3">
     <span class="block-date">📅 2026-09-30</span>
     <div class="flex-grow-1">
-      <div class="fw-bold mb-1">投資熱門話題（Reddit 美股×AI 當日熱門前 10）</div>
-      <div class="mb-2"><span class="source-tag">匿名抓取、免 API key</span> <span class="filter-tag">Reddit 當日熱門前 10 名</span> <span class="filter-tag">美股 × AI 板</span> <span class="filter-tag">標題中文化</span></div>
-      <div><small class="text-muted">來源板：</small> r/wallstreetbets × r/stocks × r/investing × r/StockMarket × r/artificial × r/singularity — 各板 sort=top RSS（排序即當日熱度排名，無票數欄位），輪流合併取前 10</div>
+      <div class="fw-bold mb-1">投資熱門話題（Yahoo 熱門搜尋＋社群財經熱議）<span class="badge bg-warning text-dark ms-2">2026-11-13 改版</span></div>
+      <div class="mb-2"><span class="source-tag">Yahoo Finance trending</span> <span class="source-tag">Google News RSS</span> <span class="source-tag">Reddit（備援）</span> <span class="filter-tag">免 API key</span> <span class="filter-tag">標題中文化</span></div>
+      <div><small class="text-muted">① 美股熱門搜尋：</small> Yahoo Finance trending/US 取前 8 檔熱門代號，附收盤價與當日漲跌幅（spark 端點）</div>
+      <div><small class="text-muted">② 社群／財經熱議：</small> Google News RSS（site:reddit.com/r/wallstreetbets 華爾街板貼文 ＋「美股 熱門 話題」中文財經查詢），兩路輪流合併取前 5，過濾對帳單炫耀文</div>
+      <div><small class="text-muted">③ Reddit 直連：</small> 僅在①②皆空時才嘗試（<b>2026-11-13 起 Reddit 已封鎖匿名存取，RSS/JSON/old.reddit 一律 403 或 429，本機與 Render 皆同</b>）</div>
       <div><small class="text-muted">未納入：</small> PTT（Render 資料中心 IP 遭全面 403 封鎖）• Threads（JS 登入殼、無匿名熱門端點）• X（登入牆、Nitter 已停止、API 付費）</div>
+      <div><small class="text-muted">診斷：</small> <code>/api/topics-test</code>（回報三個來源各自的筆數）</div>
     </div>
   </div>
 </div>
@@ -1885,15 +1888,23 @@ def api_ai_bond_test():
 
 @app.route("/api/topics-test")
 def api_topics_test():
-    """投資熱門話題診斷：驗證伺服器環境對 Reddit 的匿名連線能力。"""
-    from topics_monitor import fetch_reddit_hot
-    out = {"reddit": [], "error": None}
+    """投資熱門話題診斷：驗證三個來源（Yahoo 熱門搜尋／Google News／Reddit）可用性。"""
+    from topics_monitor import fetch_hot_topics
+    out = {"trending": [], "news": [], "reddit": [], "counts": {}, "error": None}
     try:
-        for it in fetch_reddit_hot(per_sub=6, top_n=10, retries=2):
-            out["reddit"].append({"title": it.get("title"), "url": it.get("url"),
-                                  "sub": it.get("sub")})
+        d = fetch_hot_topics()
+        out["trending"] = [{"symbol": it.get("symbol"), "name": it.get("name_zh"),
+                            "price": it.get("price"), "change_pct": it.get("change_pct")}
+                           for it in (d.get("trending") or [])]
+        out["news"] = [{"title": it.get("title"), "source": it.get("source"),
+                        "url": it.get("url")}
+                       for it in (d.get("news") or [])]
+        out["reddit"] = [{"title": it.get("title"), "url": it.get("url"),
+                          "sub": it.get("sub")}
+                         for it in (d.get("reddit") or [])]
+        out["counts"] = {k: len(v) for k, v in out.items() if isinstance(v, list)}
     except Exception as e:
-        out["error"] = f"Reddit: {type(e).__name__}: {e}"
+        out["error"] = f"{type(e).__name__}: {e}"
     return jsonify(out)
 
 

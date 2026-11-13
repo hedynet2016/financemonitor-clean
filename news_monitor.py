@@ -3660,34 +3660,87 @@ class NewsMonitor:
 
     # ■ [2026-09-30] 投資熱門話題  Reddit 美股×AI 當日熱門前 10
     # ════════════════════════════════════════════════════════════════
+    @staticmethod
+    def _short_us_name(name: str) -> str:
+        """'Cerebras Systems Inc.' → 'Cerebras Systems'；去掉 Inc./Corp./Company 等尾綴"""
+        s = str(name or '').strip()
+        if not s:
+            return ''
+        s = s.replace(',', ' ')
+        for suf in (' Incorporated', ' Inc.', ' Inc', ' Corporation', ' Corp.',
+                    ' Corp', ' Company', ' Co.', ' Ltd.', ' Ltd', ' Limited',
+                    ' Holdings', ' Holding', ' plc', ' S.A.', ' N.V.', ' SE'):
+            if s.endswith(suf):
+                s = s[:-len(suf)].strip()
+        if s.lower().startswith('the '):
+            s = s[4:]
+        return s[:20]
+
     def _format_hot_topics_section(self, topics: Dict) -> str:
-        """格式化投資熱門話題區塊(Reddit 美股×AI 板當日熱門前 10)"""
-        section  = f"\n{'='*40}\n"
+        """格式化投資熱門話題區塊
+
+        [2026-11-13] Reddit 封鎖匿名存取後改版：
+          ① Yahoo Finance 熱門搜尋代號 Top 8（收盤價＋漲跌幅）
+          ② 社群／財經熱議（Google News：Reddit 華爾街板＋中文財經）
+          ③ Reddit 直連（備援，2026-11 起多為空）
+        """
+        topics = topics or {}
+        trending = topics.get('trending') or []
+        news = topics.get('news') or []
+        reddit = topics.get('reddit') or []
+
+        section = f"\n{'='*40}\n"
         section += "🔥 <b>投資熱門話題</b>\n"
         section += f"{'='*40}\n"
 
-        reddit = (topics or {}).get('reddit') or []
+        if trending:
+            section += f"\n📈 <b>美股熱門搜尋 Top {len(trending)}</b>\n"
+            for idx, it in enumerate(trending, 1):
+                sym = html.escape(str(it.get('symbol') or ''), quote=False)
+                label = self._short_us_name(it.get('name_zh') or it.get('name') or '')
+                label = html.escape(label, quote=False)
+                price = it.get('price')
+                pct = it.get('change_pct')
+                line = f"{idx}. <a href=\"{html.escape(it.get('url') or '')}\">" \
+                       f"<b>{sym}</b></a>"
+                if label and len(label) >= 4 and label != it.get('symbol'):
+                    line += f" {label}"
+                if isinstance(price, (int, float)):
+                    line += f"　{price:,.2f}"
+                if isinstance(pct, (int, float)):
+                    arrow = '▲' if pct >= 0 else '▼'
+                    line += f"　{arrow}{abs(pct):.2f}%"
+                section += line + "\n"
+
+        if news:
+            section += "\n💬 <b>社群／財經熱議</b>\n"
+            for idx, it in enumerate(news, 1):
+                zh = it.get('title_zh')
+                display = zh or it.get('title') or '(無標題)'
+                if len(display) > 48:
+                    display = display[:47] + '…'
+                display = html.escape(display, quote=False)
+                src = html.escape(str(it.get('source') or ''), quote=False)
+                section += (f"{idx}. <a href=\"{html.escape(it.get('url') or '')}\">"
+                            f"{display}</a>")
+                section += f"（{src}）\n" if src else "\n"
 
         if reddit:
+            section += "\n🗣 <b>Reddit 華爾街板熱門</b>\n"
             for idx, it in enumerate(reddit, 1):
                 zh = it.get('title_zh')
-                display = html.escape(zh or it.get('title') or '(無標題)')
-                sub_tag = html.escape(it.get('sub') or 'reddit')
-                section += (
-                    f"{idx}. <a href=\"{html.escape(it.get('url') or '')}\">"
-                    f"{display}</a>（r/{sub_tag}）\n"
-                )
-                if zh and zh != it.get('title'):
-                    section += f"    📝 原文：{html.escape(it.get('title') or '')[:80]}\n"
-        else:
+                display = html.escape(zh or it.get('title') or '(無標題)', quote=False)
+                sub_tag = html.escape(str(it.get('sub') or 'reddit'), quote=False)
+                section += (f"{idx}. <a href=\"{html.escape(it.get('url') or '')}\">"
+                            f"{display}</a>（r/{sub_tag}）\n")
+
+        if not (trending or news or reddit):
             section += "\n📭 今日無資料（來源暫時失效或遭封鎖）\n"
 
         section += f"{'='*40}\n"
-        section += (
-            "📋 來源: Reddit 美股×AI 板（r/wallstreetbets × r/stocks × "
-            "r/investing × r/StockMarket × r/artificial × r/singularity，"
-            "當日熱門排序取前 10）\n"
-        )
+        section += ("📋 來源: Yahoo Finance 熱門搜尋（trending/US）／Google News"
+                    "（Reddit 華爾街板＋中文財經）"
+                    "（2026-11-13 起 Reddit 直連已遭封鎖，改以上述來源為主）\n")
         return section
 
     # ■ [2026-11-06] 費半表現  SOX 指數收盤＋成分股漲跌幅前五名
@@ -4963,7 +5016,8 @@ class NewsMonitor:
                          filings_13f, media_13f,
                          ipo_news, earnings_news, economic_news, mag7_events,
                          ai_momentum_news) + tuple(
-                             v for v in ((hot_topics or {}).get('reddit'),)
+                             v for _k in ('trending', 'news', 'reddit')
+                             for v in ((hot_topics or {}).get(_k),)
                              if isinstance(v, list)):
                 if not isinstance(_lst, list):
                     continue
@@ -4988,7 +5042,8 @@ class NewsMonitor:
             for _lst in (top_articles, ipo_news, earnings_news, economic_news,
                          mag7_events, ai_momentum_news, politician_trades,
                          filings_13f, media_13f) + tuple(
-                             v for v in ((hot_topics or {}).get('reddit'),)
+                             v for _k in ('trending', 'news', 'reddit')
+                             for v in ((hot_topics or {}).get(_k),)
                              if isinstance(v, list)):
                 if not isinstance(_lst, list):
                     continue
@@ -5318,7 +5373,7 @@ class NewsMonitor:
         # 避免只發出標題的空推播
         has_morning_content = bool(
             top_articles or filings_13f or media_13f or earnings_news
-            or (hot_topics or {}).get('reddit')
+            or any((hot_topics or {}).get(k) for k in ('trending', 'news', 'reddit'))
             or sox_data)
         has_main_content = bool(
             politician_trades or ipo_news or ai_momentum_news
