@@ -3,29 +3,26 @@
 投資熱門話題收集模組（[2026-09-30] 區塊：投資熱門話題）
 
 用途:
-  08:00 新聞推播「投資熱門話題」區塊的資料收集。
+  07:00 早鳥新聞推播「投資熱門話題」區塊的資料收集。
 
 來源（匿名存取、免 API key）:
-  1. Yahoo Finance 熱門搜尋（trending/US）— 美股當日最多人搜尋的代號 Top 10
-     ＋ spark 端點取收盤價與漲跌幅
-  2. Google News RSS «社群熱議»（site:reddit.com 的華爾街板貼文）
+  1. Google News RSS «社群熱議»（site:reddit.com 的華爾街板貼文）
      ＋ «中文財經熱門» 查詢
-  3. Reddit 各板當日熱門 RSS —【2026-11-13 起失效，僅保留為備援】
+  2. Reddit 各板當日熱門 RSS —【2026-11-13 起失效，僅保留為備援】
      Reddit 已封鎖匿名存取：RSS/JSON/old.reddit 一律回 403 或 429
-     （本機與 Render 皆同），因此改以上述兩個來源為主。
+     （本機與 Render 皆同），因此改以上述來源為主。
 
-技術評估結論（2026-09-30 / 2026-11-13 更新）:
-  - Reddit .json 匿名回 403，.rss 曾可用，2026-11 起全面 403/429 → 不可依賴
+歷史決策:
+  - [2026-11-13] Reddit 封鎖後曾新增 Yahoo Finance 熱門搜尋 Top 8 作為主力；
+    [2026-11-16] 依用戶指示取消「美股熱門搜尋 Top 8」子區塊並移除相關程式。
   - PTT 於 Render 資料中心 IP 遭全面 403 封鎖 → 使用者決策放棄 PTT 來源
   - Threads（JS 登入殼）與 X（登入牆、API 付費）技術上不可行
-  - Yahoo trending 與 Google News RSS 實測皆 HTTP 200 且 Render 可連
 
 使用方式:
     from topics_monitor import fetch_hot_topics
     topics = fetch_hot_topics()
-    # {"trending": [{symbol,price,change_pct,url}],
-    #  "news":     [{title,url,source}],
-    #  "reddit":   [{title,url,sub}]}   ← 備援，通常為空
+    # {"news":   [{title,url,source}],
+    #  "reddit": [{title,url,sub}]}   ← 備援，通常為空
 """
 
 import logging
@@ -58,26 +55,9 @@ REDDIT_RETRY_WAIT = (3,)     # 重試間隔秒數（原本 5/15/30 會讓推播�
 TIMEOUT = 20
 REDDIT_TIMEOUT = 10          # Reddit 專用短逾時（封鎖時快速失敗）
 
-# ── 2026-11-13 新增來源（Reddit 封鎖後的替代）──────────────────────
-YAHOO_TRENDING_URL = 'https://query1.finance.yahoo.com/v1/finance/trending/US'
-YAHOO_SPARK_URL = 'https://query1.finance.yahoo.com/v8/finance/spark'
+# ── Google News RSS（社群熱議＋中文財經）──────────────────────────────
 GNEWS_URL = 'https://news.google.com/rss/search'
-TRENDING_N = 8               # 熱門搜尋代號顯示前 N 名
 GNEWS_N = 5                  # 社群／中文財經熱門顯示前 N 名
-
-# 常見代號的中文名（取不到時顯示英文簡名；不必額外翻譯請求）
-SYMBOL_ZH = {
-    'NVDA': '輝達', 'MSFT': '微軟', 'AAPL': '蘋果', 'TSLA': '特斯拉',
-    'AMZN': '亞馬遜', 'GOOGL': '谷歌', 'GOOG': '谷歌', 'META': 'Meta',
-    'AMD': '超微', 'TSM': '台積電 ADR', 'AVGO': '博通', 'INTC': '英特爾',
-    'MU': '美光', 'SMCI': '美超微', 'BABA': '阿里巴巴', 'NFLX': '網飛',
-    'PLTR': 'Palantir', 'COIN': 'Coinbase', 'CRWD': 'CrowdStrike',
-    'ASML': '艾司摩爾', 'ARM': '安謀', 'QCOM': '高通', 'TXN': '德州儀器',
-    'AMAT': '應用材料', 'LRCX': '科林研發', 'KLAC': '科磊',
-    'GC=F': '黃金期貨', 'CL=F': '原油期貨', 'SI=F': '白銀期貨',
-    '^GSPC': '標普 500', '^IXIC': '那斯達克', '^DJI': '道瓊',
-    '^SOX': '費半指數', '^TWII': '加權指數', 'BTC-USD': '比特幣',
-}
 
 # Reddit 置頂公告標題特徵（排除，非熱門話題）
 _STICKY_PATTERNS = (
@@ -175,89 +155,7 @@ def fetch_reddit_hot(subs=REDDIT_SUBS, per_sub=REDDIT_PER_SUB,
     return merged[:top_n]
 
 
-# ── Yahoo Finance 熱門搜尋（2026-11-13 新增，Reddit 替代主力）──────────
-def _spark_metrics(symbols):
-    """v8 spark 取收盤價與當日漲跌幅（v7 quote 匿名已回 401）"""
-    out = {}
-    if not symbols:
-        return out
-    try:
-        r = _get(YAHOO_SPARK_URL, params={
-            'symbols': ','.join(symbols), 'range': '5d', 'interval': '1d',
-            'includePrePost': 'false'}, timeout=TIMEOUT)
-        payload = r.json() or {}
-    except Exception as e:
-        logger.warning("[Topics] spark 失敗: %s", e)
-        return out
-    for sym, d in payload.items():
-        if not isinstance(d, dict):
-            continue
-        try:
-            price = d.get('fulldayPrice')
-            pct = d.get('fulldayChangePercent')
-            closes = [c for c in (d.get('close') or [])
-                      if isinstance(c, (int, float))]
-            if price is None and closes:
-                price = closes[-1]
-            if pct is None and len(closes) >= 2 and closes[-2]:
-                pct = (closes[-1] / closes[-2] - 1) * 100
-            if price is None or pct is None:
-                continue
-            out[sym] = {'price': float(price), 'change_pct': float(pct)}
-        except Exception:
-            continue
-    return out
-
-
-def _yahoo_name(sym):
-    """代號 → 公司簡名（取不到就回空字串，顯示時只用代號）"""
-    try:
-        r = _get('https://query1.finance.yahoo.com/v1/finance/search',
-                 params={'q': sym, 'quotesCount': 1, 'newsCount': 0},
-                 timeout=8)
-        q = (r.json().get('quotes') or [{}])[0]
-        return q.get('shortname') or q.get('longname') or ''
-    except Exception:
-        return ''
-
-
-def fetch_yahoo_trending(n=TRENDING_N):
-    """Yahoo Finance 當日熱門搜尋代號 Top N（附收盤價與漲跌幅）"""
-    try:
-        r = _get(YAHOO_TRENDING_URL, params={'count': n}, timeout=TIMEOUT)
-        result = (r.json().get('finance') or {}).get('result') or [{}]
-        syms = [q['symbol'] for q in (result[0].get('quotes') or [])
-                if q.get('symbol')][:n]
-    except Exception as e:
-        logger.warning("[Topics] Yahoo trending 失敗: %s", e)
-        return []
-    if not syms:
-        return []
-    metrics = _spark_metrics(syms)
-    names = {}
-    try:
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            names = dict(zip(syms, ex.map(_yahoo_name, syms)))
-    except Exception:
-        pass
-    out = []
-    for sym in syms:
-        m = metrics.get(sym) or {}
-        en = names.get(sym) or ''
-        out.append({
-            'symbol': sym,
-            'name': en,
-            'name_zh': SYMBOL_ZH.get(sym) or en,
-            'price': m.get('price'),
-            'change_pct': m.get('change_pct'),
-            'url': 'https://finance.yahoo.com/quote/%s' % sym,
-        })
-    logger.info("[Topics] Yahoo trending: %d 檔", len(out))
-    return out
-
-
-# ── Google News RSS（2026-11-13 新增，社群熱議＋中文財經）──────────────
+# ── Google News RSS（社群熱議＋中文財經）──────────────────────────────
 GNEWS_QUERIES = (
     # (查詢字, hl, gl, ceid)
     ('site:reddit.com/r/wallstreetbets', 'en-US', 'US', 'US:en'),
@@ -328,18 +226,17 @@ def fetch_google_news_hot(n=GNEWS_N):
 # ── 整合入口 ───────────────────────────────────────────────────────
 
 def fetch_hot_topics():
-    """收集投資熱門話題：Yahoo 熱門搜尋＋社群／中文財經新聞（Reddit 為備援）。"""
-    topics = {"trending": [], "news": [], "reddit": []}
-    try:
-        topics["trending"] = fetch_yahoo_trending()
-    except Exception as e:
-        logger.error("[Topics] Yahoo trending 例外: %s", e)
+    """收集投資熱門話題：社群／中文財經新聞（Reddit 為備援）。
+
+    [2026-11-16] 取消 Yahoo 熱門搜尋 Top 8，僅保留 Google News 主來源。
+    """
+    topics = {"news": [], "reddit": []}
     try:
         topics["news"] = fetch_google_news_hot()
     except Exception as e:
         logger.error("[Topics] Google News 例外: %s", e)
-    if not topics["trending"] and not topics["news"]:
-        # 兩個主力來源都空時，才花時間試 Reddit（大概率已封鎖）
+    if not topics["news"]:
+        # 主力來源空時，才花時間試 Reddit（大概率已封鎖）
         try:
             topics["reddit"] = fetch_reddit_hot()
         except Exception as e:

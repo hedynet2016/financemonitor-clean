@@ -3679,38 +3679,17 @@ class NewsMonitor:
     def _format_hot_topics_section(self, topics: Dict) -> str:
         """格式化投資熱門話題區塊
 
-        [2026-11-13] Reddit 封鎖匿名存取後改版：
-          ① Yahoo Finance 熱門搜尋代號 Top 8（收盤價＋漲跌幅）
-          ② 社群／財經熱議（Google News：Reddit 華爾街板＋中文財經）
-          ③ Reddit 直連（備援，2026-11 起多為空）
+        [2026-11-16] 依用戶指示取消「美股熱門搜尋 Top 8」子區塊，保留：
+          ① 社群／財經熱議（Google News：Reddit 華爾街板＋中文財經）
+          ② Reddit 直連（備援，2026-11 起多為空）
         """
         topics = topics or {}
-        trending = topics.get('trending') or []
         news = topics.get('news') or []
         reddit = topics.get('reddit') or []
 
         section = f"\n{'='*40}\n"
         section += "🔥 <b>投資熱門話題</b>\n"
         section += f"{'='*40}\n"
-
-        if trending:
-            section += f"\n📈 <b>美股熱門搜尋 Top {len(trending)}</b>\n"
-            for idx, it in enumerate(trending, 1):
-                sym = html.escape(str(it.get('symbol') or ''), quote=False)
-                label = self._short_us_name(it.get('name_zh') or it.get('name') or '')
-                label = html.escape(label, quote=False)
-                price = it.get('price')
-                pct = it.get('change_pct')
-                line = f"{idx}. <a href=\"{html.escape(it.get('url') or '')}\">" \
-                       f"<b>{sym}</b></a>"
-                if label and len(label) >= 4 and label != it.get('symbol'):
-                    line += f" {label}"
-                if isinstance(price, (int, float)):
-                    line += f"　{price:,.2f}"
-                if isinstance(pct, (int, float)):
-                    arrow = '▲' if pct >= 0 else '▼'
-                    line += f"　{arrow}{abs(pct):.2f}%"
-                section += line + "\n"
 
         if news:
             section += "\n💬 <b>社群／財經熱議</b>\n"
@@ -3734,13 +3713,12 @@ class NewsMonitor:
                 section += (f"{idx}. <a href=\"{html.escape(it.get('url') or '')}\">"
                             f"{display}</a>（r/{sub_tag}）\n")
 
-        if not (trending or news or reddit):
+        if not (news or reddit):
             section += "\n📭 今日無資料（來源暫時失效或遭封鎖）\n"
 
         section += f"{'='*40}\n"
-        section += ("📋 來源: Yahoo Finance 熱門搜尋（trending/US）／Google News"
-                    "（Reddit 華爾街板＋中文財經）"
-                    "（2026-11-13 起 Reddit 直連已遭封鎖，改以上述來源為主）\n")
+        section += ("📋 來源: Google News（Reddit 華爾街板＋中文財經）"
+                    "（2026-11-13 起 Reddit 直連已遭封鎖，僅為備援）\n")
         return section
 
     # ■ [2026-11-06] 費半表現  SOX 指數收盤＋成分股漲跌幅前五名
@@ -4909,63 +4887,6 @@ class NewsMonitor:
         return section
 
 
-    # ■ [2026-11-12] YouTube 影片來源  各區塊附加（免 API key）
-    # ════════════════════════════════════════════════════════════════
-    _YT_TITLES = {
-        'top_news': 'YouTube 財經熱門影片',
-        'filings_13f': 'YouTube 13F／持股相關',
-        'earnings': 'YouTube 財報相關',
-        'hot_topics': 'YouTube 熱門話題',
-        'sox': 'YouTube 半導體相關',
-        'politician': 'YouTube 名人交易相關',
-        'ipo': 'YouTube IPO 相關',
-        'ai_momentum': 'YouTube AI 動能相關',
-        'economic': 'YouTube 經濟指標相關',
-        'calendar': 'YouTube 財經行事曆相關',
-        'sentiment': 'YouTube 多空觀點',
-        'events': 'YouTube 活動相關',
-    }
-
-    def _yt_prefetch(self, part: str = 'all') -> None:
-        """推播前批次預抓 YouTube（有 6 小時快取，07:00/08:00 共用）"""
-        try:
-            import youtube_monitor as yt
-            if not yt.enabled():
-                return
-            if part == 'events':
-                keys = ['events']
-            else:
-                keys = []
-                if part in ('all', 'morning'):
-                    keys += ['top_news', 'filings_13f', 'earnings', 'hot_topics', 'sox']
-                if part in ('all', 'main'):
-                    keys += ['politician', 'ipo', 'ai_momentum', 'economic',
-                             'calendar', 'sentiment']
-            yt.prefetch(keys)
-        except Exception as e:
-            logger.warning(f"[YouTube] 預抓略過：{e}")
-
-    def _yt_section(self, key: str) -> str:
-        """取某區塊的 YouTube 子區塊（無資料回空字串；同則訊息內跨區塊去重）"""
-        try:
-            import youtube_monitor as yt
-            if not yt.enabled():
-                return ''
-            used = getattr(self, '_yt_used', None)
-            if used is None:
-                used = set()
-                self._yt_used = used
-            vids = yt.fetch_block(key, translate_fn=self.translate_text,
-                                  exclude_ids=used)
-            if not vids:
-                return ''
-            yt.mark_used(vids, used)
-            self._yt_added = True
-            return yt.format_section(vids, self._YT_TITLES.get(key, '\U0001f4fa YouTube 熱門影片'))
-        except Exception as e:
-            logger.warning(f"[YouTube] {key} 區塊略過：{e}")
-            return ''
-
     def generate_telegram_message(self, top_articles: List[Dict],
                                   politician_trades: List[Dict] = None,
                                   filings_13f: List[Dict] = None,
@@ -4998,11 +4919,6 @@ class NewsMonitor:
         send_main = part in ("all", "main")
         current_time = datetime.now()
 
-        # ── [2026-11-12] YouTube 影片來源：先預抓，稍後各區塊附加 ──────
-        self._yt_used = set()
-        self._yt_added = False
-        if part != "events":
-            self._yt_prefetch(part)
         date_str = current_time.strftime('%Y年%m月%d日')
         time_str = current_time.strftime('%H:%M')
 
@@ -5016,7 +4932,7 @@ class NewsMonitor:
                          filings_13f, media_13f,
                          ipo_news, earnings_news, economic_news, mag7_events,
                          ai_momentum_news) + tuple(
-                             v for _k in ('trending', 'news', 'reddit')
+                             v for _k in ('news', 'reddit')
                              for v in ((hot_topics or {}).get(_k),)
                              if isinstance(v, list)):
                 if not isinstance(_lst, list):
@@ -5042,7 +4958,7 @@ class NewsMonitor:
             for _lst in (top_articles, ipo_news, earnings_news, economic_news,
                          mag7_events, ai_momentum_news, politician_trades,
                          filings_13f, media_13f) + tuple(
-                             v for _k in ('trending', 'news', 'reddit')
+                             v for _k in ('news', 'reddit')
                              for v in ((hot_topics or {}).get(_k),)
                              if isinstance(v, list)):
                 if not isinstance(_lst, list):
@@ -5109,51 +5025,39 @@ class NewsMonitor:
             message += '   來源: ' + html.escape(article['source']) + '\n'
             message += '   摘要: ' + html.escape(article['summary_zh'][:150]) + '...\n\n'
 
-        # ―― [2026-11-12] 熱門財經新聞（Top10）附加 YouTube 影片 ――――――――
-        if send_morning:
-            message += self._yt_section('top_news')
-        
         # 附加政治人物交易揭露(媒體報導來源)
         if politician_trades is not None and send_main:
             message += self._format_politician_trades_section(politician_trades)
-            message += self._yt_section('politician')
 
         # 附加 SEC 官方 13F 持倉揭露 + CNBC/WSJ 媒體報導(合併在同一區塊)
         if filings_13f is not None and send_morning:
             message += self._format_13f_section(filings_13f, media_news=media_13f)
-            message += self._yt_section('filings_13f')
         
         # ―― [2026-06-25] IPO:IPO 重要訊息 ―――――――――――――――――――――――――――――――――
         if ipo_news is not None and send_main:
             message += self._format_ipo_section(ipo_news)
-            message += self._yt_section('ipo')
         
         # ―― [2026-06-25] 美股財報:美股財報公布(科技七巨頭)――――――――――――――――――――――
         if earnings_news is not None and send_morning:
             message += self._format_earnings_section(earnings_news)
-            message += self._yt_section('earnings')
         
         # ―― [2026-08-17] AI 動能:AI 動能觀察(資本支出 & Token 需求)―――――――
         # ―― [2026-10-20] AI 相關公司債:殖利率>10% 的公司(併入 AI 動能區塊)――
         if ai_momentum_news is not None and send_main:
             message += self._format_ai_momentum_section(ai_momentum_news,
                                                         ai_bond_data=ai_bond_data)
-            message += self._yt_section('ai_momentum')
         
         # ―― [2026-06-27] 經濟指標:美國勞工部(BLS) 官方經濟指標 ―――――――――――――――
         if (economic_indicators is not None or economic_news) and send_main:
             message += self._format_economic_section(economic_indicators, economic_news=economic_news)
-            message += self._yt_section('economic')
 
         # ―― [2026-06-25] ICT/AI 活動:ICT/AI 活動資訊(美/中/台,未來三個月) ――――――
         if ict_ai_events is not None and send_main:
             message += self._format_ict_ai_events_section(ict_ai_events)
-            message += self._yt_section('events')
         
         # ―― [2026-09-01] 財經行事曆:財經行事曆(未來 30 天) ―――――――――――――――
         if financial_calendar is not None and send_main:
             message += self._format_financial_calendar_section(financial_calendar)
-            message += self._yt_section('calendar')
 
         # ―― [2026-10-16] 台指期多空指標:三大法人臺股期貨未平倉淨部位 ――――――
         # ―― [2026-11-02] 依用戶指示自 08:00 主推播移除此區塊（保留診斷端點）―
@@ -5161,23 +5065,17 @@ class NewsMonitor:
         # ―― [2026-10-16] 自訂多空評分指標:五項指標合計分數(做多/做空)――――
         if sentiment_index is not None and send_main:
             message += self._format_sentiment_index_section(sentiment_index)
-            message += self._yt_section('sentiment')
 
         # ―― [2026-09-30] 投資熱門話題:Reddit 美股×AI 當日熱門前 10 ―――――――
         if hot_topics is not None and send_morning:
             message += self._format_hot_topics_section(hot_topics)
-            message += self._yt_section('hot_topics')
 
         # ―― [2026-11-06] 費半表現:SOX 指數收盤＋成分股漲跌幅各前五名 ――――
         if sox_data is not None and send_morning:
             message += self._format_sox_section(sox_data)
-            message += self._yt_section('sox')
 
         # 統一的結尾（兩個時段各自收尾）
         message += '\n========================================\n'
-        if getattr(self, '_yt_added', False):
-            message += ('📺 YouTube 影片：優先取近 7 天 ≥100 萬觀看（🚀），'
-                        '該區塊不足時放寬至 ≥30 萬（🔥）；同級距內以正規財經媒體優先\n')
         message += '\U0001f916 由 WorkBuddy 新聞監控系統自動生成\n'
         message += '\U0001f4f0 新聞來源: CNBC & Wall Street Journal'
 
@@ -5373,7 +5271,7 @@ class NewsMonitor:
         # 避免只發出標題的空推播
         has_morning_content = bool(
             top_articles or filings_13f or media_13f or earnings_news
-            or any((hot_topics or {}).get(k) for k in ('trending', 'news', 'reddit'))
+            or any((hot_topics or {}).get(k) for k in ('news', 'reddit'))
             or sox_data)
         has_main_content = bool(
             politician_trades or ipo_news or ai_momentum_news
@@ -5442,13 +5340,6 @@ class NewsMonitor:
         # 發送活動通知(僅[2026-06-25] ICT/AI 活動)
         logger.info("Sending events notification (block 11 only)...")
         events_message = self._format_ict_ai_events_section(ict_ai_events)
-        # [2026-11-12] 活動區塊附加 YouTube 影片
-        try:
-            self._yt_used = set()
-            self._yt_prefetch('events')
-            events_message += self._yt_section('events')
-        except Exception as e:
-            logger.warning(f"[YouTube] 活動區塊略過：{e}")
         events_discord_webhook = self.config.get('discord', {}).get('events_webhook_url')
         self.send_telegram_message(events_message, discord_webhook=events_discord_webhook)
 
