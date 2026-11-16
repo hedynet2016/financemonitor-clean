@@ -835,6 +835,44 @@
           "why": "加權指數漲 583 點（漲逾 500 點）"
         }
       ]
+    },
+    "2026-11-16": {
+      "date": "2026-11-16",
+      "run_time": "2026-11-16 08:18",
+      "total": 35,
+      "direction": "做空",
+      "items": [
+        {
+          "key": "us",
+          "name": "最新費半表現",
+          "score": 10,
+          "why": "費半指數漲跌 -3.43%（±5% 之間）"
+        },
+        {
+          "key": "cpi",
+          "name": "最新美國 CPI",
+          "score": 5,
+          "why": "超出市場預期"
+        },
+        {
+          "key": "nfp",
+          "name": "最新美國非農就業",
+          "score": 5,
+          "why": "超出市場預期"
+        },
+        {
+          "key": "oil",
+          "name": "最新國際油價（Brent 布蘭特）",
+          "score": 10,
+          "why": "Brent 布蘭特單日漲跌 -0.25%（未達 ±3%）"
+        },
+        {
+          "key": "tw",
+          "name": "前一日台股表現",
+          "score": 5,
+          "why": "加權指數漲 583 點（漲逾 500 點）"
+        }
+      ]
     }
   },
   "history": [
@@ -1117,6 +1155,26 @@
       "stopped": true,
       "sim_mode": "stop_loss",
       "recorded_at": "2026-11-13 11:31"
+    },
+    {
+      "date": "2026-11-16",
+      "total": 35,
+      "direction": "做空",
+      "ref": 43839.0,
+      "last": 42016.0,
+      "diff": -1823.0,
+      "hit": true,
+      "pnl": 61250.0,
+      "entry": 43247.0,
+      "entry_time": "09:00",
+      "hi": 43247.0,
+      "lo": 42022.0,
+      "stop": 43307.0,
+      "stop_pts": 60,
+      "qty": 1,
+      "stopped": false,
+      "sim_mode": "stop_loss",
+      "recorded_at": "2026-11-16 11:31"
     }
   ]
 }
