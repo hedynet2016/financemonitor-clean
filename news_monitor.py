@@ -3393,6 +3393,7 @@ class NewsMonitor:
     def fetch_ai_momentum_news(self) -> List[Dict]:
         """
         從與熱門財經新聞相同媒體來源抓取 AI 動能觀察相關報導,
+        另加抓 SemiAnalysis 免費文章（[2026-11-18] 新增）,
         篩選 AI 資本支出(capex)及 Token 需求變化主題,
         並匹配台積電、AVGO、CRWV、AMZN、MSFT、GOOGL、NVDA、LITE 等重要科技企業.
 
@@ -3400,6 +3401,8 @@ class NewsMonitor:
           - 文章發布超過 7 天則不再顯示
           - 7 日內同一標題不重複推播(以標題 hash 去重)
           - 必須同時包含 AI 關鍵字 + 至少一家追蹤企業
+            （SemiAnalysis 例外：主題即 AI 基建，命中關鍵字即收錄）
+          - SemiAnalysis 完全付費文章（RSS 無免費內容）不收錄
 
         每筆回傳格式:
         {
@@ -3522,6 +3525,95 @@ class NewsMonitor:
             except Exception as e:
                 logger.warning(f"  [AI Momentum] {src_name} RSS error: {e}")
 
+        # ── [2026-11-18] SemiAnalysis 免費文章來源 ────────────────────────
+        # SemiAnalysis 已遷移至 Substack（newsletter.semianalysis.com）。
+        # RSS 內容結尾含 "paying subscribers only" 者為完全付費文章 → 排除；
+        # 僅收錄免費（含免費預覽＋bonus 提示）文章。
+        # 該站主題高度集中在 AI 基礎建設/capex/推理需求，
+        # 故命中 ai_momentum_keywords 即收錄，不需強制企業匹配。
+        try:
+            sa_headers = {
+                'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                               'AppleWebKit/537.36 (KHTML, like Gecko) '
+                               'Chrome/126.0.0.0 Safari/537.36')
+            }
+            sa_resp = requests.get(
+                'https://semianalysis.substack.com/feed',
+                headers=sa_headers, timeout=20)
+            if sa_resp.ok:
+                sa_feed = feedparser.parse(sa_resp.text)
+                for entry in sa_feed.entries[:25]:
+                    try:
+                        title_raw = entry.get('title', '')
+                        if self._is_error_title(title_raw):
+                            continue
+                        sa_content = ''
+                        _cl = entry.get('content') or []
+                        if _cl:
+                            sa_content = _cl[0].get('value', '')
+                        # 完全付費文章（無任何免費內容）不收錄
+                        if 'paying subscribers only' in sa_content.lower():
+                            continue
+                        summary = self._clean_html(entry.get('summary', ''))
+                        link = entry.get('link', '')
+                        # 全文掃描（SemiAnalysis 關鍵訊號常在後半段）
+                        combined = (title_raw + ' ' + summary
+                                    + ' ' + sa_content).lower()
+
+                        # SemiAnalysis 文章主題即 AI 基建／capex／推理需求，
+                        # 與本區塊高度相關 → 近 7 天免費文章全收錄，不需
+                        # 再做 ai_momentum_keywords 過濾（7 天窗口自然限量）
+
+                        matched_company = None
+                        for ticker, info in self.ai_momentum_companies.items():
+                            if any(p in combined for p in info['patterns']):
+                                matched_company = ticker
+                                break
+
+                        try:
+                            pub_dt = datetime(*entry.published_parsed[:6])
+                        except Exception:
+                            pub_dt = now
+                        if (now - pub_dt).days > 7:
+                            continue
+
+                        key = _hs.sha256(title_raw.encode()).hexdigest()[:16]
+                        if key in seen_keys or key in self._ai_momentum_sent:
+                            continue
+                        seen_keys.add(key)
+
+                        # SemiAnalysis 為英文來源，標題/摘要英翻中
+                        title_zh = title_raw
+                        summary_zh = summary[:300] if summary else ''
+                        if len(title_raw) < 200:
+                            try:
+                                title_zh = self.translate_text(title_raw)
+                                summary_zh = (self.translate_text(summary[:300])
+                                              if summary else '')
+                            except Exception:
+                                pass
+
+                        results.append({
+                            'title':      title_raw,
+                            'title_zh':   title_zh,
+                            'summary':    summary[:300],
+                            'summary_zh': summary_zh,
+                            'source':     'SemiAnalysis',
+                            'link':       link,
+                            'published':  pub_dt,
+                            'key':        key,
+                            'company':    matched_company,
+                        })
+                        self._ai_momentum_sent[key] = now
+                    except Exception as e:
+                        logger.debug(f"  [AI Momentum SemiAnalysis] entry error: {e}")
+                logger.info(f"  [AI Momentum] SemiAnalysis feed fetched "
+                            f"({len(sa_feed.entries)} entries)")
+            else:
+                logger.warning(f"  [AI Momentum] SemiAnalysis HTTP {sa_resp.status_code}")
+        except Exception as e:
+            logger.warning(f"  [AI Momentum] SemiAnalysis feed error: {e}")
+
         # 按時間降序,有企業匹配的優先
         results.sort(key=lambda x: (x['company'] is None, x['published']), reverse=True)
 
@@ -3593,7 +3685,7 @@ class NewsMonitor:
             "\u53f0\u7a4d\u96fb(TSMC) / AVGO / CRWV / AMZN / MSFT / GOOGL / NVDA / LITE\n"
         )
         section += (
-            "\U0001f4f0 \u4f86\u6e90: CNBC / WSJ / Bloomberg / MarketWatch / FT / Yahoo Finance / Seeking Alpha / \u79d1\u6280\u65b0\u5831 / MacroMicro / Digitimes\n"
+            "\U0001f4f0 \u4f86\u6e90: CNBC / WSJ / Bloomberg / MarketWatch / FT / Yahoo Finance / Seeking Alpha / \u79d1\u6280\u65b0\u5831 / MacroMicro / Digitimes / SemiAnalysis\uff08\u514d\u8cbb\u6587\u7ae0\uff09\n"
         )
         section += "\u26a0\ufe0f \u6587\u7ae0\u767c\u4f48\u8d85\u904e\u4e00\u9031\u5247\u4e0d\u518d\u91cd\u8907\u63a8\u64ad\n"
         return section

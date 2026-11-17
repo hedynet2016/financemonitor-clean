@@ -1019,8 +1019,9 @@ def tasks_view():
     <span class="block-date">📅 2026-08-17</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">AI 動能觀察（資本支出 &amp; Token 需求）</div>
-      <div class="mb-2"><span class="source-tag">10 來源</span> <span class="filter-tag">AI capex / token demand 關鍵字</span> <span class="filter-tag">1 週內</span> <span class="filter-tag">7 日去重</span></div>
+      <div class="mb-2"><span class="source-tag">11 來源</span> <span class="filter-tag">AI capex / token demand 關鍵字</span> <span class="filter-tag">1 週內</span> <span class="filter-tag">7 日去重</span></div>
       <div><small class="text-muted">追蹤企業：</small> 台積電(TSMC) &bull; AVGO &bull; CRWV &bull; AMZN &bull; MSFT &bull; GOOGL &bull; NVDA &bull; LITE</div>
+      <div><small class="text-muted">SemiAnalysis（2026-11-18 新增）：</small> Substack feed 抓取免費文章（完全付費文章自動排除），標題英翻中＋超連結；主題即 AI 基建，命中關鍵字即收錄、不需企業匹配</div>
     </div>
   </div>
 </div>
