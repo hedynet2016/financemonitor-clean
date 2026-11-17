@@ -5122,8 +5122,7 @@ class NewsMonitor:
             message += self._format_politician_trades_section(politician_trades)
 
         # 附加 SEC 官方 13F 持倉揭露 + CNBC/WSJ 媒體報導(合併在同一區塊)
-        if filings_13f is not None and send_morning:
-            message += self._format_13f_section(filings_13f, media_news=media_13f)
+        # ―― [2026-11-18] 依用戶指示取消 13F 官方＋媒體報導區塊推播 ――
         
         # ―― [2026-06-25] IPO:IPO 重要訊息 ―――――――――――――――――――――――――――――――――
         if ipo_news is not None and send_main:
@@ -5235,23 +5234,11 @@ class NewsMonitor:
             except Exception as e:
                 logger.error(f"VIP trade fetch failed, will skip: {e}")
 
-        # 抓取 SEC 官方 13F 持倉申報(獨立容錯) —— 07:00 早鳥
-        filings_13f = []
-        if do_morning:
-            try:
-                logger.info("Fetching SEC official 13F filings from EDGAR...")
-                filings_13f = self.fetch_all_13f_trades()
-            except Exception as e:
-                logger.error(f"SEC 13F fetch failed, will skip: {e}")
-
-        # 抓取 CNBC / WSJ 對 13F 機構的媒體報導(獨立容錯) —— 07:00 早鳥
-        media_13f = []
-        if do_morning:
-            try:
-                logger.info("Fetching 13F-related media news from CNBC & WSJ...")
-                media_13f = self.fetch_13f_media_news()
-            except Exception as e:
-                logger.error(f"13F media news fetch failed, will skip: {e}")
+        # ── [2026-11-18] 依用戶指示取消「13F 官方＋媒體報導」區塊推播 ─────
+        # 停止抓取與推播；fetch_all_13f_trades / fetch_13f_media_news 及
+        # 診斷端點保留，未來要恢復時直接將此處改回抓取即可。
+        filings_13f = None
+        media_13f = None
 
         # ── [2026-06-25] IPO:IPO 重要訊息 ──────── 08:00 主推播 ───────────
         ipo_news = []
@@ -5362,7 +5349,7 @@ class NewsMonitor:
         # [2026-10-21] 內容全空時不發送（回傳 False 讓 worker 於補發窗口內重試），
         # 避免只發出標題的空推播
         has_morning_content = bool(
-            top_articles or filings_13f or media_13f or earnings_news
+            top_articles or earnings_news
             or any((hot_topics or {}).get(k) for k in ('news', 'reddit'))
             or sox_data)
         has_main_content = bool(

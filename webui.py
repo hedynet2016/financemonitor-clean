@@ -514,7 +514,7 @@ def dashboard():
   <div class="card-header"><i class="bi bi-info-circle me-2"></i>系統資訊</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控（台股時段含台指期）+ 07:00 早鳥新聞（熱門財經／13F 官方＋媒體／美股財報／投資熱門話題／費半表現）+ 08:00 財經主推播（VIP／IPO／AI 動能＋公司債＋CDS／經濟指標／財經行事曆／自訂多空評分指標）+ 14:00 活動 + 16:00 商品追蹤（雅虎拍賣 固定賣場＋雙北同類店家）+ 09:00 自動備份</td></tr>
+      <tr><td class="text-muted" style="width:200px">排程模式</td><td>每半小時 股市監控（台股時段含台指期）+ 07:00 早鳥新聞（熱門財經／美股財報／投資熱門話題／費半表現）+ 08:00 財經主推播（VIP／IPO／AI 動能＋公司債＋CDS／經濟指標／財經行事曆／自訂多空評分指標）+ 14:00 活動 + 16:00 商品追蹤（雅虎拍賣 固定賣場＋雙北同類店家）+ 09:00 自動備份</td></tr>
       <tr><td class="text-muted">推送管道</td><td>Telegram Bot + Discord Webhook</td></tr>
       <tr><td class="text-muted">Python</td><td>{{py_version}}</td></tr>
       <tr><td class="text-muted">工作目錄</td><td>{{work_dir}}</td></tr>
@@ -934,7 +934,7 @@ def tasks_view():
   <div class="card-header"><i class="bi bi-clock me-2"></i>排程</div>
   <div class="card-body">
     <table class="table table-dark table-borderless mb-0">
-      <tr><td class="text-muted" style="width:200px">每日早鳥推播</td><td><b>{morning_hour:02d}:00 台北時間</b> — 熱門財經新聞／13F 官方＋媒體報導／美股財報公布／投資熱門話題／費半表現（SOX 指數＋成分股漲跌幅前五名，2026-11-06 啟用）</td></tr>
+      <tr><td class="text-muted" style="width:200px">每日早鳥推播</td><td><b>{morning_hour:02d}:00 台北時間</b> — 熱門財經新聞／美股財報公布／投資熱門話題／費半表現（SOX 指數＋成分股漲跌幅前五名，2026-11-06 啟用）</td></tr>
       <tr><td class="text-muted">每日主推播</td><td><b>{news_hour:02d}:00 台北時間</b> — VIP交易/IPO/AI動能（含公司債＋CDS）/經濟指標/財經行事曆/自訂多空評分指標（卡片左側為各區塊啟用日期；台指期多空指標已於 2026-11-02 移除）</td></tr>
       <tr><td class="text-muted">每日活動推播</td><td><b>{events_hour:02d}:00 台北時間</b> — ICT/AI 活動（2026-06-25 啟用，未來90天）</td></tr>
       <tr><td class="text-muted">每日商品追蹤</td><td><b>16:00 台北時間</b> — 雅虎拍賣商品監控（9 關鍵字，價格 $2,000~$15,000，排除NG，刊登 7 天內，上限 30 筆）<br>　① 固定賣場 3 家：樺仔二手電腦 / 點子3C 板橋店 / US3C<br>　② 雙北地區同類店家：台北市・新北市「店鋪型 3C 賣家」（與點子3C同類），條件與固定賣場完全相同，自動納入新店家</td></tr>
@@ -972,9 +972,10 @@ def tasks_view():
   <div class="d-flex align-items-start gap-3">
     <span class="block-date">📅 2026-06-25</span>
     <div class="flex-grow-1">
-      <div class="fw-bold mb-1">13F 官方（SEC EDGAR API）</div>
+      <div class="fw-bold mb-1">13F 官方（SEC EDGAR API）<span class="badge bg-secondary ms-2">2026-11-18 起停止推播</span></div>
       <div class="mb-2"><span class="source-tag">SEC API</span> <span class="filter-tag">每季申報</span></div>
       <div><small class="text-muted">追蹤機構：</small> {" &bull; ".join(sec_api_13f)}</div>
+      <div><small class="text-muted">狀態：</small> 已依用戶指示取消推播（抓取函式與診斷端點保留）</div>
     </div>
   </div>
 </div>
@@ -983,9 +984,10 @@ def tasks_view():
   <div class="d-flex align-items-start gap-3">
     <span class="block-date">📅 2026-06-25</span>
     <div class="flex-grow-1">
-      <div class="fw-bold mb-1">13F 媒體報導</div>
+      <div class="fw-bold mb-1">13F 媒體報導<span class="badge bg-secondary ms-2">2026-11-18 起停止推播</span></div>
       <div class="mb-2"><span class="source-tag">CNBC/WSJ/Bloomberg/MarketWatch/FT/SeekingAlpha/MacroMicro</span> <span class="filter-tag">關鍵詞過濾</span> <span class="filter-tag">1 週內</span></div>
       <div><small class="text-muted">關鍵詞：</small> 13F, quarterly filing, fund holdings, portfolio disclosure</div>
+      <div><small class="text-muted">狀態：</small> 已依用戶指示取消推播（抓取函式保留）</div>
     </div>
   </div>
 </div>
