@@ -63,46 +63,80 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════════════
-# 財經行事曆資料表（2026 年官方已公布日程 + 財報預估日）
-# - FOMC / CPI / 非農就業：來源 Federal Reserve & BLS 官方 2026 年度日程
+# 財經行事曆資料表（2027 年官方已公布日程 + 財報預估日；跨年保留 2026/12 尚未到期條目）
+# - [2026-11-20 年度更新] 主體已推進至 2027 年，2026 年已過期條目全數清除
+# - FOMC / CPI / 非農就業：來源 Federal Reserve & BLS 官方 2027 年度日程
+#   · FOMC 2027 初步日程（2025-09-05 新聞稿）：
+#     https://www.federalreserve.gov/newsevents/pressreleases/monetary20250905a.htm
+#     → 1/26-27、3/16-17、4/27-28、6/8-9、7/27-28、9/14-15、10/26-27、12/7-8
+#   · CPI 2027 公布日程：https://www.bls.gov/schedule/news_release/cpi.htm
+#   · 非農就業 2027 公布日程：https://www.bls.gov/schedule/news_release/empsit.htm
 # - **時間標示一律為台灣時間（Asia/Taipei, UTC+8）**
 #   原始美東時間換算：CPI/非農 08:30 ET → 台北 20:30（夏令）／21:30（冬令）
 #                     FOMC 決議 14:00 ET → 台北隔日 02:00（夏令）／03:00（冬令）
 #   FOMC 跨日者，date 已調整為「台北時間對應日期」
+#   2027 年美國夏令時間：3/14 起（EDT）、11/7 止（EST）
 # - 財報日期為「預估值」，實際日期以各公司 IR 公告為準，建議每季校準一次
 # - SpaceX 於 2026/6/12 在納斯達克上市（代碼 SPCX），已列入財報追蹤
 # - [2026-11-20] Anthropic 已於 2026/11/19 在納斯達克上市（代碼 ANT，
 #   IPO 價 83 美元、史上最大 IPO），SPCX/ANT 均改為正式財報追蹤
-# - 每年初需更新此資料表（官方行事曆通常在年底前公布下年度日程）
+# - 每年 12/25 前後需更新此資料表（官方行事曆通常在年底前公布下年度日程）
+#   fetch_financial_calendar() 僅取未來 N 天，資料表須維持至少未來 12 個月覆蓋
 # ══════════════════════════════════════════════════════════════════════
-FINANCIAL_CALENDAR = [  # 年度資料表（原 FINANCIAL_CALENDAR_2026，2026-11-20 改年份無關命名）
-    # ── 聯準會 FOMC 利率決議 ────────────────────────────────────────
-    {'date': '2026-09-17', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '台北時間 02:00 公布（含 SEP 點陣圖）'},
-    {'date': '2026-10-29', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '台北時間 02:00 公布'},
+FINANCIAL_CALENDAR = [  # 年度滾動資料表（年份無關命名，每年 12/25 前後滾動更新）
+    # ── 聯準會 FOMC 利率決議（2026 年末尚未到期 / 2027 全年）──────────
     {'date': '2026-12-10', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '台北時間 03:00 公布（含 SEP 點陣圖）'},
-    # ── 美國 CPI 物價指數（BLS）────────────────────────────────────
-    {'date': '2026-09-11', 'category': 'CPI',   'title': '美國 8 月 CPI 物價指數', 'note': '台北時間 20:30 公布'},
-    {'date': '2026-10-14', 'category': 'CPI',   'title': '美國 9 月 CPI 物價指數', 'note': '台北時間 20:30 公布'},
-    {'date': '2026-11-10', 'category': 'CPI',   'title': '美國 10 月 CPI 物價指數', 'note': '台北時間 21:30 公布'},
+    {'date': '2027-01-28', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '台北時間 03:00 公布'},
+    {'date': '2027-03-18', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '台北時間 02:00 公布（含 SEP 點陣圖）'},
+    {'date': '2027-04-29', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '台北時間 02:00 公布'},
+    {'date': '2027-06-10', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '台北時間 02:00 公布（含 SEP 點陣圖）'},
+    {'date': '2027-07-29', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '台北時間 02:00 公布'},
+    {'date': '2027-09-16', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '台北時間 02:00 公布（含 SEP 點陣圖）'},
+    {'date': '2027-10-28', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '台北時間 02:00 公布'},
+    {'date': '2027-12-09', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '台北時間 03:00 公布（含 SEP 點陣圖）'},
+    # ── 美國 CPI 物價指數（BLS，2026 年末尚未到期 / 2027 全年）──────
     {'date': '2026-12-10', 'category': 'CPI',   'title': '美國 11 月 CPI 物價指數', 'note': '台北時間 21:30 公布'},
+    {'date': '2027-01-13', 'category': 'CPI',   'title': '美國 12 月 CPI 物價指數', 'note': '台北時間 21:30 公布'},
+    {'date': '2027-02-11', 'category': 'CPI',   'title': '美國 1 月 CPI 物價指數', 'note': '台北時間 21:30 公布'},
+    {'date': '2027-03-10', 'category': 'CPI',   'title': '美國 2 月 CPI 物價指數', 'note': '台北時間 21:30 公布'},
+    {'date': '2027-04-13', 'category': 'CPI',   'title': '美國 3 月 CPI 物價指數', 'note': '台北時間 20:30 公布'},
+    {'date': '2027-05-12', 'category': 'CPI',   'title': '美國 4 月 CPI 物價指數', 'note': '台北時間 20:30 公布'},
+    {'date': '2027-06-10', 'category': 'CPI',   'title': '美國 5 月 CPI 物價指數', 'note': '台北時間 20:30 公布'},
+    {'date': '2027-07-14', 'category': 'CPI',   'title': '美國 6 月 CPI 物價指數', 'note': '台北時間 20:30 公布'},
+    {'date': '2027-08-11', 'category': 'CPI',   'title': '美國 7 月 CPI 物價指數', 'note': '台北時間 20:30 公布'},
+    {'date': '2027-09-14', 'category': 'CPI',   'title': '美國 8 月 CPI 物價指數', 'note': '台北時間 20:30 公布'},
+    {'date': '2027-10-14', 'category': 'CPI',   'title': '美國 9 月 CPI 物價指數', 'note': '台北時間 20:30 公布'},
+    {'date': '2027-11-10', 'category': 'CPI',   'title': '美國 10 月 CPI 物價指數', 'note': '台北時間 21:30 公布'},
+    {'date': '2027-12-10', 'category': 'CPI',   'title': '美國 11 月 CPI 物價指數', 'note': '台北時間 21:30 公布'},
     # ── 非農就業報告（Employment Situation，BLS）──────────────────
-    {'date': '2026-09-04', 'category': '非農就業', 'title': '美國 8 月非農就業報告', 'note': '台北時間 20:30 公布'},
-    {'date': '2026-10-02', 'category': '非農就業', 'title': '美國 9 月非農就業報告', 'note': '台北時間 20:30 公布'},
-    {'date': '2026-11-06', 'category': '非農就業', 'title': '美國 10 月非農就業報告', 'note': '台北時間 21:30 公布'},
     {'date': '2026-12-04', 'category': '非農就業', 'title': '美國 11 月非農就業報告', 'note': '台北時間 21:30 公布'},
-    # ── 追蹤公司財報（預估日）──────────────────────────────────────
-    {'date': '2026-10-15', 'category': '財報', 'title': 'TSMC 台積電 Q3 財報', 'ticker': 'TSM',  'note': '預估日'},
-    {'date': '2026-10-22', 'category': '財報', 'title': 'TESLA Q3 財報', 'ticker': 'TSLA', 'note': '預估日'},
-    {'date': '2026-10-28', 'category': '財報', 'title': 'MICROSOFT FY2027 Q1 財報', 'ticker': 'MSFT', 'note': '預估日'},
-    {'date': '2026-10-28', 'category': '財報', 'title': 'GOOGLE (Alphabet) Q3 財報', 'ticker': 'GOOGL', 'note': '預估日'},
-    {'date': '2026-10-30', 'category': '財報', 'title': 'AMAZON Q3 財報', 'ticker': 'AMZN', 'note': '預估日'},
-    {'date': '2026-11-03', 'category': '財報', 'title': 'SPACEX Q3 財報', 'ticker': 'SPCX', 'note': '預估日'},
-    {'date': '2026-11-18', 'category': '財報', 'title': 'NVIDIA FY2027 Q3 財報', 'ticker': 'NVDA', 'note': '預估日'},
+    {'date': '2027-01-08', 'category': '非農就業', 'title': '美國 12 月非農就業報告', 'note': '台北時間 21:30 公布'},
+    {'date': '2027-02-05', 'category': '非農就業', 'title': '美國 1 月非農就業報告', 'note': '台北時間 21:30 公布'},
+    {'date': '2027-03-05', 'category': '非農就業', 'title': '美國 2 月非農就業報告', 'note': '台北時間 21:30 公布'},
+    {'date': '2027-04-02', 'category': '非農就業', 'title': '美國 3 月非農就業報告', 'note': '台北時間 20:30 公布'},
+    {'date': '2027-05-07', 'category': '非農就業', 'title': '美國 4 月非農就業報告', 'note': '台北時間 20:30 公布'},
+    {'date': '2027-06-04', 'category': '非農就業', 'title': '美國 5 月非農就業報告', 'note': '台北時間 20:30 公布'},
+    {'date': '2027-07-02', 'category': '非農就業', 'title': '美國 6 月非農就業報告', 'note': '台北時間 20:30 公布'},
+    {'date': '2027-08-06', 'category': '非農就業', 'title': '美國 7 月非農就業報告', 'note': '台北時間 20:30 公布'},
+    {'date': '2027-09-03', 'category': '非農就業', 'title': '美國 8 月非農就業報告', 'note': '台北時間 20:30 公布'},
+    {'date': '2027-10-08', 'category': '非農就業', 'title': '美國 9 月非農就業報告', 'note': '台北時間 20:30 公布'},
+    {'date': '2027-11-05', 'category': '非農就業', 'title': '美國 10 月非農就業報告', 'note': '台北時間 20:30 公布'},
+    {'date': '2027-12-03', 'category': '非農就業', 'title': '美國 11 月非農就業報告', 'note': '台北時間 21:30 公布'},
+    # ── 追蹤公司財報（預估日，2026 年末尚未到期）──────────────────
     {'date': '2026-12-10', 'category': '財報', 'title': 'AVGO 博通 FY2026 Q4 財報', 'ticker': 'AVGO', 'note': '預估日'},
-    # ── [2026-11-20] 追蹤對象財報（SPCX 2026-06-12、ANT 2026-11-19 已上市，
-    #    日期為預估值，以公司 IR 公告為準）──────────────────────────────
+    # ── 追蹤公司財報（預估日，2027 年初；SPCX 2026-06-12、ANT 2026-11-19
+    #    已上市，日期為預估值，以公司 IR 公告為準）────────────────────
+    {'date': '2027-01-14', 'category': '財報', 'title': 'TSMC 台積電 Q4 財報', 'ticker': 'TSM',  'note': '預估日'},
+    {'date': '2027-01-26', 'category': '財報', 'title': 'MICROSOFT FY2027 Q2 財報', 'ticker': 'MSFT', 'note': '預估日'},
+    {'date': '2027-01-27', 'category': '財報', 'title': 'TESLA Q4 財報', 'ticker': 'TSLA', 'note': '預估日'},
     {'date': '2027-01-29', 'category': '財報', 'title': 'SPACEX Q4 財報', 'ticker': 'SPCX', 'note': '預估日'},
+    {'date': '2027-02-03', 'category': '財報', 'title': 'GOOGLE (Alphabet) Q4 財報', 'ticker': 'GOOGL', 'note': '預估日'},
     {'date': '2027-02-04', 'category': '財報', 'title': 'ANTHROPIC Q4 財報（上市後首次）', 'ticker': 'ANT', 'note': '預估日'},
+    {'date': '2027-02-05', 'category': '財報', 'title': 'AMAZON Q4 財報', 'ticker': 'AMZN', 'note': '預估日'},
+    {'date': '2027-02-24', 'category': '財報', 'title': 'NVIDIA FY2027 Q4 財報', 'ticker': 'NVDA', 'note': '預估日'},
+    {'date': '2027-03-11', 'category': '財報', 'title': 'AVGO 博通 FY2027 Q1 財報', 'ticker': 'AVGO', 'note': '預估日'},
+    # ── 次年銜接（2028 年 1 月 FOMC，避免跨年後行事曆斷檔）──────────
+    {'date': '2028-01-27', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '台北時間 03:00 公布'},
 ]
 
 # 星期中文對照（datetime.weekday(): 0=Monday）
