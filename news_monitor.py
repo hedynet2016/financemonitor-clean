@@ -3832,7 +3832,7 @@ class NewsMonitor:
 
         section += f"{'='*40}\n"
         section += ("📋 來源: Google News（Reddit 華爾街板＋中文財經）"
-                    "（2026-11-13 起 Reddit 直連已遭封鎖，僅為備援）\n")
+                    "｜過濾: 美股七巨頭 + SpaceX(SPCX) + Anthropic(ANT) 相關文章\n")
         return section
 
     # ■ [2026-11-06] 費半表現  SOX 指數收盤＋成分股漲跌幅前五名

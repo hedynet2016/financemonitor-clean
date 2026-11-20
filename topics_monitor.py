@@ -8,9 +8,12 @@
 來源（匿名存取、免 API key）:
   1. Google News RSS «社群熱議»（site:reddit.com 的華爾街板貼文）
      ＋ «中文財經熱門» 查詢
+     【2026-11-20 起限縮】僅收錄與美股七巨頭 + SPCX(SpaceX) + ANT(Anthropic)
+     相關的文章（標題命中公司關鍵字白名單），兩路查詢也改為針對追蹤對象。
   2. Reddit 各板當日熱門 RSS —【2026-11-13 起失效，僅保留為備援】
      Reddit 已封鎖匿名存取：RSS/JSON/old.reddit 一律回 403 或 429
      （本機與 Render 皆同），因此改以上述來源為主。
+     備援來源同樣套用公司關鍵字過濾。
 
 歷史決策:
   - [2026-11-13] Reddit 封鎖後曾新增 Yahoo Finance 熱門搜尋 Top 8 作為主力；
@@ -58,6 +61,43 @@ REDDIT_TIMEOUT = 10          # Reddit 專用短逾時（封鎖時快速失敗）
 # ── Google News RSS（社群熱議＋中文財經）──────────────────────────────
 GNEWS_URL = 'https://news.google.com/rss/search'
 GNEWS_N = 5                  # 社群／中文財經熱門顯示前 N 名
+
+# [2026-11-20] 追蹤對象關鍵字白名單：美股七巨頭 + SPCX(SpaceX) + ANT(Anthropic)
+# 標題（或摘要）需命中任一關鍵字才收錄。與 news_monitor.TOPIC_KEYWORDS 同步。
+# 注意：不含裸代碼 'spx'（易誤中 S&P 500）與 'ant'（易誤中一般單字）。
+COMPANY_KEYWORDS = (
+    # Apple 蘋果
+    'apple', 'aapl', '蘋果',
+    # Microsoft 微軟
+    'microsoft', 'msft', '微軟',
+    # NVIDIA 輝達
+    'nvidia', 'nvda', '輝達', '英偉達',
+    # Google / Alphabet 谷歌
+    'google', 'alphabet', 'googl', 'goog', '谷歌',
+    # Amazon 亞馬遜
+    'amazon', 'amzn', '亞馬遜',
+    # Meta
+    'meta', 'facebook', '臉書',
+    # Tesla 特斯拉
+    'tesla', 'tsla', '特斯拉',
+    # SPCX (SpaceX)
+    'spacex', 'starship', 'starlink', '星艦', '星鏈',
+    # ANT (Anthropic)
+    'anthropic', 'claude',
+)
+
+# Google News 查詢字：[2026-11-20] 改為針對追蹤對象，
+# 否則泛用查詢過濾後區塊經常空白。Google News 支援 OR 語法。
+_GN_OR_EN = ('NVDA OR AAPL OR TSLA OR MSFT OR AMZN OR GOOGL OR META '
+             'OR SpaceX OR Anthropic')
+_GN_OR_ZH = ('輝達 OR 蘋果 OR 特斯拉 OR 微軟 OR 亞馬遜 OR 谷歌 OR Meta '
+             'OR SpaceX OR Anthropic')
+GNEWS_QUERIES = (
+    # (查詢字, hl, gl, ceid)
+    ('site:reddit.com/r/wallstreetbets (%s)' % _GN_OR_EN,
+     'en-US', 'US', 'US:en'),
+    ('(%s) 美股' % _GN_OR_ZH, 'zh-TW', 'TW', 'TW:zh-Hant'),
+)
 
 # Reddit 置頂公告標題特徵（排除，非熱門話題）
 _STICKY_PATTERNS = (
@@ -147,20 +187,17 @@ def fetch_reddit_hot(subs=REDDIT_SUBS, per_sub=REDDIT_PER_SUB,
             break
         time.sleep(1)  # 板間節流，降低 429 機率
     # 輪流合併: 板1#1, 板2#1, ..., 板1#2, 板2#2 ...
+    # [2026-11-20] 備援來源同樣套用追蹤對象關鍵字過濾
     for rank in range(per_sub):
         for sub in subs:
             lst = per_board.get(sub) or []
             if rank < len(lst):
-                merged.append(lst[rank])
+                if _matches_companies(lst[rank]['title']):
+                    merged.append(lst[rank])
     return merged[:top_n]
 
 
 # ── Google News RSS（社群熱議＋中文財經）──────────────────────────────
-GNEWS_QUERIES = (
-    # (查詢字, hl, gl, ceid)
-    ('site:reddit.com/r/wallstreetbets', 'en-US', 'US', 'US:en'),
-    ('美股 盤勢 焦點', 'zh-TW', 'TW', 'TW:zh-Hant'),
-)
 _GN_ITEM = re.compile(r"<item>(.*?)</item>", re.S)
 _GN_TITLE = re.compile(r"<title>(.*?)</title>", re.S)
 _GN_LINK = re.compile(r"<link>(.*?)</link>", re.S)
@@ -178,10 +215,17 @@ def _is_junk(title):
     return any(p in t for p in _JUNK_PATTERNS)
 
 
+def _matches_companies(text):
+    """[2026-11-20] 標題需命中追蹤對象（七巨頭 + SpaceX + Anthropic）關鍵字。"""
+    t = str(text or '').lower()
+    return any(kw in t for kw in COMPANY_KEYWORDS)
+
+
 def fetch_google_news_hot(n=GNEWS_N):
     """Google News RSS：Reddit 華爾街板貼文＋中文財經熱門（免 key、Render 可連）
 
     兩個查詢各自取候選後「輪流合併」，避免來源被第一個查詢吃光。
+    [2026-11-20] 僅收錄命中追蹤對象關鍵字（七巨頭 + SpaceX + Anthropic）的文章。
     """
     per_query, seen = [], set()
     for q, hl, gl, ceid in GNEWS_QUERIES:
@@ -197,7 +241,7 @@ def fetch_google_news_hot(n=GNEWS_N):
             logger.warning("[Topics] Google News '%s' 失敗: %s", q, e)
             per_query.append(bucket)
             continue
-        for raw in _GN_ITEM.findall(r.text)[:n * 4]:
+        for raw in _GN_ITEM.findall(r.text)[:n * 6]:
             tm, lm, sm = (_GN_TITLE.search(raw), _GN_LINK.search(raw),
                           _GN_SOURCE.search(raw))
             if not tm or not lm:
@@ -209,10 +253,14 @@ def fetch_google_news_hot(n=GNEWS_N):
             key = title.lower()[:60]
             if not title or len(title) < 12 or key in seen or _is_junk(title):
                 continue
+            # [2026-11-20] 追蹤對象過濾：七巨頭 + SpaceX + Anthropic 才收錄
+            if not _matches_companies(title):
+                continue
             seen.add(key)
             bucket.append({'title': title, 'url': lm.group(1).strip(),
                            'source': source})
-        logger.info("[Topics] Google News '%s': %d 篇候選", q, len(bucket))
+        logger.info("[Topics] Google News '%s': %d 篇候選（追蹤對象過濾後）",
+                    q, len(bucket))
         per_query.append(bucket)
 
     merged = []
@@ -229,6 +277,7 @@ def fetch_hot_topics():
     """收集投資熱門話題：社群／中文財經新聞（Reddit 為備援）。
 
     [2026-11-16] 取消 Yahoo 熱門搜尋 Top 8，僅保留 Google News 主來源。
+    [2026-11-20] 限縮為追蹤對象相關文章：美股七巨頭 + SPCX(SpaceX) + ANT(Anthropic)。
     """
     topics = {"news": [], "reddit": []}
     try:

@@ -1133,9 +1133,10 @@ def tasks_view():
   <div class="d-flex align-items-start gap-3">
     <span class="block-date">📅 2026-09-30</span>
     <div class="flex-grow-1">
-      <div class="fw-bold mb-1">投資熱門話題（社群財經熱議）<span class="badge bg-warning text-dark ms-2">2026-11-16 改版</span></div>
-      <div class="mb-2"><span class="source-tag">Google News RSS</span> <span class="source-tag">Reddit（備援）</span> <span class="filter-tag">免 API key</span> <span class="filter-tag">標題中文化</span></div>
-      <div><small class="text-muted">① 社群／財經熱議：</small> Google News RSS（site:reddit.com/r/wallstreetbets 華爾街板貼文 ＋「美股 熱門 話題」中文財經查詢），兩路輪流合併取前 5，過濾對帳單炫耀文</div>
+      <div class="fw-bold mb-1">投資熱門話題（社群財經熱議）<span class="badge bg-warning text-dark ms-2">2026-11-20 限縮追蹤對象</span></div>
+      <div class="mb-2"><span class="source-tag">Google News RSS</span> <span class="source-tag">Reddit（備援）</span> <span class="filter-tag">免 API key</span> <span class="filter-tag">標題中文化</span> <span class="filter-tag">僅追蹤對象相關文章（2026-11-20 起）</span></div>
+      <div><small class="text-muted">① 社群／財經熱議：</small> Google News RSS（華爾街板追蹤對象查詢 ＋ 中文財經追蹤對象查詢，OR 語法針對七巨頭＋SpaceX＋Anthropic），兩路輪流合併取前 5，過濾對帳單炫耀文；<b>標題需命中追蹤對象關鍵字才收錄</b></div>
+      <div><small class="text-muted">追蹤對象：</small> AAPL 蘋果 &bull; MSFT 微軟 &bull; NVDA 輝達 &bull; GOOGL 谷歌 &bull; AMZN 亞馬遜 &bull; META &bull; TSLA 特斯拉 &bull; SPCX(SpaceX) &bull; ANT(Anthropic)（中英文關鍵字皆比對；裸代碼 spx/ant 易誤中不採用）</div>
       <div><small class="text-muted">② Reddit 直連：</small> 僅在①空時才嘗試（<b>2026-11-13 起 Reddit 已封鎖匿名存取，RSS/JSON/old.reddit 一律 403 或 429，本機與 Render 皆同</b>）</div>
       <div><small class="text-muted">已取消：</small> 美股熱門搜尋 Top 8（Yahoo trending，2026-11-16 起依用戶指示停用）</div>
       <div><small class="text-muted">未納入：</small> PTT（Render 資料中心 IP 遭全面 403 封鎖）• Threads（JS 登入殼、無匿名熱門端點）• X（登入牆、Nitter 已停止、API 付費）</div>
