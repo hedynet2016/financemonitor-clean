@@ -71,6 +71,8 @@ logger = logging.getLogger(__name__)
 #   FOMC 跨日者，date 已調整為「台北時間對應日期」
 # - 財報日期為「預估值」，實際日期以各公司 IR 公告為準，建議每季校準一次
 # - SpaceX 於 2026/6/12 在納斯達克上市（代碼 SPCX），已列入財報追蹤
+# - [2026-11-20] Anthropic 已於 2026/11/19 在納斯達克上市（代碼 ANT，
+#   IPO 價 83 美元、史上最大 IPO），SPCX/ANT 均改為正式財報追蹤
 # - 每年初需更新此資料表（官方行事曆通常在年底前公布下年度日程）
 # ══════════════════════════════════════════════════════════════════════
 FINANCIAL_CALENDAR_2026 = [
@@ -97,9 +99,10 @@ FINANCIAL_CALENDAR_2026 = [
     {'date': '2026-11-03', 'category': '財報', 'title': 'SPACEX Q3 財報', 'ticker': 'SPCX', 'note': '預估日'},
     {'date': '2026-11-18', 'category': '財報', 'title': 'NVIDIA FY2027 Q3 財報', 'ticker': 'NVDA', 'note': '預估日'},
     {'date': '2026-12-10', 'category': '財報', 'title': 'AVGO 博通 FY2026 Q4 財報', 'ticker': 'AVGO', 'note': '預估日'},
-    # ── [2026-11-20] 未上市追蹤對象財報（非公開申報，日期為市場預估）──
-    {'date': '2027-01-29', 'category': '財報', 'title': 'SPACEX Q4 財報', 'ticker': 'SPCX', 'note': '預估日（未上市，非正式申報）'},
-    {'date': '2027-02-04', 'category': '財報', 'title': 'ANTHROPIC Q4 財報', 'ticker': 'ANT', 'note': '預估日（未上市，非正式申報）'},
+    # ── [2026-11-20] 追蹤對象財報（SPCX 2026-06-12、ANT 2026-11-19 已上市，
+    #    日期為預估值，以公司 IR 公告為準）──────────────────────────────
+    {'date': '2027-01-29', 'category': '財報', 'title': 'SPACEX Q4 財報', 'ticker': 'SPCX', 'note': '預估日'},
+    {'date': '2027-02-04', 'category': '財報', 'title': 'ANTHROPIC Q4 財報（上市後首次）', 'ticker': 'ANT', 'note': '預估日'},
 ]
 
 # 星期中文對照（datetime.weekday(): 0=Monday）
@@ -465,8 +468,8 @@ class NewsMonitor:
         self._earnings_cache_time: Optional[datetime] = None
         self._earnings_cache_ttl_hours: int = 12
         # 科技七巨頭公司名稱對照表(用於財報關鍵字過濾)
-        # [2026-11-20] 依用戶指示新增追蹤對象 SPCX(SpaceX) 與 ANT(Anthropic)，
-        # 兩家皆未上市，無正式財報申報日，媒體財務報導（營收/估值）納入追蹤
+        # [2026-11-20] 新增追蹤對象 SPCX(SpaceX，2026-06-12 上市) 與
+        # ANT(Anthropic，2026-11-19 上市)，追蹤其正式財報與媒體財務報導
         self.magnificent7 = {
             'AAPL': {'name': 'Apple', 'zh': '蘋果'},
             'MSFT': {'name': 'Microsoft', 'zh': '微軟'},
@@ -476,9 +479,10 @@ class NewsMonitor:
             'NVDA': {'name': 'NVIDIA', 'zh': '輝達'},
             'META': {'name': 'Meta', 'zh': 'Meta'},
             'TSLA': {'name': 'Tesla', 'zh': '特斯拉'},
-            # 未上市追蹤對象：patterns 覆寫（短代碼 ANT/S 系列易誤中，僅用公司名匹配）
+            # [2026-11-20] 已上市追蹤對象：SPCX 可安全加入代碼匹配；
+            # ANT 裸代碼仍易誤中（want/plant/contract），僅用公司名匹配
             'SPCX': {'name': 'SpaceX', 'zh': 'SpaceX',
-                     'patterns': ['spacex']},
+                     'patterns': ['spacex', 'spcx']},
             'ANT':  {'name': 'Anthropic', 'zh': 'Anthropic',
                      'patterns': ['anthropic']},
         }
@@ -501,8 +505,9 @@ class NewsMonitor:
             'GOOGL': {'name': 'Alphabet',          'zh': '谷歌',       'patterns': ['googl', 'google', 'alphabet', 'gemini', '谷歌', 'google cloud']},
             'NVDA':  {'name': 'NVIDIA',            'zh': '輝達',       'patterns': ['nvda', 'nvidia', '輝達', '黑威爾', 'blackwell', 'h100', 'h200', 'gb200']},
             'LITE':  {'name': 'Lumentum',          'zh': 'Lumentum',   'patterns': ['lite', 'lumentum']},
-            # [2026-11-20] 新增追蹤對象：SpaceX 與 Anthropic（皆未上市，
-            # 以公司名/產品名匹配；'claude' 為 Anthropic 專屬產品名）
+            # [2026-11-20] 新增追蹤對象：SpaceX（2026-06-12 上市）與
+            # Anthropic（2026-11-19 上市）
+            # 以公司名/產品名匹配（'claude' 為 Anthropic 專屬產品名）
             'SPCX':  {'name': 'SpaceX',            'zh': 'SpaceX',     'patterns': ['spacex', 'starship', 'starlink']},
             'ANT':   {'name': 'Anthropic',         'zh': 'Anthropic',  'patterns': ['anthropic', 'claude']},
         }
@@ -3263,7 +3268,7 @@ class NewsMonitor:
             '超越預期', '優於預期', '低於預期', '年增', '季增',
         ]
 
-        # 科技七巨頭＋未上市追蹤對象(SPCX/ANT) 名稱/代碼(用於匹配)
+        # 科技七巨頭＋追蹤對象(SPCX/ANT，均已上市) 名稱/代碼(用於匹配)
         # [2026-11-20] 條目若提供 patterns 覆寫則優先採用，
         # 避免 'ant' 等短代碼在一般文字中誤命中（want/plant/contract…）
         company_patterns = {}

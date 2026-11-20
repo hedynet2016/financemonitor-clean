@@ -1012,7 +1012,7 @@ def tasks_view():
       <div class="mb-2"><span class="source-tag">10 來源</span> <span class="filter-tag">Mag 7 公司名</span> <span class="filter-tag">1 週內</span> <span class="filter-tag">12h 快取</span> <span class="filter-tag">僅重點財報（2026-11-09 起取消其他重要財報）</span></div>
       <div><small class="text-muted">抓取來源（10）：</small> CNBC &bull; WSJ &bull; Bloomberg &bull; MarketWatch &bull; Yahoo Finance &bull; Financial Times &bull; Seeking Alpha &bull; 科技新報 TechNews &bull; 財經M平方 MacroMicro &bull; Digitimes</div>
       <div><small class="text-muted">監控公司：</small> {" &bull; ".join(mag7)}</div>
-      <div><small class="text-muted">SPCX/ANT（2026-11-20 新增）：</small> SpaceX 與 Anthropic 皆未上市，無正式財報申報，以公司名匹配媒體財務報導（營收/估值/內部財務表現）</div>
+      <div><small class="text-muted">SPCX/ANT（2026-11-20 新增）：</small> SpaceX（2026-06-12 那斯達克上市）與 Anthropic（2026-11-19 那斯達克上市，IPO 價 83 美元、史上最大 IPO）均已上市，追蹤其正式財報；匹配以公司名為主（SPCX 代碼可安全比對，ANT 裸代碼易誤中不採用）</div>
     </div>
   </div>
 </div>
@@ -1058,7 +1058,7 @@ def tasks_view():
       <div class="fw-bold mb-1">財經行事曆（未來 30 天，由近到遠）</div>
       <div class="mb-2"><span class="source-tag">Fed / BLS 官方日程</span> <span class="filter-tag">財報為預估日</span> <span class="filter-tag">未來 30 天</span></div>
       <div><small class="text-muted">追蹤：</small> FOMC 利率決議 &bull; CPI 物價指數 &bull; 非農就業報告</div>
-      <div><small class="text-muted">財報：</small> TSMC &bull; TESLA &bull; NVIDIA &bull; MSFT &bull; AMZN &bull; GOOGL &bull; AVGO &bull; SPACEX(SPCX) &bull; ANTHROPIC(ANT)（預估日，以公司公告為準；SPCX/ANT 未上市、非正式申報）</div>
+      <div><small class="text-muted">財報：</small> TSMC &bull; TESLA &bull; NVIDIA &bull; MSFT &bull; AMZN &bull; GOOGL &bull; AVGO &bull; SPACEX(SPCX，2026-06-12 上市) &bull; ANTHROPIC(ANT，2026-11-19 上市)（預估日，以公司公告為準）</div>
     </div>
   </div>
 </div>
