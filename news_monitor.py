@@ -75,7 +75,7 @@ logger = logging.getLogger(__name__)
 #   IPO 價 83 美元、史上最大 IPO），SPCX/ANT 均改為正式財報追蹤
 # - 每年初需更新此資料表（官方行事曆通常在年底前公布下年度日程）
 # ══════════════════════════════════════════════════════════════════════
-FINANCIAL_CALENDAR_2026 = [
+FINANCIAL_CALENDAR = [  # 年度資料表（原 FINANCIAL_CALENDAR_2026，2026-11-20 改年份無關命名）
     # ── 聯準會 FOMC 利率決議 ────────────────────────────────────────
     {'date': '2026-09-17', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '台北時間 02:00 公布（含 SEP 點陣圖）'},
     {'date': '2026-10-29', 'category': 'FOMC',  'title': '聯準會 FOMC 利率決議', 'note': '台北時間 02:00 公布'},
@@ -3726,7 +3726,7 @@ class NewsMonitor:
         events: List[Dict] = []
         today = datetime.now().date()
         cutoff = today + timedelta(days=days)
-        for ev in FINANCIAL_CALENDAR_2026:
+        for ev in FINANCIAL_CALENDAR:
             try:
                 ev_date = datetime.strptime(ev['date'], '%Y-%m-%d').date()
             except (ValueError, KeyError):
