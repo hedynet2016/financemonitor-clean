@@ -97,6 +97,9 @@ FINANCIAL_CALENDAR_2026 = [
     {'date': '2026-11-03', 'category': '財報', 'title': 'SPACEX Q3 財報', 'ticker': 'SPCX', 'note': '預估日'},
     {'date': '2026-11-18', 'category': '財報', 'title': 'NVIDIA FY2027 Q3 財報', 'ticker': 'NVDA', 'note': '預估日'},
     {'date': '2026-12-10', 'category': '財報', 'title': 'AVGO 博通 FY2026 Q4 財報', 'ticker': 'AVGO', 'note': '預估日'},
+    # ── [2026-11-20] 未上市追蹤對象財報（非公開申報，日期為市場預估）──
+    {'date': '2027-01-29', 'category': '財報', 'title': 'SPACEX Q4 財報', 'ticker': 'SPCX', 'note': '預估日（未上市，非正式申報）'},
+    {'date': '2027-02-04', 'category': '財報', 'title': 'ANTHROPIC Q4 財報', 'ticker': 'ANT', 'note': '預估日（未上市，非正式申報）'},
 ]
 
 # 星期中文對照（datetime.weekday(): 0=Monday）
@@ -462,6 +465,8 @@ class NewsMonitor:
         self._earnings_cache_time: Optional[datetime] = None
         self._earnings_cache_ttl_hours: int = 12
         # 科技七巨頭公司名稱對照表(用於財報關鍵字過濾)
+        # [2026-11-20] 依用戶指示新增追蹤對象 SPCX(SpaceX) 與 ANT(Anthropic)，
+        # 兩家皆未上市，無正式財報申報日，媒體財務報導（營收/估值）納入追蹤
         self.magnificent7 = {
             'AAPL': {'name': 'Apple', 'zh': '蘋果'},
             'MSFT': {'name': 'Microsoft', 'zh': '微軟'},
@@ -471,6 +476,11 @@ class NewsMonitor:
             'NVDA': {'name': 'NVIDIA', 'zh': '輝達'},
             'META': {'name': 'Meta', 'zh': 'Meta'},
             'TSLA': {'name': 'Tesla', 'zh': '特斯拉'},
+            # 未上市追蹤對象：patterns 覆寫（短代碼 ANT/S 系列易誤中，僅用公司名匹配）
+            'SPCX': {'name': 'SpaceX', 'zh': 'SpaceX',
+                     'patterns': ['spacex']},
+            'ANT':  {'name': 'Anthropic', 'zh': 'Anthropic',
+                     'patterns': ['anthropic']},
         }
 
         # ── AI 動能觀察:AI 資本支出 & Token 需求變化 ────────────────────
@@ -491,6 +501,10 @@ class NewsMonitor:
             'GOOGL': {'name': 'Alphabet',          'zh': '谷歌',       'patterns': ['googl', 'google', 'alphabet', 'gemini', '谷歌', 'google cloud']},
             'NVDA':  {'name': 'NVIDIA',            'zh': '輝達',       'patterns': ['nvda', 'nvidia', '輝達', '黑威爾', 'blackwell', 'h100', 'h200', 'gb200']},
             'LITE':  {'name': 'Lumentum',          'zh': 'Lumentum',   'patterns': ['lite', 'lumentum']},
+            # [2026-11-20] 新增追蹤對象：SpaceX 與 Anthropic（皆未上市，
+            # 以公司名/產品名匹配；'claude' 為 Anthropic 專屬產品名）
+            'SPCX':  {'name': 'SpaceX',            'zh': 'SpaceX',     'patterns': ['spacex', 'starship', 'starlink']},
+            'ANT':   {'name': 'Anthropic',         'zh': 'Anthropic',  'patterns': ['anthropic', 'claude']},
         }
         # AI 資本支出 & Token 需求相關關鍵字(英文+中文)
         self.ai_momentum_keywords = [
@@ -1872,7 +1886,10 @@ class NewsMonitor:
 
     # ── 每日熱門新聞:主題關鍵字白名單 ─────────────────────────────────────
     # 只保留標題或摘要中包含以下關鍵字的文章
-    # 僅關注: 美股七巨頭 (Magnificent Seven) + OpenAI / SpaceX / Anthropic
+    # 僅關注: 美股七巨頭 (Magnificent Seven)
+    #         + OpenAI / SPCX(SpaceX) / ANT(Anthropic)
+    # [2026-11-20] SPCX/ANT 追蹤以公司全名匹配（spacex/anthropic）；
+    # 代碼 'spx'（S&P 500）與 'ant'（一般單字）易誤命中，不採用
     TOPIC_KEYWORDS = [
         # 七巨頭 - Apple
         'apple', 'aapl',
@@ -1888,7 +1905,7 @@ class NewsMonitor:
         'meta', 'facebook',
         # 七巨頭 - Tesla
         'tesla', 'tsla',
-        # OpenAI / SpaceX / Anthropic
+        # OpenAI / SPCX(SpaceX) / ANT(Anthropic)
         'openai', 'spacex', 'anthropic',
     ]
 
@@ -3246,12 +3263,17 @@ class NewsMonitor:
             '超越預期', '優於預期', '低於預期', '年增', '季增',
         ]
 
-        # 科技七巨頭名稱/代碼(用於匹配)
+        # 科技七巨頭＋未上市追蹤對象(SPCX/ANT) 名稱/代碼(用於匹配)
+        # [2026-11-20] 條目若提供 patterns 覆寫則優先採用，
+        # 避免 'ant' 等短代碼在一般文字中誤命中（want/plant/contract…）
         company_patterns = {}
         for ticker, info in self.magnificent7.items():
-            patterns = [ticker.lower(), info['name'].lower()]
-            if info['zh']:
-                patterns.append(info['zh'].lower())
+            if info.get('patterns'):
+                patterns = list(info['patterns'])
+            else:
+                patterns = [ticker.lower(), info['name'].lower()]
+                if info['zh']:
+                    patterns.append(info['zh'].lower())
             company_patterns[ticker] = patterns
 
         for src in earnings_rss_sources:
@@ -3743,7 +3765,7 @@ class NewsMonitor:
         section += f"{'='*40}\n"
         section += (
             "📋 追蹤: FOMC / CPI / 非農就業 + "
-            "TSMC / TESLA / NVIDIA / MSFT / AMZN / GOOGL / AVGO / SPCX 財報\n"
+            "TSMC / TESLA / NVIDIA / MSFT / AMZN / GOOGL / AVGO / SPCX / ANT 財報\n"
         )
         section += "🕐 以上時間均為台灣時間（Asia/Taipei）\n"
         section += f"🗓 台灣時間基準: {taipei_fmt}\n"

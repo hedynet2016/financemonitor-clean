@@ -922,7 +922,7 @@ def tasks_view():
     # Build block info from code constants
     news_sources = ["CNBC", "WSJ", "Bloomberg", "MarketWatch", "Yahoo Finance", "FT", "Seeking Alpha", "TechNews", "MacroMicro", "Digitimes"]
     sec_api_13f = ["Berkshire Hathaway", "ARK Invest", "Baupost Group", "Appaloosa", "Tiger Global", "Bridgewater", "Soros Fund", "Dalio", "Norges Bank (挪威主權基金)", "Temasek (新加坡淡馬錫)"]
-    mag7 = ["AAPL (Apple)", "MSFT (Microsoft)", "NVDA (NVIDIA)", "GOOGL (Alphabet)", "AMZN (Amazon)", "META (Meta)", "TSLA (Tesla)"]
+    mag7 = ["AAPL (Apple)", "MSFT (Microsoft)", "NVDA (NVIDIA)", "GOOGL (Alphabet)", "AMZN (Amazon)", "META (Meta)", "TSLA (Tesla)", "SPCX (SpaceX)", "ANT (Anthropic)"]
     vip_categories = ["川普家族（含川普本人）", "裴洛西夫婦", "國會交易（MTG/Khanna/Gottheimer/Tuberville/Green/Hagerty）", "科技名人（Musk/Gates/Thiel/Bezos/Zuckerberg/Cook/Huang）", "政商名人（Dimon/Fink/Ackman/Druckenmiller/Bloomberg）", "投資大師（Buffett/Munger/Burry/Wood/Dalio/Soros）"]
     bls_indicators = ["CPI (CUUR0000SA0)", "Core CPI (CUUR0000SA0L1E)", "PPI (WPSFD4)", "Unemployment (LNS14000000)", "Non-Farm Payrolls (CES0000000001)"]
     ict_sources = ["TechCrunch", "VentureBeat", "The Verge", "Wired", "MIT Tech Review", "Ars Technica", "AnandTech", "CNET", "Tom\u2019s Hardware", "Hacker News", "ACCUPASS (5 keywords)", "EventPlus (all)", "Huodongxing (5 keywords)", "Allevents.in (weekdays)"]
@@ -950,8 +950,8 @@ def tasks_view():
   <div class="d-flex align-items-start gap-3">
     <span class="block-date">📅 2026-06-25</span>
     <div class="flex-grow-1">
-      <div class="fw-bold mb-1">熱門財經新聞（七巨頭 + OpenAI/SpaceX/Anthropic）</div>
-      <div class="mb-2"><span class="source-tag">10 來源</span> <span class="filter-tag">僅限七巨頭 + OpenAI/SpaceX/Anthropic</span> <span class="filter-tag">1 週內</span> <span class="filter-tag">每來源最多 5 篇</span></div>
+      <div class="fw-bold mb-1">熱門財經新聞（七巨頭 + OpenAI/SPCX/ANT）</div>
+      <div class="mb-2"><span class="source-tag">10 來源</span> <span class="filter-tag">僅限七巨頭 + OpenAI/SPCX(SpaceX)/ANT(Anthropic)</span> <span class="filter-tag">1 週內</span> <span class="filter-tag">每來源最多 5 篇</span></div>
       <div><small class="text-muted">來源：</small> {" &bull; ".join(news_sources)}</div>
     </div>
   </div>
@@ -1008,10 +1008,11 @@ def tasks_view():
   <div class="d-flex align-items-start gap-3">
     <span class="block-date">📅 2026-06-25</span>
     <div class="flex-grow-1">
-      <div class="fw-bold mb-1">美股財報公布（科技七巨頭）</div>
+      <div class="fw-bold mb-1">美股財報公布（科技七巨頭＋SPCX/ANT）</div>
       <div class="mb-2"><span class="source-tag">10 來源</span> <span class="filter-tag">Mag 7 公司名</span> <span class="filter-tag">1 週內</span> <span class="filter-tag">12h 快取</span> <span class="filter-tag">僅重點財報（2026-11-09 起取消其他重要財報）</span></div>
       <div><small class="text-muted">抓取來源（10）：</small> CNBC &bull; WSJ &bull; Bloomberg &bull; MarketWatch &bull; Yahoo Finance &bull; Financial Times &bull; Seeking Alpha &bull; 科技新報 TechNews &bull; 財經M平方 MacroMicro &bull; Digitimes</div>
       <div><small class="text-muted">監控公司：</small> {" &bull; ".join(mag7)}</div>
+      <div><small class="text-muted">SPCX/ANT（2026-11-20 新增）：</small> SpaceX 與 Anthropic 皆未上市，無正式財報申報，以公司名匹配媒體財務報導（營收/估值/內部財務表現）</div>
     </div>
   </div>
 </div>
@@ -1022,7 +1023,7 @@ def tasks_view():
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">AI 動能觀察（資本支出 &amp; Token 需求）</div>
       <div class="mb-2"><span class="source-tag">11 來源</span> <span class="filter-tag">AI capex / token demand 關鍵字</span> <span class="filter-tag">1 週內</span> <span class="filter-tag">7 日去重</span></div>
-      <div><small class="text-muted">追蹤企業：</small> 台積電(TSMC) &bull; AVGO &bull; CRWV &bull; AMZN &bull; MSFT &bull; GOOGL &bull; NVDA &bull; LITE</div>
+      <div><small class="text-muted">追蹤企業：</small> 台積電(TSMC) &bull; AVGO &bull; CRWV &bull; AMZN &bull; MSFT &bull; GOOGL &bull; NVDA &bull; LITE &bull; <b>SPCX(SpaceX)</b> &bull; <b>ANT(Anthropic)</b>（2026-11-20 新增）</div>
       <div><small class="text-muted">SemiAnalysis（2026-11-18 新增）：</small> Substack feed 抓取免費文章（完全付費文章自動排除），標題英翻中＋超連結；主題即 AI 基建，命中關鍵字即收錄、不需企業匹配</div>
     </div>
   </div>
@@ -1057,7 +1058,7 @@ def tasks_view():
       <div class="fw-bold mb-1">財經行事曆（未來 30 天，由近到遠）</div>
       <div class="mb-2"><span class="source-tag">Fed / BLS 官方日程</span> <span class="filter-tag">財報為預估日</span> <span class="filter-tag">未來 30 天</span></div>
       <div><small class="text-muted">追蹤：</small> FOMC 利率決議 &bull; CPI 物價指數 &bull; 非農就業報告</div>
-      <div><small class="text-muted">財報：</small> TSMC &bull; TESLA &bull; NVIDIA &bull; MSFT &bull; AMZN &bull; GOOGL &bull; AVGO &bull; SPACEX(SPCX)（預估日，以公司公告為準）</div>
+      <div><small class="text-muted">財報：</small> TSMC &bull; TESLA &bull; NVIDIA &bull; MSFT &bull; AMZN &bull; GOOGL &bull; AVGO &bull; SPACEX(SPCX) &bull; ANTHROPIC(ANT)（預估日，以公司公告為準；SPCX/ANT 未上市、非正式申報）</div>
     </div>
   </div>
 </div>
