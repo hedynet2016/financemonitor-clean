@@ -1103,9 +1103,9 @@ def tasks_view():
     <span class="block-date">📅 2026-10-16</span>
     <div class="flex-grow-1">
       <div class="fw-bold mb-1">自訂多空評分指標（每日 08:00）</div>
-      <div class="mb-2"><span class="source-tag">Yahoo Finance</span> <span class="source-tag">TradingView 經濟行事曆</span> <span class="source-tag">證交所 FMTQIK</span> <span class="filter-tag">每項 5/10/15 分</span> <span class="filter-tag">合計 25~75 分</span></div>
-      <div><small class="text-muted">五項指標：</small> ① 最新費半表現（費城半導體指數 ^SOX 單日漲跌幅：漲&gt;5% 15分／跌&gt;5% 5分／其間 10分，2026-11-06 起取代美股前 20 大）&bull; ② 美國 CPI（實際 vs 預期）&bull; ③ 美國非農就業（實際 vs 預期）&bull; ④ 國際油價（Brent 布蘭特單日漲跌 ±3%）&bull; ⑤ 前一日台股（加權指數漲跌點數）</div>
-      <div><small class="text-muted">判定：</small> 合計 &gt; 60 分 → 建議做多 🔴；&lt; 50 分 → 建議做空 🟢；50 ~ 60 分 → 觀望 ⚪</div>
+      <div class="mb-2"><span class="source-tag">Yahoo Finance</span> <span class="source-tag">TradingView 經濟行事曆</span> <span class="source-tag">證交所 FMTQIK</span> <span class="filter-tag">每項 5/10/15 分</span> <span class="filter-tag">合計 30~90 分</span></div>
+      <div><small class="text-muted">六項指標：</small> ① 最新費半表現（費城半導體指數 ^SOX 單日漲跌幅：漲&gt;5% 15分／跌&gt;5% 5分／其間 10分，2026-11-06 起取代美股前 20 大）&bull; ② 美國 CPI（實際 vs 預期）&bull; ③ 美國非農就業（實際 vs 預期）&bull; ④ 國際油價（Brent 布蘭特單日漲跌 ±3%）&bull; ⑤ 前一日台股（加權指數漲跌點數）&bull; ⑥ NVDA 收盤表現（單日漲跌幅：漲&gt;3% 15分／跌&gt;3% 5分／其間 10分，2026-11-20 新增）</div>
+      <div><small class="text-muted">判定：</small> 合計 &gt; 70 分 → 建議做多 🔴；&lt; 60 分 → 建議做空 🟢；60 ~ 70 分 → 觀望 ⚪（2026-11-20 項數 5→6，門檻自 &gt;60／&lt;50 同步 +10）</div>
       <div><small class="text-muted">比對：</small> 11:30 台股推播以台指期（TXF 對昨結算）比對方向命中率並累計近 10 次勝率</div>
       <div><small class="text-muted">診斷：</small> <code>/api/sentiment-test</code> &bull; <code>/api/state-log</code></div>
     </div>
@@ -2078,7 +2078,7 @@ def api_bot_status():
 
 @app.route("/api/sentiment-test")
 def api_sentiment_test():
-    """自訂多空評分指標診斷：五項指標分數、合計與建議方向（不寫入狀態檔）。"""
+    """自訂多空評分指標診斷：六項指標分數、合計與建議方向（不寫入狀態檔）。"""
     import sentiment_index as senti_mod
 
     def _plain(data):

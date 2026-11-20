@@ -4084,7 +4084,7 @@ class NewsMonitor:
     # ■ [2026-10-16] 自訂多空評分指標  五項指標合計分數(使用者自訂)
     # ════════════════════════════════════════════════════════════════
     def _format_sentiment_index_section(self, idx: Dict) -> str:
-        """格式化自訂多空評分指標區塊(五項指標，合計 >50 做多 / <50 做空)"""
+        """格式化自訂多空評分指標區塊(六項指標，合計 >70 做多 / <60 做空)"""
         try:
             import sentiment_index as senti_mod
             return senti_mod.format_section(idx)

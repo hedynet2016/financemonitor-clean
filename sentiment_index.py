@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """sentiment_index.py — 自訂多空評分指標（2026-10-16 新增）
 
-使用者自訂的五項指標，每項 5 / 10 / 15 分，合計 25 ~ 75 分（基準 50 分）：
+使用者自訂的六項指標，每項 5 / 10 / 15 分，合計 30 ~ 90 分（基準 60 分）：
 
   1. 最新費半表現        費城半導體指數（^SOX）單日漲跌幅
                          [2026-11-06] 自「美股前 20 大平均漲跌 ±3%」改為：
@@ -15,8 +15,13 @@
                          跌 > 3% → 15 分（低於預期，偏多）；其他 → 10 分
   5. 前一日台股表現      加權指數漲跌點數
                          漲 > 500 點 → 5 分；跌 > 500 點 → 15 分；其他 → 10 分
+  6. 最新 NVDA 收盤表現  NVDA 單日漲跌幅（Yahoo NVDA 日線）
+                         [2026-11-20] 漲 > 3% → 15 分；跌 > 3% → 5 分；
+                         ±3% 之間 → 10 分
 
-判定：合計 > 60 → 建議做多 🔴；< 50 → 建議做空 🟢；50 ~ 60 → 觀望 ⚪
+判定：合計 > 70 → 建議做多 🔴；< 60 → 建議做空 🟢；60 ~ 70 → 觀望 ⚪
+      [2026-11-20] 項數 5→6 使中性合計 50→60，門檻同步 +10 以維持
+      「中性觀望」設計語意（原 >60 做多／<50 做空）
 比對：11:30 以台指期（TXF）漲跌比對方向命中率（見 format_hitrate_section）
 
 資料來源（皆免 API key）：
@@ -24,6 +29,7 @@
   - CPI / 非農：        TradingView 經濟行事曆（含 forecast / actual）
   - 布蘭特油價：        Yahoo BZ=F 日線（最新收盤 vs 前一交易日漲跌幅）
   - 前一日台股：        證交所 FMTQIK（發行量加權股價指數＋漲跌點數），Yahoo ^TWII 備援
+  - NVDA 股價：         Yahoo NVDA 日線（最新收盤 vs 前一交易日漲跌幅）
   - WTI 油價參考：      Yahoo CL=F（僅供顯示，不計分）
 """
 
@@ -47,10 +53,10 @@ TPE = ZoneInfo('Asia/Taipei') if ZoneInfo else timezone(timedelta(hours=8))
 # ── 常數 ────────────────────────────────────────────────────────────
 STATE_FILE = 'sentiment_index_state.json'
 SCORE_BEAR, SCORE_NEUTRAL, SCORE_BULL = 5, 10, 15
-BASE_TOTAL = 50                  # 中性基準（僅用於顯示）
-BULL_THRESHOLD = 60              # 總分 > 60 → 建議做多
-BEAR_THRESHOLD = 50              # 總分 < 50 → 建議做空；50 ~ 60 → 觀望
-TOTAL_MAX = 75
+BASE_TOTAL = 60                  # 中性基準（僅用於顯示；[2026-11-20] 5→6 項 50→60）
+BULL_THRESHOLD = 70              # 總分 > 70 → 建議做多（[2026-11-20] 隨項數 +10）
+BEAR_THRESHOLD = 60              # 總分 < 60 → 建議做空；60 ~ 70 → 觀望
+TOTAL_MAX = 90                   # [2026-11-20] 5→6 項 75→90
 SENTI_MAX_AGE_DAYS = 45          # CPI / 非農：約 1.5 個月，確保月度指標下次公布前仍有效
 HISTORY_MAX = 60                 # 命中率歷史保留筆數
 HIT_STATS_N = 10                 # 顯示近 N 次命中率
@@ -59,6 +65,8 @@ OIL_MOVEMENT_THRESHOLD_PCT = 3.0 # Brent 布蘭特油價單日漲跌幅門檻（
 TAIEX_THRESHOLD_PTS = 500.0      # 前一日台股漲跌門檻（點）
 SOX_INDEX_SYMBOL = '^SOX'        # 費城半導體指數（第 1 項計分來源）
 SOX_MOVEMENT_THRESHOLD_PCT = 5.0 # 費半指數單日漲跌幅門檻（%）
+NVDA_SYMBOL = 'NVDA'             # 輝達（第 6 項計分來源，2026-11-20 新增）
+NVDA_MOVEMENT_THRESHOLD_PCT = 3.0  # NVDA 單日漲跌幅門檻（%）
 
 _UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
        '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36')
@@ -359,6 +367,52 @@ def score_prev_taiex(data: Dict) -> Tuple[int, str]:
     return SCORE_NEUTRAL, f'加權指數 {ch:+,.0f} 點（未達 ±500 點）'
 
 
+# ── 6. NVDA 收盤表現（單日漲跌幅 ±3%，2026-11-20 新增）────────────
+def fetch_nvda() -> Dict:
+    """NVDA 最新收盤與前一交易日漲跌幅（Yahoo NVDA 日線）"""
+    out = {'symbol': NVDA_SYMBOL, 'label': 'NVDA 輝達', 'date': None,
+           'last': None, 'prev': None, 'pct': None, 'source': None, 'error': None}
+    try:
+        d = _spark_response([NVDA_SYMBOL], '1mo').get(NVDA_SYMBOL) or {}
+    except Exception as e:
+        out['error'] = f'Yahoo NVDA {type(e).__name__}: {e}'
+        return out
+
+    seq = [(t, c) for t, c in zip(d.get('timestamp') or [], d.get('closes') or []) if c]
+    if len(seq) >= 2:
+        _, prev = seq[-2]
+        ct, last = seq[-1]
+    else:
+        # 備援：以 meta 的現價與前收計算
+        meta = d.get('meta') or {}
+        last = meta.get('regularMarketPrice')
+        prev = meta.get('chartPreviousClose') or meta.get('previousClose')
+        ct = meta.get('regularMarketTime')
+    if not last or not prev:
+        out['error'] = 'Yahoo NVDA 日線資料不足（<2 筆）'
+        return out
+    dt = _ts_to_dt(ct) if ct else None
+    out.update({'prev': float(prev), 'last': float(last),
+                'pct': (float(last) / float(prev) - 1) * 100,
+                'date': dt.astimezone(TPE).strftime('%Y-%m-%d') if dt else None,
+                'source': 'Yahoo Finance NVDA（輝達）'})
+    return out
+
+
+def score_nvda(data: Dict) -> Tuple[int, str]:
+    """NVDA 單日漲跌幅計分（[2026-11-20] 使用者指定規格）：
+       漲 > 3% → 15 分；跌 > 3% → 5 分；±3% 之間（含無資料）→ 10 分
+    """
+    pct = (data or {}).get('pct')
+    if pct is None:
+        return SCORE_NEUTRAL, '無法取得 NVDA 資料（視為無最新數據）'
+    if pct > NVDA_MOVEMENT_THRESHOLD_PCT:
+        return SCORE_BULL, f'NVDA 漲 {pct:+.2f}%（漲逾 3%）'
+    if pct < -NVDA_MOVEMENT_THRESHOLD_PCT:
+        return SCORE_BEAR, f'NVDA 跌 {pct:+.2f}%（跌逾 3%）'
+    return SCORE_NEUTRAL, f'NVDA 漲跌 {pct:+.2f}%（±3% 之間）'
+
+
 # ── 4. 國際油價（Brent 布蘭特，單日漲跌幅 ±3%）───────────────────
 def _ts_to_dt(ts) -> Optional[datetime]:
     """Yahoo spark 時間戳（秒或毫秒）→ UTC datetime"""
@@ -446,7 +500,10 @@ def fetch_oil_spot() -> List[Dict]:
 
 # ── 主流程 ──────────────────────────────────────────────────────────
 def decide_direction(total: Optional[int]) -> Optional[str]:
-    """依合計分數決定建議方向：> 60 → 做多；< 50 → 做空；50 ~ 60 → 觀望"""
+    """依合計分數決定建議方向：> 70 → 做多；< 60 → 做空；60 ~ 70 → 觀望
+
+    [2026-11-20] 項數 5→6 使中性合計 50→60，門檻同步 +10。
+    """
     if total is None:
         return None
     if total > BULL_THRESHOLD:
@@ -457,7 +514,7 @@ def decide_direction(total: Optional[int]) -> Optional[str]:
 
 
 def fetch_sentiment_index(run_time: Optional[datetime] = None) -> Dict:
-    """計算自訂多空評分指標（五項）"""
+    """計算自訂多空評分指標（六項，[2026-11-20] 新增 NVDA）"""
     run_time = run_time or now_tpe()
     idx = {'run_time': run_time.strftime('%Y-%m-%d %H:%M'),
            'date': run_time.strftime('%Y-%m-%d'),
@@ -493,6 +550,12 @@ def fetch_sentiment_index(run_time: Optional[datetime] = None) -> Dict:
     s, why = score_prev_taiex(tw)
     idx['items'].append({'key': 'tw', 'name': '前一日台股表現', 'score': s, 'why': why,
                          'data': tw})
+
+    # 6. 最新 NVDA 收盤表現（[2026-11-20] 新增，單日漲跌幅 ±3%）
+    nvda = fetch_nvda()
+    s, why = score_nvda(nvda)
+    idx['items'].append({'key': 'nvda', 'name': '最新 NVDA 收盤表現',
+                         'score': s, 'why': why, 'data': nvda})
 
     idx['oil_spot'] = fetch_oil_spot()
 
@@ -583,7 +646,7 @@ def evaluate_signal(date_str: str, ref: float, last: float,
     """依 08:00 建議方向計算當日命中結果（不寫檔）
 
     命中定義：建議做多且台指期上漲，或建議做空且台指期下跌；
-    觀望（50 ~ 60 分）不列入命中率。
+    觀望（60 ~ 70 分）不列入命中率。
 
     [2026-10-22] 模擬損益改為使用者指定規格（由 stock_monitor 傳入 sim）：
       多單 5 口、停損 20 點；空單 2 口、停損 50 點；單向最大虧損 5,000 元
@@ -664,7 +727,8 @@ def format_section(idx: Dict) -> str:
         return section
 
     section += f"🗓 資料截止：{idx.get('run_time', '—')}（台灣時間）\n\n"
-    emoji = {'us': '1️⃣', 'cpi': '2️⃣', 'nfp': '3️⃣', 'oil': '4️⃣', 'tw': '5️⃣'}
+    emoji = {'us': '1️⃣', 'cpi': '2️⃣', 'nfp': '3️⃣', 'oil': '4️⃣', 'tw': '5️⃣',
+             'nvda': '6️⃣'}
     for it in idx['items']:
         key, data = it['key'], it.get('data') or {}
         section += f"{emoji.get(key, '▪️')} <b>{it['name']}</b>\n"
@@ -708,6 +772,16 @@ def format_section(idx: Dict) -> str:
                             f"<b>{data['close']:,.2f}</b>（{data['change']:+,.2f} 點）\n")
             else:
                 section += f"   ⚠️ {html.escape(str(data.get('error') or '無前一日資料'))[:120]}\n"
+        elif key == 'nvda':
+            if data.get('pct') is not None:
+                date_disp = data.get('date') or '最新交易日'
+                section += (f"   {date_disp} 收盤 <b>{data['last']:,.2f}</b> 美元"
+                            f"（{data['pct']:+.2f}%；前一日 {data['prev']:,.2f}）\n")
+                if data.get('source'):
+                    section += f"   來源：{html.escape(str(data['source']))}\n"
+            else:
+                section += (f"   ⚠️ {html.escape(str(data.get('error') or '無 NVDA 資料'))[:120]}"
+                            f"（視為 10 分）\n")
         section += f"   → 判定：{html.escape(it['why'])} → <b>{_score_label(it['score'])}</b>\n\n"
 
     spot = idx.get('oil_spot') or []
@@ -732,9 +806,9 @@ def format_section(idx: Dict) -> str:
         section += f"（{st['hits']}/{st['total']}）\n"
     section += "🕦 11:30 台股推播將以台指期比對方向命中率\n"
     section += f"{'='*40}\n"
-    section += ("📐 評分：費半指數漲跌 ±5%｜CPI｜非農｜Brent 布蘭特油價｜前一日台股，"
-                "各 5/10/15 分（合計 25~75）\n")
-    section += "📋 來源: Yahoo Finance（^SOX / BZ=F） / TradingView 經濟行事曆 / 台灣證交所\n"
+    section += ("📐 評分：費半指數漲跌 ±5%｜CPI｜非農｜Brent 布蘭特油價｜前一日台股｜NVDA 漲跌 ±3%，"
+                "各 5/10/15 分（合計 30~90）\n")
+    section += "📋 來源: Yahoo Finance（^SOX / NVDA / BZ=F） / TradingView 經濟行事曆 / 台灣證交所\n"
     section += "🔴 偏多 ／ 🟢 偏空（台股慣例）\n"
     return section
 
@@ -777,7 +851,7 @@ def format_hitrate_section(taifex: Dict, run_time: Optional[datetime] = None,
     elif rec and rec.get('hit') is False:
         lines.append("　❌ <b>未命中</b>（方向相反）")
     else:
-        lines.append("　⚪ 觀望（50 ~ 60 分），不列入命中率")
+        lines.append("　⚪ 觀望（60 ~ 70 分），不列入命中率")
     if rec and rec.get('pnl') is not None:
         pnl = rec['pnl']
         side = (sim or {}).get('long' if direction == '做多' else 'short') or {}
