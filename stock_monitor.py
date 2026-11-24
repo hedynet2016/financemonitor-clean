@@ -84,6 +84,9 @@ FUT_STATE_FILE = "taiex_state.json"
 # 經使用者要求收回範圍至監控清單；資料來源維持證交所 MIS 即時行情 API
 # 批次查詢，量價即時、每半小時重排（解決舊版 Yahoo 資料不動態的問題）。
 TW_MIS_BATCH = 80                         # MIS API 每批查詢檔數
+TW_MIS_RETRY = 3                          # [2026-11-25] 每批最多嘗試次數
+TW_MIS_RETRY_WAIT = (5, 15)               # [2026-11-25] 第 2/3 次嘗試前等待秒數
+TW_MIS_COVERAGE = 0.5                     # [2026-11-25] msgArray 覆蓋率低於此值視為限流失效（重試）
 TW_VOL_TOP_N = 10                         # 成交量排行取前 N 名
 TW_DROP_POOL = 50                         # 跌幅排行母體（成交量前 N 名）
 TW_DROP_MIN = -3.0                        # 跌幅門檻（%）
@@ -542,16 +545,38 @@ class StockMonitor:
         for i in range(0, len(items), TW_MIS_BATCH):
             batch = items[i:i + TW_MIS_BATCH]
             ex_ch = "|".join(f"{it['ex']}_{it['code']}.tw" for it in batch)
-            try:
-                resp = requests.get(TW_MIS_URL, params={
-                    "ex_ch": ex_ch, "json": "1", "delay": "0",
-                    "_": int(time.time() * 1000),
-                }, headers=headers, timeout=20)
-                resp.raise_for_status()
-                arr = resp.json().get("msgArray", [])
-            except Exception as e:
+            arr, rtcode = None, None
+            # [2026-11-25] 每批重試：TWSE MIS 對雲端 IP 有間歇性限流，
+            # 2026-11-24 實測 09:01 尚回 5/14 筆、09:30 起整天回空，
+            # 故空回應或覆蓋率過低時以退避重試，全部失敗才走備援。
+            for attempt in range(TW_MIS_RETRY):
+                try:
+                    resp = requests.get(TW_MIS_URL, params={
+                        "ex_ch": ex_ch, "json": "1", "delay": "0",
+                        "_": int(time.time() * 1000),
+                    }, headers=headers, timeout=20)
+                    resp.raise_for_status()
+                    j = resp.json()
+                    rtcode = str(j.get('rtcode') or '')
+                    arr = j.get("msgArray") or []
+                except Exception as e:
+                    arr = None
+                    logger.warning(f"MIS batch {i // TW_MIS_BATCH + 1} "
+                                   f"attempt {attempt + 1} failed: {e}")
+                if arr:
+                    if len(arr) >= max(1, int(len(batch) * TW_MIS_COVERAGE)):
+                        break   # 覆蓋率合格，採用
+                    logger.warning(f"MIS batch {i // TW_MIS_BATCH + 1} partial "
+                                   f"coverage {len(arr)}/{len(batch)} "
+                                   f"(rtcode={rtcode}), retrying...")
+                else:
+                    logger.warning(f"MIS batch {i // TW_MIS_BATCH + 1} empty "
+                                   f"(rtcode={rtcode}), retrying...")
+                if attempt < TW_MIS_RETRY - 1:
+                    time.sleep(TW_MIS_RETRY_WAIT[min(attempt, len(TW_MIS_RETRY_WAIT) - 1)])
+
+            if not arr:
                 failed_batches += 1
-                logger.warning(f"MIS batch {i // TW_MIS_BATCH + 1} failed: {e}")
                 continue
 
             for m in arr:
@@ -589,7 +614,7 @@ class StockMonitor:
                     'is_etf': self._is_tw_etf_code(code),
                     'timestamp': ts,
                 })
-            time.sleep(0.5)   # 降低 MIS 速率限制風險
+            time.sleep(1.5)   # 降低 MIS 速率限制風險（2026-11-25 由 0.5s 調升）
 
         logger.info(f"TW MIS realtime: {len(quotes)}/{len(items)} quotes "
                     f"({failed_batches} failed batches)")
@@ -1309,8 +1334,13 @@ class StockMonitor:
 
     def generate_tw_drop_message(self, vol_rank: Dict[str, List[Dict]],
                                  drop_data: Dict[str, List[Dict]],
-                                 fut_quotes: Dict[str, Dict] = None) -> str:
-        """生成台股推播訊息：監控清單成交量排行（個股/ETF）＋跌幅排行＋台指期"""
+                                 fut_quotes: Dict[str, Dict] = None,
+                                 source_label: str = None) -> str:
+        """生成台股推播訊息：監控清單成交量排行（個股/ETF）＋跌幅排行＋台指期
+
+        [2026-11-25] 新增 source_label：MIS 失效退回備援時，標題與警示
+        如實標示資料來源與延遲性質（原版一律標「MIS 即時」造成誤導）。
+        """
         taipei_tz = pytz.timezone('Asia/Taipei')
         current_time = datetime.now(taipei_tz)
 
@@ -1319,11 +1349,19 @@ class StockMonitor:
         drop_stocks = drop_data.get('stocks', [])
         drop_etfs = drop_data.get('etfs', [])
 
+        label = source_label or "證交所 MIS 即時"
+        is_realtime = 'MIS' in label
+
         message = f"""
 🇹🇼 <b>台股監控（監控清單即時排行）</b>
 📅 {current_time.strftime('%Y年%m月%d日 %H:%M')} (台灣時間)
 
 """
+        if not is_realtime:
+            message += (
+                f"⚠️ <b>證交所 MIS 即時來源暫時失效</b>，本則改用備援資料"
+                f"（{label}），數值可能與即時盤勢不同，僅供參考\n\n"
+            )
 
         def _tw_code(item: Dict) -> str:
             return item.get('code') or self._strip_tw_suffix(item.get('ticker', ''))
@@ -1347,24 +1385,26 @@ class StockMonitor:
         # ── 個股成交量排行 ──
         message += f"{'='*35}\n"
         message += f"📈 <b>台股個股成交量排行</b>\n"
-        message += f"（監控清單 {len(top_stocks)} 檔，MIS 即時，每半小時更新）\n"
+        message += f"（監控清單 {len(top_stocks)} 檔｜{label}｜每半小時更新）\n"
         message += f"{'='*35}\n\n"
         if top_stocks:
             for s in top_stocks:
                 message += _tw_line(s) + "\n"
         else:
-            message += "（無即時資料）\n\n"
+            message += ("（MIS 即時資料暫時無法取得" if is_realtime
+                        else "（備援來源不含成交量排行") + "）\n\n"
 
         # ── ETF 成交量排行 ──
         message += f"{'='*35}\n"
         message += f"📊 <b>台股 ETF 成交量排行</b>\n"
-        message += f"（監控清單 {len(top_etfs)} 檔，MIS 即時，每半小時更新）\n"
+        message += f"（監控清單 {len(top_etfs)} 檔｜{label}｜每半小時更新）\n"
         message += f"{'='*35}\n\n"
         if top_etfs:
             for e in top_etfs:
                 message += _tw_line(e) + "\n"
         else:
-            message += "（無即時資料）\n\n"
+            message += ("（MIS 即時資料暫時無法取得" if is_realtime
+                        else "（備援來源不含成交量排行") + "）\n\n"
 
         # ── 跌幅排行（成交量前 50 名中跌幅 >3%）──
         message += f"{'='*35}\n"
@@ -1409,7 +1449,7 @@ class StockMonitor:
 
         message += f"{'='*35}\n"
         message += f"🤖 由 WorkBuddy 股票監控系統自動生成\n"
-        message += f"📊 數據來源: {getattr(self, '_tw_data_source', 'Yahoo Finance')} / 期交所 MIS"
+        message += f"📊 數據來源: {label} / 期交所 MIS"
 
         return message
 
@@ -1483,15 +1523,22 @@ class StockMonitor:
             if tw_quotes:
                 vol_rank = self.rank_tw_volume(tw_quotes)
                 drop_data = self.rank_tw_drop(tw_quotes)
-                self._tw_data_source = "證交所 MIS 即時行情（監控清單）"
+                source_label = "證交所 MIS 即時"
             else:
                 # MIS 來源失效時退回 Yahoo/TWSE OpenAPI（同一份監控清單）
-                logger.warning("TW market-wide quotes empty, falling back to fixed watchlist")
+                # [2026-11-25] 退回時明確標示來源與延遲性質，
+                # 避免 2026-11-24「標題寫 MIS 即時、內容卻非即時」的誤導
+                logger.warning("TW MIS realtime unavailable after retries, "
+                               "falling back to Yahoo/TWSE OpenAPI")
                 tw_stock_data = self.get_tw_realtime_data()
                 tw_etf_data = self.get_tw_etf_data()
                 drop_data = self.calculate_drop_rankings(tw_stock_data, tw_etf_data)
                 vol_rank = {'stocks': [], 'etfs': []}
-                self._tw_data_source = getattr(self, '_tw_data_source', 'Yahoo Finance')
+                src = str(getattr(self, '_tw_data_source', 'Yahoo Finance'))
+                if 'OpenAPI' in src or 'TWSE' in src:
+                    source_label = "證交所 OpenAPI 前日收盤（備援，非即時）"
+                else:
+                    source_label = "Yahoo 延遲報價（備援）"
 
             # 台指期報價＋09:00 進場基準（獨立容錯）
             fut_quotes = {}
@@ -1523,7 +1570,9 @@ class StockMonitor:
 
             # 發送通知訊息
             logger.info("\nSending notification report...")
-            notification_message = self.generate_tw_drop_message(vol_rank, drop_data, fut_quotes=fut_quotes)
+            notification_message = self.generate_tw_drop_message(
+                vol_rank, drop_data, fut_quotes=fut_quotes,
+                source_label=source_label)
             self.send_telegram_message(notification_message)
 
             logger.info("\nTW monitor check completed!")

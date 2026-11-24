@@ -1176,7 +1176,7 @@ def tasks_view():
         <small class="text-muted ms-2">{tw_mkt.get('start_hour',9):02d}:{tw_mkt.get('start_minute',0):02d} - {tw_mkt.get('end_hour',13):02d}:{tw_mkt.get('end_minute',30):02d} (Asia/Taipei)</small>
       </div>
       <div><small class="text-muted">來源：證交所 MIS 即時行情（範圍固定為下方監控清單，量價即時、每半小時重排）</small></div>
-      <div class="mt-1"><small class="text-muted">推播內容：個股/ETF 成交量排行 ＋ 跌幅排行（監控標的、跌幅 &gt;3%）＋ 台指期（09:30-11:30 附小台損益試算：多單 5 口停損 20 點、空單 2 口停損 50 點，單向最大虧損 5,000 元）；MIS 失效時退回 Yahoo/證交所 OpenAPI</small></div>
+      <div class="mt-1"><small class="text-muted">推播內容：個股/ETF 成交量排行 ＋ 跌幅排行（監控標的、跌幅 &gt;3%）＋ 台指期（09:30-11:30 附小台損益試算：多單 5 口停損 20 點、空單 2 口停損 50 點，單向最大虧損 5,000 元）；MIS 失效時自動退避重試（最多 3 次），仍失效才退回 Yahoo/證交所 OpenAPI，<b>退回時推播會標註「備援，非即時」警示</b>（2026-11-25 修正：原版退回時仍標「MIS 即時」造成誤導）</small></div>
       <div class="mt-2"><small class="text-muted">監控標的（排行範圍固定於此）：</small></div>
       <div><small class="text-muted">{len(tw_stocks)} 個股：</small><br><code>{" ".join([s.replace('.TWO','').replace('.TW','') for s in tw_stocks])}</code></div>
       <div class="mt-1"><small class="text-muted">{len(tw_etfs)} ETF：</small><br><code>{" ".join([s.replace('.TWO','').replace('.TW','') for s in tw_etfs])}</code></div>
