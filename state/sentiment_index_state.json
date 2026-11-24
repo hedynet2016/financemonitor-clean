@@ -1,43 +1,5 @@
 {
   "signals": {
-    "2026-10-23": {
-      "date": "2026-10-23",
-      "run_time": "2026-10-23 08:12",
-      "total": 45,
-      "direction": "做空",
-      "items": [
-        {
-          "key": "us",
-          "name": "最新美股表現",
-          "score": 5,
-          "why": "市值前 20 大平均跌幅 -3.35%（跌逾 3%）"
-        },
-        {
-          "key": "cpi",
-          "name": "最新美國 CPI",
-          "score": 5,
-          "why": "超出市場預期"
-        },
-        {
-          "key": "nfp",
-          "name": "最新美國非農就業",
-          "score": 15,
-          "why": "低於市場預期"
-        },
-        {
-          "key": "oil",
-          "name": "最新國際油價（Brent 布蘭特）",
-          "score": 5,
-          "why": "Brent 布蘭特單日漲 +3.94%（漲逾 3%，通膨壓力）"
-        },
-        {
-          "key": "tw",
-          "name": "前一日台股表現",
-          "score": 15,
-          "why": "加權指數跌 846 點（跌逾 500 點）"
-        }
-      ]
-    },
     "2026-10-24": {
       "date": "2026-10-24",
       "run_time": "2026-10-24 08:13",
@@ -1157,6 +1119,50 @@
           "why": "NVDA 跌 -14.01%（跌逾 3%）"
         }
       ]
+    },
+    "2026-11-24": {
+      "date": "2026-11-24",
+      "run_time": "2026-11-24 08:07",
+      "total": 60,
+      "direction": "觀望",
+      "items": [
+        {
+          "key": "us",
+          "name": "最新費半表現",
+          "score": 15,
+          "why": "費半指數漲 +14.03%（漲逾 5%）"
+        },
+        {
+          "key": "cpi",
+          "name": "最新美國 CPI",
+          "score": 5,
+          "why": "超出市場預期"
+        },
+        {
+          "key": "nfp",
+          "name": "最新美國非農就業",
+          "score": 5,
+          "why": "超出市場預期"
+        },
+        {
+          "key": "oil",
+          "name": "最新國際油價（Brent 布蘭特）",
+          "score": 15,
+          "why": "Brent 布蘭特單日跌 -6.22%（跌逾 3%）"
+        },
+        {
+          "key": "tw",
+          "name": "前一日台股表現",
+          "score": 5,
+          "why": "加權指數漲 779 點（漲逾 500 點）"
+        },
+        {
+          "key": "nvda",
+          "name": "最新 NVDA 收盤表現",
+          "score": 15,
+          "why": "NVDA 漲 +31.48%（漲逾 3%）"
+        }
+      ]
     }
   },
   "history": [
@@ -1539,6 +1545,26 @@
       "stopped": true,
       "sim_mode": "stop_loss",
       "recorded_at": "2026-11-23 11:30"
+    },
+    {
+      "date": "2026-11-24",
+      "total": 60,
+      "direction": "觀望",
+      "ref": 36659.0,
+      "last": 40324.0,
+      "diff": 3665.0,
+      "hit": null,
+      "pnl": null,
+      "entry": 40324.0,
+      "entry_time": "09:01",
+      "hi": 40324.0,
+      "lo": 40324.0,
+      "stop": null,
+      "stop_pts": null,
+      "qty": null,
+      "stopped": null,
+      "sim_mode": "stop_loss",
+      "recorded_at": "2026-11-24 11:30"
     }
   ]
 }
