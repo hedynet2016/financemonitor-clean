@@ -87,6 +87,12 @@ TW_MIS_BATCH = 80                         # MIS API 每批查詢檔數
 TW_MIS_RETRY = 3                          # [2026-11-25] 每批最多嘗試次數
 TW_MIS_RETRY_WAIT = (5, 15)               # [2026-11-25] 第 2/3 次嘗試前等待秒數
 TW_MIS_COVERAGE = 0.5                     # [2026-11-25] msgArray 覆蓋率低於此值視為限流失效（重試）
+# ── [2026-11-25] 富果行情 API（免費基本方案）：MIS 被限流時的第二層即時來源 ──
+FUGLE_QUOTE_URL = "https://api.fugle.tw/marketdata/v1.0/stock/intraday/quote/{code}"
+FUGLE_TIMEOUT = 15                        # 單一請求逾時（秒）
+FUGLE_INTERVAL = 0.3                      # 逐檔請求間隔（秒，免費方案上限 60 req/min）
+TW_MIS_ACCEPT_COVERAGE = 0.9              # MIS 覆蓋率達 9 成才直接採用，否則試富果
+TW_FUGLE_COVERAGE = 0.6                   # 富果覆蓋率達 6 成才作為 MIS 替代
 TW_VOL_TOP_N = 10                         # 成交量排行取前 N 名
 TW_DROP_POOL = 50                         # 跌幅排行母體（成交量前 N 名）
 TW_DROP_MIN = -3.0                        # 跌幅門檻（%）
@@ -620,13 +626,93 @@ class StockMonitor:
                     f"({failed_batches} failed batches)")
         return quotes
 
+    def _fetch_fugle_quotes(self, items: List[Dict]) -> List[Dict]:
+        """[2026-11-25] 富果行情 API 逐檔查詢（免費基本方案，REST 60 req/min）。
+
+        作為 MIS 被限流時的第二層即時來源。 tradedVolume 單位為股，
+        換算為張（÷1000）以與 MIS 資料格式一致。
+        """
+        key = os.environ.get('FUGLE_MARKETDATA_KEY') or \
+            str((self.config.get('fugle') or {}).get('marketdata_key') or '')
+        if not key or not items:
+            return []
+        taipei_tz = pytz.timezone('Asia/Taipei')
+        ts = datetime.now(taipei_tz).isoformat()
+        quotes = []
+        for it in items:
+            code = it['code']
+            payload = None
+            # ETF 帳戶可能需要 type=etf；先預設 type，失敗再退回不帶 type
+            params_list = ([{'type': 'etf'}, {}] if it.get('ex') == 'otc' and self._is_tw_etf_code(code)
+                           else [{'type': 'common'}, {}] if not self._is_tw_etf_code(code)
+                           else [{'type': 'etf'}, {}])
+            for params in params_list:
+                try:
+                    resp = requests.get(FUGLE_QUOTE_URL.format(code=code),
+                                        params=params,
+                                        headers={'X-API-KEY': key},
+                                        timeout=FUGLE_TIMEOUT)
+                    if resp.status_code == 200:
+                        payload = resp.json() or {}
+                        break
+                    logger.debug(f"Fugle {code} HTTP {resp.status_code} params={params}")
+                except Exception as e:
+                    logger.debug(f"Fugle {code} error: {e}")
+            if not payload:
+                continue
+            try:
+                last = payload.get('lastTrade') or {}
+                price = float(last.get('price') or payload.get('closePrice')
+                              or payload.get('lastPrice') or 0)
+                prev = float(payload.get('previousClose')
+                             or payload.get('referencePrice') or 0)
+                traded = int(payload.get('volume') or 0)   # 單位：股
+                if traded <= 0 or price <= 0:
+                    continue
+                quotes.append({
+                    'ticker': f"{code}.{'TWO' if it.get('ex') == 'otc' else 'TW'}",
+                    'code': code,
+                    'name': str(payload.get('name') or it.get('name') or code).strip() or code,
+                    'volume': traded // 1000,              # 股 → 張，與 MIS 格式一致
+                    'price': price,
+                    'change_percent': ((price - prev) / prev * 100) if prev > 0 else 0.0,
+                    'market': 'TW',
+                    'is_etf': self._is_tw_etf_code(code),
+                    'timestamp': ts,
+                })
+            except Exception as e:
+                logger.debug(f"Fugle {code} parse error: {e}")
+            time.sleep(FUGLE_INTERVAL)
+        logger.info(f"Fugle realtime: {len(quotes)}/{len(items)} quotes")
+        return quotes
+
     def fetch_tw_market_realtime(self) -> List[Dict]:
-        """取得台股監控清單（固定範圍）即時量價（MIS 批次查詢）。"""
+        """台股監控清單即時量價：MIS 為主，覆蓋不足時退回富果行情 API。
+
+        [2026-11-25] 三層來源第 1/2 層：證交所 MIS → 富果 REST。
+        來源結果記錄於 self._tw_rt_source（'mis' / 'fugle' / ''）供推播標示。
+        """
         items = self._load_tw_universe()
         if not items:
             logger.warning("TW universe empty, cannot build realtime rankings")
             return []
-        return self._fetch_tw_mis_quotes(items)
+
+        quotes = self._fetch_tw_mis_quotes(items)
+        need = max(1, int(len(items) * TW_MIS_ACCEPT_COVERAGE))
+        if len(quotes) >= need:
+            self._tw_rt_source = 'mis'
+            return quotes
+
+        # MIS 覆蓋不足（間歇限流），改試富果
+        logger.warning(f"TW MIS low coverage ({len(quotes)}/{len(items)}), "
+                       f"trying Fugle market data API...")
+        fugle = self._fetch_fugle_quotes(items)
+        if len(fugle) >= max(1, int(len(items) * TW_FUGLE_COVERAGE)):
+            self._tw_rt_source = 'fugle'
+            return fugle
+        # 兩者皆不佳：寧可用 MIS 殘餘資料（可能部分正確），全空才回空
+        self._tw_rt_source = 'mis' if quotes else ''
+        return quotes
 
     def rank_tw_volume(self, quotes: List[Dict]) -> Dict[str, List[Dict]]:
         """台股成交量排行：個股與 ETF（範圍固定為監控清單，即時）"""
@@ -1523,7 +1609,9 @@ class StockMonitor:
             if tw_quotes:
                 vol_rank = self.rank_tw_volume(tw_quotes)
                 drop_data = self.rank_tw_drop(tw_quotes)
-                source_label = "證交所 MIS 即時"
+                # [2026-11-25] 依實際使用的即時來源標示（MIS 或富果）
+                source_label = ("證交所 MIS 即時" if getattr(self, '_tw_rt_source', 'mis') == 'mis'
+                                else "富果行情 API（即時）")
             else:
                 # MIS 來源失效時退回 Yahoo/TWSE OpenAPI（同一份監控清單）
                 # [2026-11-25] 退回時明確標示來源與延遲性質，

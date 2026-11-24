@@ -1176,7 +1176,7 @@ def tasks_view():
         <small class="text-muted ms-2">{tw_mkt.get('start_hour',9):02d}:{tw_mkt.get('start_minute',0):02d} - {tw_mkt.get('end_hour',13):02d}:{tw_mkt.get('end_minute',30):02d} (Asia/Taipei)</small>
       </div>
       <div><small class="text-muted">來源：證交所 MIS 即時行情（範圍固定為下方監控清單，量價即時、每半小時重排）</small></div>
-      <div class="mt-1"><small class="text-muted">推播內容：個股/ETF 成交量排行 ＋ 跌幅排行（監控標的、跌幅 &gt;3%）＋ 台指期（09:30-11:30 附小台損益試算：多單 5 口停損 20 點、空單 2 口停損 50 點，單向最大虧損 5,000 元）；MIS 失效時自動退避重試（最多 3 次），仍失效才退回 Yahoo/證交所 OpenAPI，<b>退回時推播會標註「備援，非即時」警示</b>（2026-11-25 修正：原版退回時仍標「MIS 即時」造成誤導）</small></div>
+      <div class="mt-1"><small class="text-muted">推播內容：個股/ETF 成交量排行 ＋ 跌幅排行（監控標的、跌幅 &gt;3%）＋ 台指期（09:30-11:30 附小台損益試算：多單 5 口停損 20 點、空單 2 口停損 50 點，單向最大虧損 5,000 元）；即時來源三層架構（2026-11-25）：① 證交所 MIS（退避重試 3 次）→ ② <b>富果行情 API</b>（免費 REST，MIS 覆蓋率 &lt;90% 時啟用）→ ③ Yahoo/證交所 OpenAPI 前日收盤（推播標註「備援，非即時」警示）；診斷端點 <code>/api/fugle-test</code></small></div>
       <div class="mt-2"><small class="text-muted">監控標的（排行範圍固定於此）：</small></div>
       <div><small class="text-muted">{len(tw_stocks)} 個股：</small><br><code>{" ".join([s.replace('.TWO','').replace('.TW','') for s in tw_stocks])}</code></div>
       <div class="mt-1"><small class="text-muted">{len(tw_etfs)} ETF：</small><br><code>{" ".join([s.replace('.TWO','').replace('.TW','') for s in tw_etfs])}</code></div>
@@ -1977,6 +1977,42 @@ def api_stock_test():
         for s in drop["stocks"]:
             out["drop_stocks"].append({"code": s["code"], "name": s["name"],
                                        "chg": round(s["change_percent"], 2)})
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"
+    return jsonify(out)
+
+
+@app.route("/api/fugle-test")
+def api_fugle_test():
+    """富果行情 API 診斷（2026-11-25）：金鑰狀態與指定代號（預設 2330）即時報價。
+
+    ?symbol=2330 可換任意台股/ETF 代號；不消耗 MIS，直接驗證富果來源可用性。
+    """
+    import os as _os
+    out = {"key_present": False, "symbol": None, "quote": None, "error": None}
+    try:
+        key = _os.environ.get("FUGLE_MARKETDATA_KEY") or ""
+        out["key_present"] = bool(key)
+        if not key:
+            out["error"] = "FUGLE_MARKETDATA_KEY 未設定"
+            return jsonify(out)
+        import requests as _requests
+        symbol = (request.args.get("symbol") or "2330").strip()
+        out["symbol"] = symbol
+        url = f"https://api.fugle.tw/marketdata/v1.0/stock/intraday/quote/{symbol}"
+        r = _requests.get(url, headers={"X-API-KEY": key}, timeout=15)
+        out["http_status"] = r.status_code
+        if r.status_code != 200:
+            out["error"] = f"HTTP {r.status_code}: {r.text[:200]}"
+            return jsonify(out)
+        d = r.json() or {}
+        last = d.get("lastTrade") or {}
+        out["quote"] = {
+            "name": d.get("name"), "last": last.get("price") or d.get("closePrice"),
+            "prev_close": d.get("previousClose"), "change": d.get("change"),
+            "change_pct": d.get("changePercent"),
+            "traded_volume_shares": d.get("volume"),
+        }
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {e}"
     return jsonify(out)

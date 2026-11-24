@@ -29,3 +29,7 @@ services:
         value: Asia/Taipei
       - key: PYTHONUNBUFFERED
         value: "1"
+      # 富果行情 API（2026-11-25）：MIS 被限流時的台股即時備援來源
+      # 免費基本方案（60 req/min），值只在 Render Dashboard / 本機環境填，不進版控
+      - key: FUGLE_MARKETDATA_KEY
+        sync: false
